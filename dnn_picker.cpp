@@ -2,12 +2,15 @@
 #include <utility> 
 #include <vector>
 #include <valarray>
+#include <deque>
 #include <fstream>
 #include <iostream>
 #include <algorithm>
 
+#include <Eigen/Dense>
+#include <Eigen/Cholesky>
 
-
+#include "spline.h"
 
 #include "clique.h"
 #include "dnn_picker.h"
@@ -15,29 +18,144 @@
 
 extern float ann_data[];
 extern float ann_data_m2[];
+extern float ann_data_m3[];
 
-
-
-//some help function
-template <class myType>
-void sortArr(std::vector<myType> &arr, std::vector<int> &ndx) 
-{ 
-    std::vector<std::pair<myType, int> > vp; 
-  
-    for (int i = 0; i < arr.size(); ++i) { 
-        vp.push_back(std::make_pair(arr[i], i)); 
-    } 
-  
-    std::sort(vp.begin(), vp.end()); 
-  
-    for (int i = 0; i < vp.size(); i++)
-    { 
-        ndx.push_back(vp[i].second);
-    } 
-}
-
-namespace ldw_math
+extern "C"  
 {
+    double voigt(double x, double sigma, double gamma);
+};
+
+namespace ldw_math_dnn
+{
+//some help function
+    template <class myType>
+    void sortArr(std::vector<myType> &arr, std::vector<int> &ndx) 
+    { 
+        std::vector<std::pair<myType, int> > vp; 
+    
+        for (int i = 0; i < arr.size(); ++i) { 
+            vp.push_back(std::make_pair(arr[i], i)); 
+        } 
+    
+        std::sort(vp.begin(), vp.end()); 
+    
+        for (int i = 0; i < vp.size(); i++)
+        { 
+            ndx.push_back(vp[i].second);
+        } 
+    };
+
+    std::vector<int> find_neighboring_peaks(std::vector<int> cx,std::vector<int>  cy,int p)
+    {
+        int px=cx[p];
+        int py=cy[p];
+        std::vector<int> ndx;
+        for(int i=0;i<cx.size();i++)
+        {
+            if(i==p) continue;
+            int d1=cx[i]-px;
+            int d2=cy[i]-py;
+            if(sqrt(d1*d1+d2*d2)<30.0)
+            {
+                ndx.push_back(i);
+            }
+        }  
+        return ndx;
+    };
+
+    bool calcualte_principal_axis(std::vector<double> data, int xdim, int ydim)
+    {
+        double sx,sy,ss;
+        double xx,yy,xy;
+        
+        sx=sy=ss=0.0;
+
+        for(int i=0;i<xdim;i++)
+        {
+            for(int j=0;j<ydim;j++)
+            {
+                sx+=data[i*ydim+j]*i;
+                sy+=data[i*ydim+j]*j;
+                ss+=data[i*ydim+j];
+            }
+        }
+        sx/=ss;
+        sy/=ss; //sx and sy is the weight center. ss is total weight
+
+        Eigen::Matrix2f inertia_tensor;
+        
+        Eigen::SelfAdjointEigenSolver<Eigen::Matrix2f> eig;
+        Eigen::Vector2f values;
+        Eigen::Matrix2f evecs;
+
+        xx=yy=xy=0.0;
+        for(int i=0;i<xdim;i++)
+        {
+            for(int j=0;j<ydim;j++)
+            {
+                xx+=(i-sx)*(i-sx)*data[i*ydim+j];
+                yy+=(j-sy)*(j-sy)*data[i*ydim+j];
+                xy+=(i-sx)*(j-sy)*data[i*ydim+j];
+            }
+        }
+
+        
+        inertia_tensor(0,0)=xx/ss;
+        inertia_tensor(1,1)=yy/ss;
+        inertia_tensor(0,1)=xy/ss;
+        inertia_tensor(1,0)=xy/ss;
+        eig.compute(inertia_tensor);
+        values = eig.eigenvalues();
+        evecs = eig.eigenvectors();
+        double px=evecs(0,1);
+        double py=evecs(0,0);
+        
+        std::cout<<"xdim="<<xdim<<" ydim="<<ydim<<" sx="<<sx<<" sy="<<sy<<" ss="<<ss<<" cov matrix is "<<xx/ss<<" "<<yy/ss<<" "<<xy/ss<<" px="<<px<<"  py="<<py<<std::endl;
+
+        double til=std::min(fabs(px),fabs(py));
+        if(til>0.13 && til<0.62)  //7.5 degree to 38 degree
+            return true;
+        else
+            return false;
+    }
+
+    bool voigt_convolution(double a, double x, double y, double sigmax, double sigmay, double gammax, double gammay,int xdim, int ydim, std::vector<double> &kernel, int &i0, int &i1, int &j0, int &j1)
+    {
+        float wx=(1.0692*gammax+sqrt(0.8664*gammax*gammax+5.5452*sigmax*sigmax))*1.0f;
+        float wy=(1.0692*gammay+sqrt(0.8664*gammay*gammay+5.5452*sigmay*sigmay))*1.0f;
+        
+        i0=std::max(0,int(x-wx+0.5));
+        i1=std::min(xdim,int(x+wx+0.5));
+        j0=std::max(0,int(y-wy+0.5));
+        j1=std::min(ydim,int(y+wy+0.5));
+
+        kernel.clear();
+        kernel.resize((i1-i0)*(j1-j0));
+        
+        for (int i =i0; i < i1; i++)
+        {
+            for (int j = j0; j < j1; j++)
+            {
+                double z1=voigt ( i-x, sigmax, gammax );
+                double z2=voigt ( j-y, sigmay, gammay );
+                kernel.at((i-i0)*(j1-j0)+j-j0)=a*z1*z2;
+            }
+        }
+        return true;
+    }
+
+    bool voigt_convolution_region(double x, double y, double sigmax, double sigmay, double gammax, double gammay,int xdim, int ydim,int &i0, int &i1, int &j0, int &j1)
+    {
+        float wx=(1.0692*gammax+sqrt(0.8664*gammax*gammax+5.5452*sigmax*sigmax))*1.0f;
+        float wy=(1.0692*gammay+sqrt(0.8664*gammay*gammay+5.5452*sigmay*sigmay))*1.0f;
+        
+        i0=std::max(0,int(x-wx+0.5));
+        i1=std::min(xdim,int(x+wx+0.5));
+        j0=std::max(0,int(y-wy+0.5));
+        j1=std::min(ydim,int(y+wy+0.5));
+
+        return true;
+    }
     std::vector<int> get_best_partition(std::vector<float> peak_amplitudes, float ratio_cutoff)
     {
         float v_min = 1e30f;
@@ -95,6 +213,264 @@ namespace ldw_math
 
         }
         return r;
+    };
+
+  
+    std::vector<std::deque<int> > bread_first(std::vector<int> &neighbor, int n)
+    {
+        std::vector<std::deque<int> > clusters;
+        std::deque<int> work, work2;
+        std::vector<int> used;
+
+        used.resize(n, 0);
+
+        for (int i = 0; i < n; i++)
+        {
+            if (used.at(i) != 0)
+            {
+                continue;
+            }
+
+            used.at(i) = 1;
+            work.clear();
+            work2.clear();
+            work.push_back(i);
+            work2.push_back(i);
+
+            while (!work.empty())
+            {
+                int c = work.at(0);
+                work.pop_front();
+
+                for (int j = 0; j < n; j++)
+                {
+                    if (j == c || used.at(j) != 0)
+                    {
+                        continue;
+                    }
+                    if (neighbor[j * n + c] == 1)
+                    {
+                        #pragma omp critical
+                        {
+                            work.push_back(j);
+                            work2.push_back(j);
+                        }
+                        used.at(j) = 1;
+                    }
+                }
+            }
+            if (work2.size() >= 1)
+            {
+                clusters.push_back(work2);
+            }
+        }
+        return clusters;
+    };
+
+    int find_best_from_peaks(std::vector<double> x1,std::vector<double> y1,std::vector<double> x2,std::vector<double> y2, std::vector<int> &ndxs)
+    {
+        ndxs.clear();
+        int npeak=x1.size();
+
+        //distance matrix of peaks pair
+        std::vector<double> distance_matrix(npeak*npeak,0.0);
+        std::vector<int> distance_binary_matrix(npeak*npeak,0.0);
+
+
+        for(int i=0;i<npeak;i++)
+        {
+            for(int j=i+1;j<npeak;j++)
+            {
+                double t1=(x1[i]-x1[j])*(x1[i]-x1[j])+(y1[i]-y1[j])*(y1[i]-y1[j]);
+                double t2=(x2[i]-x2[j])*(x2[i]-x2[j])+(y2[i]-y2[j])*(y2[i]-y2[j]);
+                double t=sqrt(t1)+sqrt(t2);
+                distance_matrix[i*npeak+j]=distance_matrix[i+j*npeak]=t;
+                if(t<6.0)
+                    distance_binary_matrix[i*npeak+j]=distance_binary_matrix[j*npeak+i]=1;
+                else
+                    distance_binary_matrix[i*npeak+j]=distance_binary_matrix[j*npeak+i]=0;
+            }
+        }
+
+        std::vector<std::deque<int>> clusters=bread_first(distance_binary_matrix,npeak); //orphan will be skipped
+
+        for(int i=0;i<clusters.size();i++)
+        {
+            std::vector<double> total_distance;
+            for(int j=0;j<clusters[i].size();j++)
+            {
+                double tsum=0.0;
+                for(int jj=0;jj<clusters[i].size();jj++)
+                {
+                    if(jj==j) continue;
+                    tsum+=distance_matrix[j*npeak+jj];
+                }
+                total_distance.push_back(tsum);
+            }
+            int minElementIndex = std::min_element(total_distance.begin(),total_distance.end()) - total_distance.begin();
+            ndxs.push_back(clusters[i][minElementIndex]);
+        }
+
+        return true;
+
+    };
+
+/*
+  int find_medoid_from_peaks(std::vector<double> x,std::vector<double> y)
+    {
+        int npeak=x.size();
+        std::vector<double> d(npeak*npeak,0.0);
+
+        for(int i=0;i<npeak;i++)
+        {
+            for(int j=i+1;j<npeak;j++)
+            {
+                double t=fabs(x[i]-x[j])+fabs(y[i]-y[j]);
+                d[i*npeak+j]=t;
+                d[j*npeak+i]=t;
+            }
+        }
+
+        double min_d=10000.0;
+        int ndx=-1;
+        for(int i=0;i<npeak;i++)
+        {
+            double current_d=0.0;
+            for(int j=0;j<npeak;j++)
+            {
+                current_d+=d[i*npeak+j];
+            }
+            if(current_d<min_d)
+            {
+                min_d=current_d;
+                ndx=i;
+            }
+        }
+        return ndx;
+    };
+
+    int find_best_from_peaks_old(std::vector<double> x1,std::vector<double> y1,std::vector<double> x2,std::vector<double> y2)
+    {
+        int npeak=x1.size();
+        
+        double max_d=0.0;
+        int ndx=-1;
+        for(int i=0;i<npeak;i++)
+        {
+            double t=(x1[i]-x2[i])*(x1[i]-x2[i])+(y1[i]-y2[i])*(y1[i]-y2[i]);
+            if(t>max_d)
+            {
+                max_d=t;
+                ndx=i;
+            }
+        }
+        return ndx;
+    }
+
+    bool cut_one_peak_using_amplitude(std::vector<double> &s, int &anchor)
+    {
+        int ndata=s.size();
+
+        int center;
+        double max_v=0.0;
+        for(int i=anchor-2;i<=anchor+2;i++)
+        {
+            if(s[i]>max_v)
+            {
+                max_v=s[i];
+                center=i;
+            }
+        } 
+
+        int left_cut=0;
+        for(int i=center-1;i>=0;i--)
+        {
+            if(s[i]>s[i+1])
+            {   
+                left_cut=i+1;
+                break;
+            }
+        }
+
+        int right_cut=ndata;
+        for(int i=center+1;i<ndata;i++)
+        {
+            if(s[i]>s[i-1])
+            {
+                right_cut=i;
+                break;
+            }
+        }
+
+        s.erase(s.begin(),s.begin()+left_cut);
+        anchor-=left_cut;
+        right_cut-=left_cut;
+        s.erase(s.begin()+right_cut,s.end());
+
+        return true;
+    };
+*/
+
+    bool get_perpendicular_line(double x,double y, double x0, double y0, std::vector<double> &line_x, std::vector<double> &line_y)
+    {
+        line_x.clear();
+        line_y.clear();
+        double direction_x=y0-y;
+        double direction_y=x-x0;
+        double len=sqrt(direction_x*direction_x+direction_y*direction_y);
+        direction_x/=len;
+        direction_y/=len;
+
+        for(int m=-22;m<=22;m++)
+        {
+            line_x.push_back(m*direction_x+x);
+            line_y.push_back(m*direction_y+y);
+        }
+        return true;
+    };
+
+
+    bool interp2(int min_x, int max_x, int min_y,int max_y, std::vector<double> data, std::vector<double> x,std::vector<double> y,std::vector<double> &line_v)
+    {
+        //data[i*ny+j]
+        int ndata=x.size();
+        int ny=max_y-min_y+1;
+        int nx=max_x-min_x+1;
+        
+        std::vector< std::vector<double> > spe_at_y_bycol; //nx by ndata
+
+        std::vector<double> x_input,y_input;
+        for(int j=min_y;j<=max_y;j++) y_input.push_back(j);
+        for (int i = min_x; i <= max_x; i++) x_input.push_back(i);
+
+        for (int i = min_x; i <= max_x; i++)
+        {
+            std::vector<double> t;
+            std::vector<double> tdata(data.begin() + (i - min_x) * ny, data.begin() + (i - min_x + 1) * ny);
+            tk::spline st(y_input, tdata);
+            for (int m = 0; m < y.size(); m++)
+            {
+                t.push_back(st(y[m]));
+            }
+            spe_at_y_bycol.push_back(t);
+        }
+
+        std::vector< std::vector<double> > spe_at_y_byrow(ndata,std::vector<double>(nx,0.0));
+        for(int i=0;i<nx;i++)
+        {
+            for(int j=0;j<y.size();j++)
+            {
+                spe_at_y_byrow[j][i]= spe_at_y_bycol[i][j];  
+            }
+        }
+
+        for(int i=0;i<y.size();i++)
+        {
+            tk::spline st(x_input,spe_at_y_byrow[i]);       
+            line_v.push_back(st(x[i]));
+        }
+
+        return true;
     };
 };
 
@@ -448,19 +824,54 @@ bool peak1d::load_m2()
     return true;
 };
 
+bool peak1d::load_m3() //1D, wide peak with baseline
+{
+    model_selection=3;
+
+    int n=0;
+    c0.set_size(11,1,40);  //nkernel, ninput, nfilter
+    n+=c0.read(ann_data_m3+n);
+    
+    c1.set_size(1,40,20); //knernel, ninput, nfilter
+    n+=c1.read(ann_data_m3+n);
+    
+    c2.set_size(11,20,10); //knernel, ninput, nfilter
+    n+=c2.read(ann_data_m3+n);
+
+    c3.set_size(1,10,20); //knernel, ninput, nfilter
+    n+=c3.read(ann_data_m3+n);
+
+    c4.set_size(1,20,10); //knernel, ninput, nfilter
+    n+=c4.read(ann_data_m3+n);
+
+    c5.set_size(11,10,30); //knernel, ninput, nfilter
+    n+=c5.read(ann_data_m3+n);
+
+    c6.set_size(1,30,18); //knernel, ninput, nfilter
+    n+=c6.read(ann_data_m3+n);
+
+    c7.set_size(1,18,8); //knernel, ninput, nfilter
+    n+=c7.read(ann_data_m3+n);
+
+    p1.set_size(18,3);  //ninput, npool
+    
+    d.set_act(softmax);
+    d.set_size(18,3); //ninput=18, nfilter=3
+    n+=d.read(ann_data_m3+n);
+
+    return true;
+};
 
 bool peak1d::predict(std::vector<float> input_)
 {   
     n_shift=20; 
     ndim0=input_.size()-40;
     input.clear();
-
     //prevent the ANN to go after noise-level peaks
-    //if we increase it from 60.0f to 120.0f, we may lost some peaks but will be robust against noisy spectra
+    //default 60.0
+    //if we increase it from 60.0f to 120.0f, we may lost some weak peaks but will be robust against noisy spectra
     scale_factor=std::max(*max_element(input_.begin(),input_.end()),noise_level*60.0f);
 
-    
-    
     for(int i=0;i<input_.size();i++)
     {
         if(input_[i]<0.0){
@@ -471,27 +882,9 @@ bool peak1d::predict(std::vector<float> input_)
         }
     }
 
-   
-
     min_flag.clear();
     min_flag.resize(input.size(),0);
-    // for(int i=1;i<input.size()-1;i++)
-    // {
-    //     if(input[i]<input[i-1] && input[i]<input[i+1])
-    //     {
-    //         min_flag[i-1]=1;
-    //         min_flag[i]=1;
-    //         min_flag[i+1]=1;
-    //     }
-        
-    // }
-
-    // std::cout<<"input is:"<<std::endl;
-    // for(int i=0;i<input.size();i++)
-    // {
-    //     std::cout<<input[i]<<std::endl;
-    // }
-
+   
     std::vector<float> t1,t2,t3,t4,t5,t6,t7,t8;
     ndim=input.size();
     c0.predict(ndim,input,t1);
@@ -507,33 +900,6 @@ bool peak1d::predict(std::vector<float> input_)
     return true;
 };
 
-bool peak1d::move_mean(std::vector<float> &data, int m, int n)
-{
-    std::vector<float> temp;
-    temp=data;
-    for(int i=1;i<m-1;i++)
-    {
-        for(int j=0;j<n;j++)
-        {
-            data[i*n+j]=(temp[(i-1)*n+j]+temp[i*n+j]+temp[(i+1)*n+j])/3.0f;
-        }
-    }
-
-    for(int j=0;j<n;j++)
-    {
-        data[j]=(temp[j]+temp[n+j])/2.0f;
-        data[(m-1)*n+j]=(temp[(m-2)*n+j]+temp[(m-1)*n+j])/2.0f;
-    }
-
-    return true;
-}
-
-bool peak1d::moving_average_output()
-{
-    move_mean(output1,ndim,3);   
-    move_mean(output2,ndim,8);   
-    return true;
-}
 
 bool peak1d::predict_step2()
 {   
@@ -554,15 +920,19 @@ bool peak1d::predict_step2()
     std::vector<int> p_segment;
 
     //to do: define cutoff according to predicted peak width
-    double cutoff=3.5;
+    double cutoff=4.0;
     if(model_selection==2) cutoff=2.5;
 
     p_segment.push_back(0);
-    for(int i=1;i<ndim-1;i++)
+    for(int i=2;i<ndim-2;i++) //exclude terminal 2 data point!!
     {
         // if(output1[i*3+2]+output1[i*3+1]>output1[i*3] && output1[i*3]<output1[i*3-3] && output1[i*3]<output1[i*3+3])
         
         bool b1=output1[i*3+2]+output1[i*3+1]>output1[i*3];
+        int ii=i-1;bool b11=output1[ii*3+2]+output1[ii*3+1]>output1[ii*3];
+        ii=ii+1;   bool b12=output1[ii*3+2]+output1[ii*3+1]>output1[ii*3];
+        b1= b1 || b11 || b12;
+        
         bool b1_potential=output1[i*3+2]+output1[i*3+1]>output1[i*3]*0.6 && output1[i*3+2]>0.1;
         
         bool b2=output1[i*3+1]>output1[i*3-3+1] && output1[i*3+1]>output1[i*3+3+1] && output1[i*3+1]>0.1;
@@ -595,7 +965,7 @@ bool peak1d::predict_step2()
         
         int kk=p_segment[k];
 
-        if(p_type[kk]==2 && p_type[kk+1]==1 && p_type[kk+2]==1) p_type[kk]==1; //change potential peak to peak if pattern found
+        if(p_type[kk]==2 && p_type[kk+1]==1 && p_type[kk+2]==1) p_type[kk]=1; //change potential peak to peak if pattern found
         if(p_type[kk]==1 && p_type[kk+1]==1 && p_type[kk+2]==2){
             p_type[kk+2]=1; //change potential peak to peak if pattern found
         }
@@ -632,15 +1002,8 @@ bool peak1d::predict_step2()
         else
             c3=-(output2[pos*8+0]*3-1.5)+pos;
 
-
         double d1=fabs(c1-c2);
         double d2=fabs(c3-c2);
-        
-        // double d1=fabs(ps[kk+0]-ps[kk+1]);
-        // double d2=fabs(ps[kk+2]-ps[kk+1]);
-
-
-
         if(p_type[kk]==1 && p_type[kk+1]==1 && p_type[kk+2]==1 && (d1<cutoff || d2<cutoff) )
         {
             p_type[kk+1]=2; //label center peak to be removed, but keep other two peaks. 
@@ -662,7 +1025,7 @@ bool peak1d::predict_step2()
 
 
     std::vector<int> ndx;
-    sortArr(vs,ndx);
+    ldw_math_dnn::sortArr(vs,ndx);
 
     for(int i=0;i<ndx.size();i++)
     {
@@ -720,9 +1083,8 @@ bool peak1d::predict_step2()
     }
 
 
-
+/*  
     for(int i=0;i<intens.size();i++)
-    // for(int i=0;i<0;i++)
     {
         if(ptypes[i]==1) continue;
 
@@ -770,15 +1132,13 @@ bool peak1d::predict_step2()
                         y_max = input[k];
                 }
             }
- 
         }
     }
-    shouls.clear();
-    shouls.resize(intens.size(),0);
-
+*/
 
     //lable shoulder peaks so that double-shoulder peak can be removed.
-
+    shouls.clear();
+    shouls.resize(intens.size(),0);
     std::vector<int> local_max;
     for(int i=1;i<input.size()-1;i++)
     {
@@ -810,15 +1170,6 @@ bool peak1d::predict_step2()
         }
     }
 
-    // for(int i=0;i<local_max.size();i++)
-    // {
-    //     std::cout<<"local max at "<<local_max[i]<<std::endl;
-    //     for(int j=0;j<local_max_matches[i].size();j++)
-    //     {
-    //         std::cout<<posits[local_max_matches[i][j]]<<" "<<local_max_distances[i][j]<<std::endl;
-    //     }
-    // }
-
     for(int i=0;i<local_max.size();i++)
     {
         if(local_max_matches[i].size()<=1) continue;
@@ -841,6 +1192,7 @@ bool peak1d::predict_step2()
         }
     }
 
+    //remove out of bound peaks, if any
     for(int i=posits.size()-1;i>=0;i--)
     {
         posits[i]-=n_shift;
@@ -865,9 +1217,51 @@ bool peak1d::predict_step2()
     }
 
     return true;
+};
+
+//helper of peak1d
+bool peak1d::move_mean(std::vector<float> &data, int m, int n)
+{
+    std::vector<float> temp;
+    temp=data;
+    for(int i=1;i<m-1;i++)
+    {
+        for(int j=0;j<n;j++)
+        {
+            data[i*n+j]=(temp[(i-1)*n+j]+temp[i*n+j]+temp[(i+1)*n+j])/3.0f;
+        }
+    }
+
+    for(int j=0;j<n;j++)
+    {
+        data[j]=(temp[j]+temp[n+j])/2.0f;
+        data[(m-1)*n+j]=(temp[(m-2)*n+j]+temp[(m-1)*n+j])/2.0f;
+    }
+
+    return true;
+};
+
+bool peak1d::moving_average_output()
+{
+    move_mean(output1,ndim,3);   
+    move_mean(output2,ndim,8);   
+    return true;
+};
+
+
+
+
+//peak2d class. combine 1D result to get 2D.
+
+peak2d::peak2d() {
+    flag1=0;
+};
+
+peak2d::peak2d(int n)
+{
+    flag1=n;
 }
 
-peak2d::peak2d() {};
 peak2d::~peak2d() {};
 
 bool peak2d::init_ann(int index_model)
@@ -1016,7 +1410,6 @@ bool peak2d::predict_step1()
                 }
             }
             if(peak_positions.size()==0) continue;
-            
             for(int k=0;k<peak_positions.size()-1;k++)
             {
                 int p=peak_positions[k];
@@ -1033,7 +1426,7 @@ bool peak2d::predict_step1()
             }
             min_positions.push_back(stop);
         
-            std::vector<int> bs=ldw_math::get_best_partition(peak_amplitudes,0.2);
+            std::vector<int> bs=ldw_math_dnn::get_best_partition(peak_amplitudes,0.2);
             bs.push_back(peak_amplitudes.size());
 
             for(int k=0;k<bs.size();k++)
@@ -1171,7 +1564,7 @@ bool peak2d::predict_step1()
                 min_positions.push_back(p);
             }
             min_positions.push_back(stop);
-            std::vector<int> bs=ldw_math::get_best_partition(peak_amplitudes,0.2);
+            std::vector<int> bs=ldw_math_dnn::get_best_partition(peak_amplitudes,0.2);
             bs.push_back(peak_amplitudes.size());
 
             for(int k=0;k<bs.size();k++)
@@ -1241,15 +1634,8 @@ bool peak2d::predict_step1()
 //find lines!!
 bool peak2d::predict_step2()
 {
-    int line_cut;
-
-    //to do: define cutoff according to predicted peak width
-    if(model_selection==2) line_cut=2;
-    else line_cut=4;
-
-
-    find_lines(xdim,ydim,r_column,column_line_x,column_line_y,column_line_index,column_line_segment,line_cut);
-    find_lines(ydim,xdim,r_row,row_line_y,row_line_x,row_line_index,row_line_segment,line_cut);
+    find_lines(xdim,ydim,r_column,column_line_x,column_line_y,column_line_index,column_line_segment);
+    find_lines(ydim,xdim,r_row,row_line_y,row_line_x,row_line_index,row_line_segment);
 
     //column_line_index and row_line_index are index to a,s,g_column and a,s,g_row to get peak paramters!!
 
@@ -1436,70 +1822,454 @@ bool peak2d::predict_step3()
         p_2_line_column.push_back(rl_column[ndxx * ydim + ndxy]);
         p_2_line_row.push_back(rl_row[ndxx * ydim + ndxy]);
     }
-
-    
-    
-    
     //we do not need rl_column,rl_column_p, rl_row or rl_row_p from here. clear them to save memory!!
     rl_column.clear();
     rl_column_p.clear();
     rl_row.clear();
     rl_row_p.clear();
 
-    check_special_peaks_1();   //actually do nothing in this function. Kept here for future consideration only !!
-
-
-    check_special_peaks_2();  //label peaks that should be excluded in check_special_peaks_3 function call
-
-    // p_2_column_paras: index to a_column,s_column etc to get inte, sigma ...., 1D peak parameter of column by column picking (indirect dimension)
-    // p_2_row_paras
-    // p_2_line_column: index of column lines
-    // p_2_line_row: index of row lines
-
-    inten.clear();
-    sigmax.clear();
-    gammax.clear();
-    shoulx.clear();
-    sigmay.clear();
-    gammay.clear();
-    shouly.clear();
-    confidencex.clear();
-    confidencey.clear();
-    
-
-    for(int i=0;i<p_2_column_paras.size();i++)
-    {
-        int ndx1=p_2_column_paras[i];
-        int ndx2=p_2_row_paras[i];
-
-        inten.push_back(std::min(a_column[ndx1],a_row[ndx2]));
-        
-        sigmay.push_back(s_column[ndx1]);
-        gammay.push_back(g_column[ndx1]);
-        shouly.push_back(sh_column[ndx1]);
-        confidencey.push_back(conf_column[ndx1]);
-
-        sigmax.push_back(s_row[ndx2]);
-        gammax.push_back(g_row[ndx2]);
-        shoulx.push_back(sh_row[ndx2]);
-        confidencex.push_back(conf_row[ndx2]);
-    }
+    // check_special_peaks_1(); //actually do nothing in this function. Kept here for future consideration only !!
 
 #ifdef LDW_DEBUG
+    setup_peaks_from_p();
     std::ofstream fout2;
     fout2.open("potential_peaks.txt");
-    for(int i=0;i<cx.size();i++)
+    for (int i = 0; i < cx.size(); i++)
     {
-        fout2<<cx[i]<<" "<<cy[i]<<" "<<inten[i]<<" "<<shoulx[i]<<" "<<shouly[i]<<" "<<confidencex[i]<<" "<<confidencey[i]<<std::endl;
+        fout2 << cx[i] << " " << cy[i] << " " << inten[i] << " " << shoulx[i] << " " << shouly[i] << " " << confidencex[i] << " " << confidencey[i] << std::endl;
     }
     fout2.close();
 #endif
 
+    if(flag1==0)
+    {
+        setup_peaks_from_p();
+        // p_2_column_paras: index to a_column,s_column etc to get inte, sigma ...., 1D peak parameter of column by column picking (indirect dimension). p_2_row_paras: same
+        // p_2_line_column: index of column lines,  p_2_line_row: index of row lines
+        check_special_peaks_2();  //label peaks that should be excluded in check_special_peaks_3 function call
+        check_special_peaks_3();  //add new peaks to cx,cy, p_2_column_paras,p_2_row_paras. p_2_line_column and p_2_line_row lost track after this function!! Tilted priciple overalpped two peaks will have only one intersection
+        setup_peaks_from_p();
 
-    //tilted priciple overalpped two peaks will have only one intersection
-    //add new peaks to cx,cy, p_2_column_paras,p_2_row_paras
-    check_special_peaks_3();  //p_2_line_column and p_2_line_row lost track
+        //remove double shoulder
+        for (int i = cx.size() - 1; i >= 0; i--)
+        {
+            if ((fabs(shoulx[i] - 1) < 0.0001 && fabs(shouly[i] - 1) < 0.0001))
+            {
+                cx.erase(cx.begin() + i);
+                cy.erase(cy.begin() + i);
+                p_2_column_paras.erase(p_2_column_paras.begin() + i);
+                p_2_row_paras.erase(p_2_row_paras.begin() + i);
+                inten.erase(inten.begin() + i);
+                sigmax.erase(sigmax.begin() + i);
+                gammax.erase(gammax.begin() + i);
+                shoulx.erase(shoulx.begin() + i);
+                sigmay.erase(sigmay.begin() + i);
+                gammay.erase(gammay.begin() + i);
+                shouly.erase(shouly.begin() + i);
+                confidencex.erase(confidencex.begin() + i);
+                confidencey.erase(confidencey.begin() + i);
+            }
+        }
+    }
+    else if(flag1==2 || flag1==3)
+    {
+        setup_peaks_from_p(); 
+ 
+        std::vector<double> sum_of_all_peaks;
+        sum_of_all_peaks.resize(xdim*ydim,0.0f);
 
+        std::vector< std::vector<double> > spectrum_of_peaks;
+        spectrum_of_peaks.resize(inten.size());
+        int i0,i1,j0,j1;
+
+        for(int i=0;i<inten.size();i++)
+        {
+            ldw_math_dnn::voigt_convolution(inten[i],cx[i],cy[i],sigmax[i],sigmay[i],gammax[i],gammay[i],xdim,ydim,spectrum_of_peaks[i],i0,i1,j0,j1);
+            for (int ii = i0; ii < i1; ii++)
+            {
+                for (int jj = j0; jj < j1; jj++)
+                {
+                    sum_of_all_peaks[ii * ydim + jj] += spectrum_of_peaks[i][(ii - i0) * (j1 - j0) + jj - j0];
+                }
+            }
+        }
+
+        std::vector<int> axis_til;
+        for(int i=0;i<inten.size();i++)
+        {
+            ldw_math_dnn::voigt_convolution_region(cx[i],cy[i],sigmax[i],sigmay[i],gammax[i],gammay[i],xdim,ydim,i0,i1,j0,j1);
+            for (int ii = i0; ii < i1; ii++)
+            {
+                for (int jj = j0; jj < j1; jj++)
+                {
+                    double z1=spectrum_of_peaks[i][(ii - i0) * (j1 - j0) + jj - j0];
+                    double z2=std::max(sum_of_all_peaks[ii * ydim + jj],0.0000000001);
+                    spectrum_of_peaks[i][(ii - i0) * (j1 - j0) + jj - j0]=z1/z2*spectrum_column[ii * ydim + jj];
+                }
+            }
+            std::cout<<i<<" "<<cx[i]+1<<" "<<cy[i]+1<<std::endl;
+            axis_til.push_back(ldw_math_dnn::calcualte_principal_axis(spectrum_of_peaks[i],i1-i0,j1-j0));
+        }
+    
+        std::ofstream fnewpeak("new_peak.txt");
+        for(int i=0;i<inten.size();i++)
+        {
+            // if(cx[i]+1!=185 || cy[i]+1!=362) continue; //plane of sichun
+            // if(cx[i]+1!=496 || cy[i]+1!=101) continue; //rop
+            // if(cx[i]+1!=1275 || cy[i]+1!=1523) continue; //asynu reduced
+            // if(i!=471) continue; //asynu
+            // if(i!=112) continue; //asynu
+            
+            // if(i!=419) continue; //asynu_a
+            // if(i!=281) continue; //asynu_a
+            
+        
+            
+            if( inten[i] < noise_level * user_scale ) continue;
+            if( shoulx[i]==1 || shouly[i]==1 ) continue; 
+            if(axis_til[i]==0) continue;  
+
+            std::vector<int> ndx_neighbors=ldw_math_dnn::find_neighboring_peaks(cx,cy,i);
+
+            std::vector<double> title_angle_x,title_angle_y;
+            title_angle_x.clear();
+            title_angle_y.clear();
+
+            std::vector<double> new_peak1_x,new_peak1_y,new_peak2_x,new_peak2_y,new_peak_tiltx;
+            std::vector<double> new_peak1_inten,new_peak2_inten;
+            std::vector<double> new_peak1_sigma, new_peak1_gamma, new_peak2_sigma, new_peak2_gamma;
+
+           
+            for (double tx = 10; tx <= 35; tx += 2.0)
+            {
+                title_angle_x.push_back(cos(tx * M_PI / 180.0));
+                title_angle_y.push_back(sin(tx * M_PI / 180.0));
+            }
+            for (double tx = 55; tx <= 80; tx += 2.0)
+            {
+                title_angle_x.push_back(cos(tx * M_PI / 180.0));
+                title_angle_y.push_back(sin(tx * M_PI / 180.0));
+            }
+            for (double tx = 100; tx <= 125; tx += 2.0)
+            {
+                title_angle_x.push_back(cos(tx * M_PI / 180.0));
+                title_angle_y.push_back(sin(tx * M_PI / 180.0));
+            }
+            for (double tx = 145; tx <= 170; tx += 2.0)
+            {
+                title_angle_x.push_back(cos(tx * M_PI / 180.0));
+                title_angle_y.push_back(sin(tx * M_PI / 180.0));
+            }
+
+            int x_int=int(cx[i]+0.5);
+            int y_int=int(cy[i]+0.5);
+            // std::cout<<"i="<<i<<" x="<<cx[i]<<" y="<<cy[i]<<std::endl;
+            for(int j=0;j<title_angle_x.size();j++)
+            {
+                std::vector<double> target_line,target_line_x,target_line_y;
+                target_line.clear();
+                target_line_x.clear();
+                target_line_y.clear();
+                for(int m=-22;m<=22;m++)
+                {
+                    double target_x=cx[i]+m*title_angle_x[j];
+                    double target_y=cy[i]+m*title_angle_y[j];
+                    if(target_x>=0 && target_x<xdim-1.0 && target_y>=0 && target_y<ydim-1.0)
+                    {
+                        target_line_x.push_back(target_x);
+                        target_line_y.push_back(target_y);                       
+                    }
+                }
+                if(interp2(target_line_x,target_line_y,target_line)==false) 
+                    continue;
+                
+
+                //cut target_line and get center.
+                int anchor_pos=22;
+                int pos_start=0;
+                int pos_end=target_line_x.size();
+                cut_one_peak(target_line_x,target_line_y,i,ndx_neighbors,anchor_pos,pos_start,pos_end); //remove segment belongs to other peaks
+
+                anchor_pos-=pos_start;
+                pos_end-=pos_start;
+
+                target_line.erase(target_line.begin(),target_line.begin()+pos_start);
+                target_line.erase(target_line.begin()+pos_end,target_line.end());
+
+
+                std::vector<float> target_line_float;
+                for(int ii=0;ii<20;ii++) target_line_float.push_back(target_line[0]);
+                for(int ii=0;ii<target_line.size();ii++)
+                {
+                    target_line_float.push_back(target_line[ii]);
+                }
+                for(int ii=0;ii<20;ii++) target_line_float.push_back(target_line.back());
+
+                p1.predict(target_line_float);
+                p1.predict_step2();
+
+                double s1=0.5346*gammax[i]*2+std::sqrt(0.2166*4*gammax[i]*gammax[i]+sigmax[i]*sigmax[i]*8*0.6931);
+
+                std::vector<int> kk;
+                for (int k = 0; k < p1.posits.size(); k++)
+                {
+                    if(p1.posits[k]>=anchor_pos-s1*1.2 && p1.posits[k]<=anchor_pos+s1*1.2 && p1.intens[k]>noise_level*user_scale2)
+                    {
+                        kk.push_back(k);
+                    }    
+                }
+
+                if(kk.size()==2) //
+                {
+                    int pl=std::min(p1.posits[kk[0]],p1.posits[kk[1]]);
+                    int pr=std::max(p1.posits[kk[0]],p1.posits[kk[1]]);
+                    // if(pl>anchor_pos+1 || pr<anchor_pos-1) continue; //both peak are both on the left (or right) of the old peak.
+                    if(pl>anchor_pos || pr<anchor_pos) continue; //both peak are both on the left (or right) of the old peak.
+
+                    if(p1.posits[kk[0]]<p1.posits[kk[1]])
+                    {
+                        std::swap(kk[0],kk[1]);
+                    }
+
+                    double x1=(p1.posits[kk[0]]-anchor_pos)*title_angle_x[j]+x_int;
+                    double y1=(p1.posits[kk[0]]-anchor_pos)*title_angle_y[j]+y_int;
+                    double x2=(p1.posits[kk[1]]-anchor_pos)*title_angle_x[j]+x_int;
+                    double y2=(p1.posits[kk[1]]-anchor_pos)*title_angle_y[j]+y_int;
+                    new_peak_tiltx.push_back(title_angle_x[j]);
+                    new_peak1_x.push_back(x1);
+                    new_peak1_y.push_back(y1);
+                    new_peak2_x.push_back(x2);
+                    new_peak2_y.push_back(y2);
+                    new_peak1_inten.push_back(p1.intens[kk[0]]);
+                    new_peak1_sigma.push_back(p1.sigmas[kk[0]]);
+                    new_peak1_gamma.push_back(p1.gammas[kk[0]]);
+                    new_peak2_inten.push_back(p1.intens[kk[1]]);
+                    new_peak2_sigma.push_back(p1.sigmas[kk[1]]);
+                    new_peak2_gamma.push_back(p1.gammas[kk[1]]);
+                    
+                }
+                // std::cout<<"j="<<j<<" and size of add peak is "<<kk.size()<<" out of "<<p1.posits.size()<<std::endl;
+            }
+
+            std::cout<<"Potential new peak groups:"<<std::endl;
+            for(int j=0;j<new_peak1_x.size();j++)
+            {
+                std::cout<<new_peak_tiltx[j]<<" "<<new_peak1_x[j]<<" "<<new_peak1_y[j]<<" "<<new_peak2_x[j]<<" "<<new_peak2_y[j]<<std::endl;
+            }
+
+            std::cout<<"finish check peak "<<i<<" at coor: "<<cx[i]+1<<" "<<cy[i]+1<<std::endl;
+
+            if(new_peak1_x.size()>1)  //2 or more peaks.
+            {
+                std::vector<int> ndxs;
+                ldw_math_dnn::find_best_from_peaks(new_peak1_x,new_peak1_y,new_peak2_x,new_peak2_y,ndxs);
+
+                for(int m=0;m<ndxs.size();m++)
+                {
+                    bool b_add=false;
+                    int pos=ndxs[m];
+                    if(find_nearest_normal_peak(new_peak1_x[pos],new_peak1_y[pos],ndx_neighbors,i) && find_nearest_normal_peak(new_peak2_x[pos],new_peak2_y[pos],ndx_neighbors,i))
+                    {
+                        //check again along perpendicular direction
+                        std::vector<double> perpendicular_line_x,perpendicular_line_y,perpendicular_line_v;
+
+                        double td1=(new_peak1_x[pos]-cx[i])*(new_peak1_x[pos]-cx[i])+(new_peak1_y[pos]-cy[i])*(new_peak1_y[pos]-cy[i]);
+                        double td2=(new_peak2_x[pos]-cx[i])*(new_peak2_x[pos]-cx[i])+(new_peak2_y[pos]-cy[i])*(new_peak2_y[pos]-cy[i]);
+
+                        if(td1>td2)
+                            ldw_math_dnn::get_perpendicular_line(new_peak1_x[pos],new_peak1_y[pos], cx[i], cy[i], perpendicular_line_x,perpendicular_line_y);
+                        else
+                            ldw_math_dnn::get_perpendicular_line(new_peak2_x[pos],new_peak2_y[pos], cx[i], cy[i], perpendicular_line_x,perpendicular_line_y);
+
+                        interp2(perpendicular_line_x, perpendicular_line_y,perpendicular_line_v);
+
+                        double max_ele=0.0;
+                        int max_ele_pos=-1;
+                        for(int k=19;k<26;k++)
+                        {
+                            if(perpendicular_line_v[k]>max_ele)
+                            {
+                                max_ele=perpendicular_line_v[k];
+                                max_ele_pos=k;
+                            }
+                        }
+                        
+                        if(abs(max_ele_pos-22)<=2)
+                        {
+                            b_add=true;
+                            std::cout<<"ADD new peak at: "<<new_peak1_x[pos]<<" "<<new_peak1_y[pos]<<" and "<<new_peak2_x[pos]<<" "<<new_peak2_y[pos]<<std::endl;
+                            fnewpeak<<cx[i]<<" "<<cy[i]<<" "<<new_peak1_x[pos]<<" "<<new_peak1_y[pos]<<" "<<new_peak2_x[pos]<<" "<<new_peak2_y[pos]<<std::endl;
+                        }
+                    }
+                    if(b_add==false)
+                    {
+                        std::cout<<"Potential new peak at: "<<new_peak1_x[pos]<<" "<<new_peak1_y[pos]<<" and "<<new_peak2_x[pos]<<" "<<new_peak2_y[pos]<<std::endl;
+                    }
+                }
+
+                
+            }
+        }    
+        fnewpeak.close();    
+    }
+    else
+    {
+        setup_peaks_from_p();
+    }
+    return true;
+};
+
+
+bool peak2d::cut_one_peak(std::vector<double> target_line_x,std::vector<double>  target_line_y,int current_pos,std::vector<int> ndx_neighbors, int anchor_pos,int &pos_start,int &pos_end)
+{
+    pos_start=0;
+    pos_end=target_line_x.size();
+
+    for(int i=anchor_pos;i>=0;i--)
+    {
+        double x=target_line_x[i];
+        double y=target_line_y[i];
+
+        double z_current=inten[current_pos]*voigt(cx[current_pos]-x,sigmax[current_pos],gammax[current_pos])*voigt(cy[current_pos]-y,sigmay[current_pos],gammay[current_pos]);
+
+        bool b_found=false;
+        for(int j=0;j<ndx_neighbors.size();j++)
+        {
+            int test_pos=ndx_neighbors[j];
+            double z_test=inten[test_pos]*voigt(cx[test_pos]-x,sigmax[test_pos],gammax[test_pos])*voigt(cy[test_pos]-y,sigmay[test_pos],gammay[test_pos]);
+            if(z_test>z_current)
+            {
+                b_found=true;
+                break;
+            }
+        }
+        if(b_found)
+        {
+            pos_start=i;
+            break;
+        }
+    }
+
+    for(int i=anchor_pos;i<target_line_x.size();i++)
+    {
+        double x=target_line_x[i];
+        double y=target_line_y[i];
+
+        double z_current=inten[current_pos]*voigt(cx[current_pos]-x,sigmax[current_pos],gammax[current_pos])*voigt(cy[current_pos]-y,sigmay[current_pos],gammay[current_pos]);
+
+        bool b_found=false;
+        for(int j=0;j<ndx_neighbors.size();j++)
+        {
+            int test_pos=ndx_neighbors[j];
+            double z_test=inten[test_pos]*voigt(cx[test_pos]-x,sigmax[test_pos],gammax[test_pos])*voigt(cy[test_pos]-y,sigmay[test_pos],gammay[test_pos]);
+            if(z_test>z_current)
+            {
+                b_found=true;
+                break;
+            }
+        }
+        if(b_found)
+        {
+            pos_end=i;
+            break;
+        }
+    }
+    return true;
+}
+
+bool peak2d::find_nearest_normal_peak(double x, double y,std::vector<int> ndxs, int p)
+{
+
+    double max_amp=0.0;
+    double max_effect=0.0;
+    for(int ii=0;ii<ndxs.size();ii++)
+    {
+        int i=ndxs[ii];
+        double eff=voigt(cx[i]-x,sigmax[i],gammax[i])*voigt(cy[i]-y,sigmay[i],gammay[i]);
+        double amp=inten[i]*eff;
+        eff/=(voigt(0,sigmax[i],gammax[i])*voigt(0,sigmay[i],gammay[i]));
+        if(amp>max_amp)
+        {
+            max_amp=amp;
+        }
+        if(eff>max_effect)
+        {
+            max_effect=eff;
+        }
+    }
+    double amp_at_p=inten[p]*voigt(cx[p]-x,sigmax[p],gammax[p])*voigt(cy[p]-y,sigmay[p],gammay[p]);
+
+    if(max_amp>amp_at_p/3.0 || max_effect>0.2)
+        return false;
+    else
+        return true;
+};
+
+bool peak2d::interp2(std::vector<double> line_x, std::vector<double> line_y,std::vector<double> &line_v)
+{
+    int ndata=line_x.size();
+    int min_x=std::max(int(floor(std::min(line_x[0],line_x.back())))-2,0);
+    int max_x=std::min(int(ceil(std::max(line_x[0],line_x.back())))+2,xdim-1);
+    int min_y=std::max(int(floor(std::min(line_y[0],line_y.back())))-2,0);
+    int max_y=std::min(int(ceil(std::max(line_y[0],line_y.back())))+2,ydim-1);
+
+    // if(max_x-min_x<4 || max_y-min_y<4) return false;
+    
+    //First version
+    // std::vector< std::vector<double> > row_spe_at_x;
+    // std::vector< std::vector<double> > column_spe_at_x;
+    // std::vector<double> x_input;
+    // for(int i=min_x;i<=max_x;i++) x_input.push_back(i);
+    // for(int j=min_y;j<=max_y;j++)
+    // {
+    //     std::vector<double> y_input,t;
+    //     y_input.clear();
+    //     for(int i=min_x;i<=max_x;i++) y_input.push_back(spectrum_row[j*xdim+i]);
+    //     tk::spline st(x_input,y_input);   
+    //     for(int m=0;m<ndata;m++)
+    //     {
+    //         t.push_back(st(line_x[m]));  
+    //     }
+    //     row_spe_at_x.push_back(t);
+    // }
+
+    // //row_spe_at_x ==> column_spe_at_x. Size along x is ndata, along y is max_y-min_y+1
+    // column_spe_at_x.resize(ndata,std::vector<double>(max_y-min_y+1,0.0));
+    // for(int i=0;i<ndata;i++)
+    // {
+    //     for(int j=0;j<max_y-min_y+1;j++)
+    //     {
+    //         column_spe_at_x[i][j]=row_spe_at_x[j][i];
+    //     }
+    // }
+
+    // //now x input is along y direction!
+    // line_v.clear();
+    // x_input.clear();
+    // for(int j=min_y;j<=max_y;j++) x_input.push_back(j);
+    // for(int i=0;i<ndata;i++)
+    // {
+    //     tk::spline st(x_input,column_spe_at_x[i]);       
+    //     line_v.push_back(st(line_y[i]));
+    // }
+
+    //Version 2, share same code with interp3
+    //data[i*ydim+j]
+
+    std::vector<double> data;
+    for (int i = min_x; i <= max_x; i++)
+    {
+        for (int j = min_y; j <= max_y; j++)
+        {
+            data.push_back(spectrum_row[j * xdim + i]);
+        }
+    }
+    ldw_math_dnn::interp2(min_x,max_x,min_y,max_y,data,line_x,line_y,line_v);
+    return true;
+};
+
+bool peak2d::setup_peaks_from_p()
+{
     inten.clear();
     sigmax.clear();
     gammax.clear();
@@ -1509,51 +2279,26 @@ bool peak2d::predict_step3()
     shouly.clear();
     confidencex.clear();
     confidencey.clear();
-    
 
-    for(int i=0;i<p_2_column_paras.size();i++)
+    //At this time, cx,cy,p_2_column_paras and p_2_row_paras all have same length and contain peaks in the same order!!
+    for (int i = 0; i < p_2_column_paras.size(); i++)
     {
-        int ndx1=p_2_column_paras[i];
-        int ndx2=p_2_row_paras[i];
-
-        inten.push_back(std::min(a_column[ndx1],a_row[ndx2]));
-        
+        int ndx1 = p_2_column_paras[i];
+        int ndx2 = p_2_row_paras[i];
+        inten.push_back(std::min(a_column[ndx1], a_row[ndx2]));
         sigmay.push_back(s_column[ndx1]);
         gammay.push_back(g_column[ndx1]);
         shouly.push_back(sh_column[ndx1]);
         confidencey.push_back(conf_column[ndx1]);
-
         sigmax.push_back(s_row[ndx2]);
         gammax.push_back(g_row[ndx2]);
         shoulx.push_back(sh_row[ndx2]);
         confidencex.push_back(conf_row[ndx2]);
     }
-
-    //remove double shooulder peak
-
-    for (int i = cx.size() - 1; i >= 0; i--)
-    {
-        if ((fabs(shoulx[i] - 1) < 0.0001 && fabs(shouly[i] - 1) < 0.0001))
-        {
-            cx.erase(cx.begin() + i);
-            cy.erase(cy.begin() + i);
-            p_2_column_paras.erase(p_2_column_paras.begin() + i);
-            p_2_row_paras.erase(p_2_row_paras.begin() + i);
-            inten.erase(inten.begin() + i);
-            sigmax.erase(sigmax.begin() + i);
-            gammax.erase(gammax.begin() + i);
-            shoulx.erase(shoulx.begin() + i);
-            sigmay.erase(sigmay.begin() + i);
-            gammay.erase(gammay.begin() + i);
-            shouly.erase(shouly.begin() + i);
-            confidencex.erase(confidencex.begin() + i);
-            confidencey.erase(confidencey.begin() + i);
-        }
-    }
-
     return true;
-};
+}
 
+/*
 bool::peak2d::check_special_peaks_1()
 {
     //Construct line to peak pointer from peak to line pointer
@@ -1597,7 +2342,7 @@ bool::peak2d::check_special_peaks_1()
         {
             xcoors.push_back(cx[cline_2_peak[i][j1]]);
         }
-        sortArr(xcoors,ndx); 
+        ldw_math_dnn::sortArr(xcoors,ndx); 
 
         for(int j2=1;j2<ndx.size();j2++)
         {
@@ -1615,7 +2360,7 @@ bool::peak2d::check_special_peaks_1()
         {
             ycoors.push_back(cy[rline_2_peak[i][j1]]);
         }
-        sortArr(ycoors,ndx); 
+        ldw_math_dnn::sortArr(ycoors,ndx); 
 
         for(int j2=1;j2<ndx.size();j2++)
         {
@@ -1676,6 +2421,7 @@ bool::peak2d::check_special_peaks_1()
     }
     //afer above remove, cline_2_peak and rline_2_peak is not valid any longer!!!
 }
+*/
 
 bool peak2d::check_special_peaks_2()
 {
@@ -1714,7 +2460,7 @@ bool peak2d::check_special_peaks_2()
         {
             xcoors.push_back(cx[cline_2_peak[i][j1]]);
         }
-        sortArr(xcoors,ndx); 
+        ldw_math_dnn::sortArr(xcoors,ndx); 
 
         for(int j2=1;j2<ndx.size();j2++)
         {
@@ -1782,7 +2528,7 @@ bool peak2d::check_special_peaks_2()
         {
             ycoors.push_back(cy[rline_2_peak[i][j1]]);
         }
-        sortArr(ycoors,ndx); 
+        ldw_math_dnn::sortArr(ycoors,ndx); 
 
         for(int j2=1;j2<ndx.size();j2++)
         {
@@ -1993,6 +2739,7 @@ bool peak2d::get_tilt_of_line(const int flag, const int x,const int y,const doub
                 }
             }
         }
+        // std::cout<<std::endl;
     }
 
     k1m+=std::max(ndx-cut2,0);
@@ -2029,8 +2776,8 @@ bool peak2d::check_special_case(const int x,const int y,const double fx,const do
     bool b1,b2;
     int potential_x1,potential_x2,potential_y1,potential_y2;
 
-    get_tilt_of_line(1,x,y,fx,cline_x,cline_y,cline_ndx,k1,k2,ratio1);
-    get_tilt_of_line(2,y,x,fy,rline_y,rline_x,rline_ndx,m1,m2,ratio2);
+    get_tilt_of_line(1,x,y,std::min(fx,fy),cline_x,cline_y,cline_ndx,k1,k2,ratio1);
+    get_tilt_of_line(2,y,x,std::min(fx,fy),rline_y,rline_x,rline_ndx,m1,m2,ratio2);
 
     b1= ratio1>=0.25 &&  ratio2>=0.25 &&  ratio1+ratio2>=0.6;
     b2=ratio1<=-0.25 && ratio2<=-0.25 && ratio1+ratio2<=-0.6;
@@ -2078,18 +2825,21 @@ bool peak2d::check_special_case(const int x,const int y,const double fx,const do
 }
 
 
-bool peak2d::find_lines(int xd, int yd, std::vector<int> r, std::vector<int> &x0, std::vector<int> &y0, std::vector<int> &ndx0, std::vector<int> &s0,int limit)
+bool peak2d::find_lines(int xd, int yd, std::vector<int> r, std::vector<int> &x0, std::vector<int> &y0, std::vector<int> &ndx0, std::vector<int> &s0)
 {
 
     int min_line_length;
+    int limit;
 
     if(model_selection==1) //peak is wide
     {
         min_line_length=5;
+        limit=4;
     }
     else //peak is narrow
     {
         min_line_length=3;
+        limit=2;
     }
 
     std::vector<int> x,y,ndx,s;

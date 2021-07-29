@@ -2,23 +2,23 @@ cmake_minimum_required(VERSION 3.5)
 
 project(deep_picker)
 
+find_package(Eigen3 REQUIRED)
+include_directories(${EIGEN3_INCLUDE_DIR})
 
-
-add_library(spectrum OBJECT spectrum_io.cpp spectrum.cpp dnn_picker.cpp clique.cpp ann_data.c)
-add_library(spectrum_d OBJECT spectrum_io.cpp spectrum.cpp dnn_picker.cpp clique.cpp ann_data.c)
-target_compile_definitions(spectrum_d PUBLIC LDW_DEBUG)
+add_library(dnn OBJECT  dnn_picker.cpp clique.cpp ann_data.c)
 add_library(commandline OBJECT commandline.cpp )
-
+add_library(jsoncpp OBJECT jsoncpp.cpp )
 
 
 # 2D peak picking
-add_executable(deep_picker main_peak_picking.cpp $<TARGET_OBJECTS:spectrum> $<TARGET_OBJECTS:commandline> )
+add_executable(deep_picker main_peak_picking.cpp spectrum_io.cpp spectrum_pick.cpp $<TARGET_OBJECTS:dnn> $<TARGET_OBJECTS:commandline> )
+target_link_libraries(deep_picker ${CMAKE_SOURCE_DIR}/libcerf/libcerf.a)
 
-
-# 2D peak picking with debug output
-add_executable(deep_picker_d main_peak_picking.cpp $<TARGET_OBJECTS:spectrum_d> $<TARGET_OBJECTS:commandline> )
-
-
-# 1d peak picking
-add_executable(deep_picker_1d main_1d_picking.cpp  $<TARGET_OBJECTS:spectrum> $<TARGET_OBJECTS:commandline> )
-
+find_package(Ceres)
+if(Ceres_FOUND)
+    add_executable(peak_fit main_peak_fitting.cpp spectrum_io.cpp spectrum_fit.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+    target_include_directories(peak_fit PRIVATE  ${CERES_INCLUDE_DIRS})
+    target_include_directories(peak_fit PRIVATE  ${EIGEN3_INCLUDE_DIR})
+    target_link_libraries(peak_fit ${CERES_LIBRARIES})
+    target_link_libraries(peak_fit ${CMAKE_SOURCE_DIR}/libcerf/libcerf.a)
+endif()

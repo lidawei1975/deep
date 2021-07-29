@@ -114,6 +114,7 @@ public:
 
     bool load();
     bool load_m2();
+    bool load_m3(); 
     bool predict(std::vector<float>);
     bool moving_average_output(); 
     bool predict_step2();
@@ -128,6 +129,8 @@ class peak2d
 private:
 
     int model_selection;
+
+    int flag1; //default: 0 for 2d spetrum. Or 1 for 2d plane of 3D spectra.
 
     float noise_level; //minimal peak intensity
     float user_scale;
@@ -165,12 +168,17 @@ private:
     std::vector<int> rl_column,rl_row; //column and row line, in 2D matrix form, point to line index, see second part of predict_step2
     std::vector<int> rl_column_p,rl_row_p; //column and row line, in 2D matrix form, point to peak index, see second part of predict_step2
     
-    //information from special_case2 to special_case3
+    //information from special_case2 to special_case3, method 0
     std::vector<int> peak_exclude;
+
+public:
+   
     
+
+private:
     bool column_2_row(void);
     bool row_2_column(void);
-    bool find_lines(int,int,std::vector<int>,std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &,int);
+    bool find_lines(int,int,std::vector<int>,std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &);
     //int intersect(double vx1,double vy1,double vx2,double vy2,double hx1,double hy1,double hx2,double hy2,double &x,double &y);
     bool check_special_case(const int,const int,const double, const double,const std::vector<int> &,const std::vector<int> &,const std::vector<int> &,const std::vector<int> &,const std::vector<int> &,const std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &, std::vector<int> &);
     bool get_tilt_of_line(const int flag,const int x, const int y, const double w,const std::vector<int> &line_x,const std::vector<int> &line_y,const std::vector<int> &line_ndx, int &p1, int &p2, double &ratio);
@@ -178,15 +186,20 @@ private:
     bool predict_step1();
     bool predict_step2();
     bool predict_step3();
-    bool check_special_peaks_1();
+    // bool check_special_peaks_1();
     bool check_special_peaks_2();
     bool check_special_peaks_3();
-
+    bool setup_peaks_from_p();
     std::vector<int> select_max_nonoverlap_set(std::vector<int>,std::vector<int>,int);
-    
 
+    //special case function
+    bool interp2(std::vector<double>,std::vector<double>,std::vector<double> &);
+    bool find_nearest_normal_peak(double x, double y,std::vector<int>,int);
+    bool cut_one_peak(std::vector<double> target_line_x,std::vector<double>  target_line_y,int current_pos,std::vector<int> ndx_neighbors, int anchor_pos,int &,int &);
+    
 public:
     peak2d();
+    peak2d(int);
     ~peak2d();
 
     bool init_ann(int);

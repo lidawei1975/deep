@@ -10,24 +10,132 @@
 #include <cstring>
 #include <vector>
 
-
-#ifndef M_PI
-#define M_PI 3.14159265358979324
-#endif
-
-
 #include "commandline.h"
 #include "dnn_picker.h"
 #include "spectrum_io.h"
 
 
+namespace ldw_math_spectrum_2d
+{
 
-//normal 2D spectrum from peak fitting!!!!
+    bool SplitFilename (const std::string& str, std::string &path_name, std::string &file_name)
+    {
+        bool b=false;
+        std::size_t found = str.find_last_of("/\\");
+        if(found!=std::string::npos)
+        {
+            path_name=str.substr(0,found);
+            file_name=str.substr(found+1);
+            b=true;
+        }
+        else
+        {
+            path_name=".";   
+            file_name=str;
+        }
+        return b;
+    }
 
+    void get_ppm_from_header(const double ref,const double sw,const double frq, double &stop, double &begin)
+    {
+        stop = ref / frq;
+        begin = stop + sw / frq;
+        return;
+    }
+
+    double calcualte_median(std::vector<double> scores)
+    {
+        size_t size = scores.size();
+
+        if (size == 0)
+        {
+            return 0; // Undefined, really.
+        }
+        else
+        {
+            sort(scores.begin(), scores.end());
+            if (size % 2 == 0)
+            {
+                return (scores[size / 2 - 1] + scores[size / 2]) / 2;
+            }
+            else
+            {
+                return scores[size / 2];
+            }
+        }
+    };
+
+    void sortArr(std::vector<double> &arr, std::vector<int> &ndx) 
+    { 
+        std::vector<std::pair<double, int> > vp; 
+    
+        for (int i = 0; i < arr.size(); ++i) { 
+            vp.push_back(std::make_pair(arr[i], i)); 
+        } 
+    
+        std::sort(vp.begin(), vp.end()); 
+    
+        for (int i = 0; i < vp.size(); i++)
+        { 
+            ndx.push_back(vp[i].second);
+        } 
+    };
+
+
+    bool spline_expand(int xdim, int ydim, float *spect,std::vector<double> &final_data)
+    {
+        std::vector<double> x_input,y_input,x_output,y_output;
+        
+        for(int j = 0; j < ydim-1; j++)
+        {
+            y_input.push_back(j);
+            y_output.push_back(j+0.5);
+        }
+        y_input.push_back(ydim-1);
+
+        for(int i = 0; i < xdim-1; i++)
+        {
+            x_input.push_back(i);
+            x_output.push_back(i+0.5);
+        }
+        x_input.push_back(xdim-1);
+
+        std::vector<double> intermediate_data;
+        for(int j=0;j<ydim;j++)
+        {
+            std::vector<double> tdata(xdim),t;
+            for(int i=0;i<xdim;i++) tdata[i]=spect[j*xdim+i]; 
+            tk::spline st(x_input,tdata);
+            for(int m=0;m<xdim-1;m++)
+            {
+                t.push_back(tdata[m]);
+                t.push_back(st(x_output[m]));
+            }
+            t.push_back(tdata[xdim-1]);
+            intermediate_data.insert(intermediate_data.end(),t.begin(),t.end()); 
+        }
+        //At this time, intermediate_data is (2*xdim-1)*ydim, row by row format
+
+        for(int i=0;i<xdim*2-1;i++)
+        {
+            std::vector<double> tdata(ydim),t;
+            for(int j=0;j<ydim;j++) tdata[j]=intermediate_data[j*(2*xdim-1)+i];
+            tk::spline st(y_input,tdata);
+            for(int m=0;m<ydim-1;m++)
+            {
+                t.push_back(tdata[m]);
+                t.push_back(st(y_output[m]));
+            }
+            t.push_back(tdata[ydim-1]);
+            final_data.insert(final_data.end(),t.begin(),t.end()); 
+        }
+
+        return true;
+    };
+};
 
 spectrum_io::spectrum_io()
 {
-    indirect_ndx=0; //if we read pipe, this will be updated. 
     noise_level=-0.1; //negative nosie means we don't have it yet
     
     //spectrum range 
@@ -36,14 +144,17 @@ spectrum_io::spectrum_io()
     begin2=1000;
     stop2=-1000; //will be updated once read in spe
 
+    b_negative=false;
+    b_pipe=false;
 };
 
 spectrum_io::~spectrum_io()
 {
-   
+    // if(spect!=NULL) //to be safe
+    // {
+    //     delete [] spect;
+    // }
 };
-
-
 
 
 
@@ -54,12 +165,13 @@ bool ends_with(std::string const & value, std::string const & ending)
 }
 
 
-bool spectrum_io::read(std::string infname)
+bool spectrum_io::read_spectrum(std::string infname)
 {
     bool b_read=0;
     
     std::string stxt(".txt");
     std::string sft2(".ft2");
+    std::string sft3(".ft3");
     std::string sucsf(".ucsf");
     std::string scsv(".csv");
 
@@ -68,6 +180,9 @@ bool spectrum_io::read(std::string infname)
         b_read=read_topspin_txt(infname);
     }
     else if(std::equal(sft2.rbegin(), sft2.rend(), infname.rbegin())){
+        b_read=read_pipe(infname);
+    }
+    else if(std::equal(sft3.rbegin(), sft3.rend(), infname.rbegin())){
         b_read=read_pipe(infname);
     }
     else if(std::equal(sucsf.rbegin(), sucsf.rend(), infname.rbegin())){
@@ -79,35 +194,33 @@ bool spectrum_io::read(std::string infname)
     else{
         b_read=false;
     }
+
     return b_read;
+};
 
-}
 
-bool spectrum_io::init(std::string infname)
+
+bool spectrum_io::init(std::string infname, int noise_flag)
 {
 
     //std::cout<<"peak_diag is "<<peak_diag<<std::endl;
     //std::cout<<"flag_shoulder is "<<flag_shoulder<<std::endl;
     bool b_read;
 
-    b_read=read(infname);
+    b_read=read_spectrum(infname);
+
+    if(b_negative==true)
+    {
+        for(int i=0;i<xdim*ydim;i++)
+        {
+            spect[i]=-spect[i];
+        }
+        std::cout<<"Negative mode, flip spectral data. "<<std::endl;
+    }
     
-
-
+    
     if(b_read)
     {
-        // FILE *fp2 = fopen("red_spect.txt", "w");
-        // for (unsigned int i = 0; i < ydim; i++)
-        // {
-        //     for (unsigned int j = 0; j < xdim; j++)
-        //     {
-        //         fprintf(fp2, "%f ", spect[i*xdim+j]);
-        //     }
-        //     fprintf(fp2, "\n");
-        // }
-        // fclose(fp2);
-        // std::cout<<"Save read spectrum."<<std::endl;
-
         if(fabs(begin2-stop2)>5*fabs(begin1-stop1) || begin2>20.0)
         {
             spectrum_type=hsqc_spectrum;//hsqc
@@ -116,17 +229,11 @@ bool spectrum_io::init(std::string infname)
         {
             spectrum_type=tocsy_spectrum;//tocsy
         }
-
         std::cout<<"Done reading"<<std::endl;
-
-        noise();     
-
+        if(noise_flag==1) noise();    //estimate noise level  
     }
-
     return b_read;
 }
-
-
 
 
 bool spectrum_io::save_mnova(std::string outfname)
@@ -246,16 +353,6 @@ bool spectrum_io::read_mnova(std::string infname)
             spect[k2*xdim+k1]=float(z[i]);
             //std::cout<<x[i]<<" "<<k1<<" "<<y[i]<<" "<<k2<<" "<<z[i]<<std::endl;
         }
-
-        // std::ofstream fout("read.txt");
-        // for(int j=0;j<ydim;j++)
-        // {
-        //     for(int i=0;i<xdim;i++)
-        //     {
-        //         fout<<spect[j*xdim+i]<<" ";
-        //     }
-        //     fout<<std::endl;
-        // }
     }
 
     else //format in mnova 10.0
@@ -337,8 +434,10 @@ bool spectrum_io::read_mnova(std::string infname)
                 }
             }   
         }
-
+        delete [] spect0;
     }
+
+    
 
     //aribitary frq becuase we don't have that infor
     frq1=frq2=850.0;
@@ -355,7 +454,32 @@ bool spectrum_io::read_mnova(std::string infname)
     return true;
 }
 
+bool spectrum_io::get_ppm_from_point()
+{
+    //get ppm
+    p1_ppm.clear();
+    p2_ppm.clear();
 
+    for (unsigned int i = 0; i < p1.size(); i++)
+    {
+        double f1 = begin1 + step1 * (p1[i]);  //direct dimension
+        double f2 = begin2 + step2 * (p2[i]);  //indirect dimension
+        p1_ppm.push_back(f1);
+        p2_ppm.push_back(f2);
+    }
+
+    return true;
+};
+
+bool spectrum_io::zero_negative()
+{
+    for(int i=0;i<xdim*ydim;i++)
+    {
+        if(spect[i]<0.0)
+            spect[i]=0.0;
+    }
+    return true;
+};
 
 //read topspin file in ASCIC format, genearted using command totxt
 bool spectrum_io::read_topspin_txt(std::string infname)
@@ -550,9 +674,9 @@ bool spectrum_io::read_txt(std::string infname)
 
 bool spectrum_io::read_pipe(std::string infname)
 {
+    b_pipe=1;
+
     FILE *fp;
-
-
     fp = fopen(infname.c_str(), "rb");
     if (fp == NULL)
     {
@@ -563,12 +687,6 @@ bool spectrum_io::read_pipe(std::string infname)
     if (temp != 512)
     {
         std::cout << "Wrong file format, can't read 2048 bytes of head information from " << infname << std::endl;
-        return false;
-    }
-
-    if(int(header[57])!=0)
-    {
-        std::cout<<" I can only read 2D nmr data"<<std::endl;
         return false;
     }
 
@@ -584,63 +702,55 @@ bool spectrum_io::read_pipe(std::string infname)
         return false;
     }
 
-    // #define FDMAGIC        0 /* Should be zero in valid NMRPipe data.            */
-    // #define FDFLTFORMAT    1 /* Constant defining floating point format.         */
-    // #define FDFLTORDER     2 /* Constant defining byte order.                    */
-    // #define FDSIZE        99 /* Number of points in current dim R|I.       2048      */
-    // #define FDREALSIZE    97 /* Number of valid time-domain pts (obsolete).  1024    */
-    // #define FDSPECNUM    219 /* Number of complex 1D slices in file.      1024       */
-    // #define FDQUADFLAG   106 /* See Data Type codes below.     1                  */
-    // #define FD2DPHASE    256 /* See 2D Plane Type codes below.     2              */
-    // std::cout<<header[0]<<" "<<header[1]<<" "<<header[2]<<std::endl;
-    //std::cout<<header[99]<<" "<<header[97]<<" "<<header[219]<<" "<<header[106]<<" "<<header[256]<<std::endl;
+    int dims[4];
+    double refs[4], sws[4], frqs[4];
+    double begins[4],stops[4];
+
+    sws[1] = double(header[101 - 1]);
+    frqs[1] = double(header[120 - 1]);
+    refs[1] = double(header[102 - 1]);
+
+    sws[0] = double(header[230 - 1]);
+    frqs[0] = double(header[219 - 1]);
+    refs[0] = double(header[250 - 1]);
+
+    sws[2] = double(header[12 - 1]);
+    frqs[2] = double(header[11 - 1]);
+    refs[2] = double(header[13 - 1]);
+
+    sws[3] = double(header[30 - 1]);
+    frqs[3] = double(header[29 - 1]);
+    refs[3] = double(header[31 - 1]);
 
 
-    //read in file head
     ydim = int(header[220 - 1]);
     xdim = int(header[100 - 1]);
 
+    int ndim=int(header[10-1]);
+    for(int i=0;i<ndim;i++)
+    {
+        ldw_math_spectrum_2d::get_ppm_from_header( refs[i], sws[i], frqs[i],  stops[i],  begins[i]);
+    }
+
+    //X is always the 2rd dimension
+    int direct_ndx=int(header[24])-1;
+    begin1=begins[direct_ndx];
+    stop1=stops[direct_ndx];
+    step1=(stop1-begin1)/xdim;
+    begin1+=step1;
     
-
-    //read in pixel--> ppm convert
-    //directiion dimension
-    SW1 = double(header[101 - 1]);
-    frq1 = double(header[120 - 1]);
-    ref1 = double(header[102 - 1]);
+    //Z can be 4 or 3
+    int indirect_ndxz=int(header[26])-1;  //C start from 0,not 1
+    begin3=begins[indirect_ndxz];
+    stop3=stops[indirect_ndxz];
+    //we don't have zdim or step3
     
-    indirect_ndx=int(header[25]);
-
-    //indirect dimension, either dimension 1 (in 2d exp) or 3 (in slice of 3D exp)
-    if(indirect_ndx==1)
-    {
-        SW2 = double(header[230 - 1]);
-        frq2 = double(header[219 - 1]);
-        ref2 = double(header[250 - 1]);
-    }
-    else if(indirect_ndx==3)
-    {
-        SW2 = double(header[12 - 1]);
-        frq2 = double(header[11 - 1]);
-        ref2 = double(header[13 - 1]);
-
-    }
-    else
-    {
-        std::cout<<"Wrong dimension information"<<std::endl;
-        return false;
-    }
-
-
-    stop1 = ref1 / frq1;
-    begin1 = stop1 + SW1 / frq1;
-    stop2 = ref2 / frq2;
-    begin2 = stop2 + SW2 / frq2;
-    step1 = (stop1 - begin1) / (xdim); //direct dimension
-    step2 = (stop2 - begin2) / (ydim); //indirect dimension
-    begin2 += step2;  
-    begin1 += step1;  // here we have to + step because we want to be consistent with nmrpipe program 
-                      // I have no idea why nmrpipe is different than topspin 
-
+    //Y can be 3rd or 1st dimension
+    int indirect_ndx=int(header[25])-1;  //C start from 0,not 1
+    begin2=begins[indirect_ndx];
+    stop2=stops[indirect_ndx];
+    step2=(stop2-begin2)/ydim;
+    begin2+=step2;
 
     //read in spectrum
     //saved row by row in nmrpipe
@@ -656,15 +766,71 @@ bool spectrum_io::read_pipe(std::string infname)
     }
 
 
-    std::cout << "Spectrum width are " << SW1 << " Hz and " << SW2 << " Hz" << std::endl;
-    std::cout << "Fields are " << frq1 << " mHz and " << frq2 << " mHz" << std::endl;
+    std::cout << "Spectrum width are " << sws[0] << " Hz and " << sws[1] << " Hz" << std::endl;
+    std::cout << "Fields are " << frqs[0] << " mHz and " << frqs[1] << " mHz" << std::endl;
     std::cout << "Direct dimension size is " << xdim << " indirect dimension is " << ydim << std::endl;
-    std::cout << "  Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " ppm" << std::endl;
-    std::cout << "Indirect dimension offset is " << begin2 << ", ppm per steo is " << step2 << " ppm" << std::endl;
+    std::cout << "  Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " and last is " << stop1 << std::endl;
+    std::cout << "Indirect dimension offset is " << begin2 << ", ppm per steo is " << step2 << " and last is " << stop2 << std::endl;
 
+    fclose(fp);
 
     return true;
 };
+
+//This fucntion only write a ft2 file, for which deep pickerfitter and nmrdraw can read.
+//It is not a 100% compatible ft2 file. 
+
+bool spectrum_io::write_pipe(std::vector<std::vector<float>> spect, std::string fname)
+{
+
+    if(b_pipe==false) //otherwise we just use the input header 
+    {
+        header[0]=0.0f;
+        header[219]=float(ydim); 
+        header[99]=float(xdim); 
+        header[106]=float(1); 
+        header[256]=float(2); 
+
+        
+        header[9] = 2; //dimension is 2
+        header[57] = 0.0f;  //2d spectrum
+        header[221] = 0.0f; //not transposed
+        header[24] = 2.0f;  //first dimension is 2
+        header[25] = 1.0f;  //second dimension is 1
+        header[26] = 3.0f;  //z dimension is 3
+        header[27] = 4.0f;  //A dimension is 4
+        
+
+
+        header[101 - 1] = (float)SW1;  //second dimension
+        header[120 - 1] = (float)frq1;
+        header[102 - 1] = (float)ref1;
+
+        header[230 - 1] = (float)SW2; //first dimension
+        header[219 - 1] = (float)frq2;
+        header[250 - 1] = (float)ref2;
+    }
+    
+   
+    FILE *fp = fopen(fname.c_str(), "w");
+    if(fp==NULL)
+    {
+        std::cout<<"cannot open file "<<fname.c_str()<<"to write"<<std::endl;
+    }
+    else
+    {
+        fwrite(header, sizeof(float), 512, fp);
+        for (unsigned int i = 0; i < ydim; i++)
+        {
+            fwrite(spect[i].data(), sizeof(float), xdim, fp);
+        }
+        fclose(fp);
+    }
+
+    return true;
+};
+
+
 
 float spectrum_io::read_float(FILE *fp)
 {
@@ -814,6 +980,7 @@ bool spectrum_io::read_sparky(std::string infname)
     std::cout << "  Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " ppm" << std::endl;
     std::cout << "Indirect dimension offset is " << begin2 << ", ppm per steo is " << step2 << " ppm" << std::endl;
 
+    fclose(fp);
 
     return true;
 
