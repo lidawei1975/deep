@@ -1,9 +1,7 @@
 #include <string>
 #include <vector>
 #include <cstdio>
-
-using namespace std;
-
+#include <iostream>
 
 #include "commandline.h"
 
@@ -15,35 +13,29 @@ void CCommandline::pharse(int argc, char **argv)
     {
         for (j = 0; j < narg; j++)
         {
-            if (arguments.at(j).compare(argv[i]) == 0 && argv[i][0] == '-' && argv[i][1] == '-') //started with --, multi followings
+            if (arguments.at(j).compare(argv[i]) == 0) 
             {
-                parameters.at(j) = " ";                       // remove default one.
-                while (i + 1 < argc && argv[i + 1][0] != '-') //store multi entries in to this value
+                parameters.at(j) = ""; 
+                if(i+1>=argc || argv[i + 1][0] == '-')
+                {
+                    parameters.at(j) = "yes";
+                }
+                while (i + 1 < argc && argv[i + 1][0] != '-') 
                 {
                     parameters.at(j).append(argv[i + 1]);
                     parameters.at(j).append(" ");
                     i++;
-                }
-            }
-            else if (arguments.at(j).compare(argv[i]) == 0) // //started with -, normal one
-            {
-                if (i + 1 < argc && argv[i + 1][0] != '-')
-                {
-                    parameters.at(j) = argv[i + 1];
-                    i++;
-                }
-                else
-                    parameters.at(j) = "yes";
+                }                    
             }
         }
     }
     return;
 }
 
-void CCommandline::init(vector<string> in, vector<string> in2)
+void CCommandline::init(std::vector<std::string> in, std::vector<std::string> in2)
 {
     int i;
-    string t;
+    std::string t;
 
     narg = in.size();
     for (i = 0; i < narg; i++)
@@ -64,10 +56,10 @@ void CCommandline::init(vector<string> in, vector<string> in2)
     return;
 };
 
-void CCommandline::init(vector<string> in, vector<string> in2, vector<string> in3)
+void CCommandline::init(std::vector<std::string> in, std::vector<std::string> in2, std::vector<std::string> in3)
 {
     int i;
-    string t;
+    std::string t;
 
     narg = in.size();
     for (i = 0; i < narg; i++)
@@ -90,9 +82,9 @@ void CCommandline::init(vector<string> in, vector<string> in2, vector<string> in
     return;
 };
 
-string CCommandline::query(string in)
+std::string CCommandline::query(std::string in)
 {
-    string out;
+    std::string out;
     int i;
 
     error_flag=1;
@@ -106,8 +98,17 @@ string CCommandline::query(string in)
             error_flag=0;
         }
     }
+    if(error_flag==1)
+    {
+        std::cout<<"Unrecognized command line argument: "<<in<<std::endl;
+    }
 
-    return out;
+    const auto strBegin = out.find_first_not_of(" ");
+    const auto strEnd = out.find_last_not_of(" ");
+    const auto strRange = strEnd - strBegin + 1;
+
+    return out.substr(strBegin, strRange);
+
 }
 
 void CCommandline::print(void)
