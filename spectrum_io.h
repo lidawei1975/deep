@@ -19,7 +19,7 @@ enum spectrum_type
 
 namespace ldw_math_spectrum_2d
 {
-    bool SplitFilename (const std::string& str, std::string &path_name, std::string &file_name);
+    bool SplitFilename (const std::string& str, std::string &path_name, std::string &file_name, std::string &file_name_ext);
     double calcualte_median(std::vector<double> scores);
     void sortArr(std::vector<double> &arr, std::vector<int> &ndx);
     bool spline_expand(int xdim, int ydim, float *spect,std::vector<double> &final_data);
@@ -78,7 +78,6 @@ protected:
     std::vector<int> peak_index; //used when read in peak list to keep track of all peaks.
 public:
     std::vector<double> p1,p2,p_intensity;  //grid peak position, peak amp 
-
     std::vector<double> p1_ppm,p2_ppm; //ppm value of peak pos, obtained from p1 and p2
     std::vector<double> p_confidencex,p_confidencey; //confidence level of peaks
     std::vector<std::string> user_comments; //user comment of about a peak!

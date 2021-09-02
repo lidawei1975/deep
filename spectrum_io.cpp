@@ -18,21 +18,37 @@
 namespace ldw_math_spectrum_2d
 {
 
-    bool SplitFilename (const std::string& str, std::string &path_name, std::string &file_name)
+    bool SplitFilename (const std::string& str, std::string &path_name, std::string &file_name, std::string &file_name_ext)
     {
         bool b=false;
+        std::string file_name_full;
         std::size_t found = str.find_last_of("/\\");
         if(found!=std::string::npos)
         {
             path_name=str.substr(0,found);
-            file_name=str.substr(found+1);
+            file_name_full=str.substr(found+1);
             b=true;
         }
         else
         {
             path_name=".";   
-            file_name=str;
+            file_name_full=str;
         }
+
+        found = file_name_full.find_last_of(".");
+        if(found!=std::string::npos)
+        {
+            file_name=str.substr(0,found);
+            file_name_ext=str.substr(found+1);
+            b=true;
+        }
+        else
+        {
+            file_name_ext="";   
+            file_name=file_name_full;
+        }
+
+
         return b;
     }
 
@@ -780,7 +796,7 @@ bool spectrum_io::read_pipe(std::string infname)
 //This fucntion only write a ft2 file, for which deep pickerfitter and nmrdraw can read.
 //It is not a 100% compatible ft2 file. 
 
-bool spectrum_io::write_pipe(std::vector<std::vector<float>> spect, std::string fname)
+bool spectrum_io::write_pipe(std::vector<std::vector<float> > spect, std::string fname)
 {
 
     if(b_pipe==false) //otherwise we just use the input header 

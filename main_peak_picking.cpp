@@ -11,7 +11,7 @@
 
 int main(int argc, char **argv)
 {
-    std::cout<<"Last update: July,2021"<<std::endl;
+    std::cout<<"Last update: Apr.21,2021"<<std::endl;
  
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;
@@ -33,7 +33,7 @@ int main(int argc, char **argv)
     args3.push_back("Direct set noise level to this value, estimate from sepctrum if input is 0.0 (0.0)");
 
     args.push_back("-in");
-    args2.push_back("part.csv");
+    args2.push_back("input.ft2");
     args3.push_back("Input file name (input.ft2)");
 
     args.push_back("-out");
@@ -42,7 +42,7 @@ int main(int argc, char **argv)
 
     args.push_back("-model");
     args2.push_back("1");
-    args3.push_back("Model selection for ANN picker, 1: FWHH 6-20, 2: FWHH 4-12 (1)");
+    args3.push_back("Model selection for ANN picker, 1: FWHH 6-20, 2: FWHH 4-12");
 
     args.push_back("-debug_flag1");
     args2.push_back("0");
@@ -71,8 +71,8 @@ int main(int argc, char **argv)
     b_negative=cmdline.query("-negative")=="yes" || cmdline.query("-negative")=="y";
 
     debug_flag1=atoi(cmdline.query("-debug_flag1").c_str());
-    // zf=atoi(cmdline.query("-zf").c_str());
-    // if(zf!=1) zf=0;
+    zf=atoi(cmdline.query("-zf").c_str());
+    if(zf!=1) zf=0;
     model_selection=atoi(cmdline.query("-model").c_str());
     if(model_selection!=1) model_selection=2;
 
@@ -99,7 +99,7 @@ int main(int argc, char **argv)
         if(x.init(infname)) //read and zero filling
         {
             if (noise_level>1e-20) { x.set_noise_level(noise_level);}
-            x.ann_peak_picking(debug_flag1,0); //picking and fitting, output
+            x.ann_peak_picking(debug_flag1,zf); //picking and fitting, output
             x.print_peaks_picking(outfname);
         }
         x.clear_memory();

@@ -4,8 +4,10 @@
 #include <string>
 
 
-#include "spectrum_io.h"
-
+#ifndef SPECTRUM_IO_HEAD
+  #define SPECTRUM_IO_HEAD
+  #include "spectrum_io.h"
+#endif
 
 class spectrum_pick : public spectrum_io
 {

@@ -16,7 +16,7 @@ target_link_libraries(deep_picker ${CMAKE_SOURCE_DIR}/libcerf/libcerf.a)
 
 find_package(Ceres)
 if(Ceres_FOUND)
-    add_executable(peak_fit main_peak_fitting.cpp spectrum_io.cpp spectrum_fit.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+    add_executable(peak_fit main_peak_fitting.cpp spectrum_io.cpp spectrum_fit.cpp kiss_fft.c $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
     target_include_directories(peak_fit PRIVATE  ${CERES_INCLUDE_DIRS})
     target_include_directories(peak_fit PRIVATE  ${EIGEN3_INCLUDE_DIR})
     target_link_libraries(peak_fit ${CERES_LIBRARIES})

@@ -19,6 +19,7 @@
 extern float ann_data[];
 extern float ann_data_m2[];
 extern float ann_data_m3[];
+extern float ann_data_m4[];
 
 extern "C"  
 {
@@ -292,7 +293,7 @@ namespace ldw_math_dnn
             }
         }
 
-        std::vector<std::deque<int>> clusters=bread_first(distance_binary_matrix,npeak); //orphan will be skipped
+        std::vector<std::deque<int> > clusters=bread_first(distance_binary_matrix,npeak); //orphan will be skipped
 
         for(int i=0;i<clusters.size();i++)
         {
@@ -791,6 +792,53 @@ bool peak1d::load()
 };
 
 
+bool peak1d::load_m4()
+{
+    model_selection=4;
+
+    int n=0;
+    c0.set_size(11,1,40);  //nkernel, ninput, nfilter
+    // c0.read("conv1d.txt");
+    n+=c0.read(ann_data_m4+n);
+    
+    c1.set_size(1,40,20); //knernel, ninput, nfilter
+    // c1.read("conv1d_1.txt");
+    n+=c1.read(ann_data_m4+n);
+    
+    c2.set_size(11,20,10); //knernel, ninput, nfilter
+    // c2.read("conv1d_2.txt");
+    n+=c2.read(ann_data_m4+n);
+
+    c3.set_size(1,10,20); //knernel, ninput, nfilter
+    // c3.read("conv1d_3.txt");
+    n+=c3.read(ann_data_m4+n);
+
+    c4.set_size(1,20,10); //knernel, ninput, nfilter
+    // c4.read("conv1d_4.txt");
+    n+=c4.read(ann_data_m4+n);
+
+    c5.set_size(11,10,30); //knernel, ninput, nfilter
+    // c5.read("conv1d_5.txt");
+    n+=c5.read(ann_data_m4+n);
+
+    c6.set_size(1,30,18); //knernel, ninput, nfilter
+    // c6.read("conv1d_6.txt");
+    n+=c6.read(ann_data_m4+n);
+
+    c7.set_size(1,18,8); //knernel, ninput, nfilter
+    // c7.read("conv1d_7.txt");
+    n+=c7.read(ann_data_m4+n);
+
+    p1.set_size(18,3);  //ninput, npool
+    
+    d.set_act(softmax);
+    d.set_size(18,3); //ninput=18, nfilter=3
+    // d.read("my_layer.txt");
+    n+=d.read(ann_data_m4+n);
+
+    return true;
+};
+
 bool peak1d::load_m2()
 {
     model_selection=2;
@@ -965,7 +1013,10 @@ bool peak1d::predict_step2()
         
         int kk=p_segment[k];
 
-        if(p_type[kk]==2 && p_type[kk+1]==1 && p_type[kk+2]==1) p_type[kk]=1; //change potential peak to peak if pattern found
+        if(p_type[kk]==2 && p_type[kk+1]==1 && p_type[kk+2]==1)
+        {
+            p_type[kk]=1; //change potential peak to peak if pattern found
+        }
         if(p_type[kk]==1 && p_type[kk+1]==1 && p_type[kk+2]==2){
             p_type[kk+2]=1; //change potential peak to peak if pattern found
         }
@@ -1268,7 +1319,10 @@ bool peak2d::init_ann(int index_model)
 {
     model_selection=index_model;
     if(index_model==1) return p1.load();
-    else return p1.load_m2();
+    if(index_model==2) return p1.load_m2();
+    if(index_model==3) return p1.load_m3();
+    if(index_model==4) return p1.load_m4();
+    return true;
 }
 
 bool peak2d::column_2_row()
@@ -1846,7 +1900,7 @@ bool peak2d::predict_step3()
         setup_peaks_from_p();
         // p_2_column_paras: index to a_column,s_column etc to get inte, sigma ...., 1D peak parameter of column by column picking (indirect dimension). p_2_row_paras: same
         // p_2_line_column: index of column lines,  p_2_line_row: index of row lines
-        check_special_peaks_2();  //label peaks that should be excluded in check_special_peaks_3 function call
+        // check_special_peaks_2();  //label peaks that should be excluded in check_special_peaks_3 function call
         check_special_peaks_3();  //add new peaks to cx,cy, p_2_column_paras,p_2_row_paras. p_2_line_column and p_2_line_row lost track after this function!! Tilted priciple overalpped two peaks will have only one intersection
         setup_peaks_from_p();
 
@@ -2119,6 +2173,87 @@ bool peak2d::predict_step3()
     return true;
 };
 
+
+bool peak2d::cut_one_peak_v2(std::vector<int> & line_x,std::vector<int> & line_y,std::vector<int> & line_ndx,const int current_pos,const std::vector<int> ndx_neighbors)
+{
+    int anchor_pos=-1;
+    int xx=cx[current_pos];
+    int yy=cy[current_pos];
+
+    for(int i=0;i<line_x.size();i++)
+    {
+        if(line_x[i]==xx && line_y[i]==yy)
+        {
+            anchor_pos=i;
+            break;
+        }
+    }
+    if(anchor_pos==-1)
+    {
+        std::cout<<"Something is wrong in cut_one_peak_v2"<<std::endl;
+        return false;
+    }
+
+    int pos_start=0;
+    int pos_end=line_x.size();
+
+    for(int i=anchor_pos;i>=0;i--)
+    {
+        double x=line_x[i];
+        double y=line_y[i];
+
+        double z_current=inten[current_pos]*voigt(cx[current_pos]-x,sigmax[current_pos],gammax[current_pos])*voigt(cy[current_pos]-y,sigmay[current_pos],gammay[current_pos]);
+
+        bool b_found=false;
+        for(int j=0;j<ndx_neighbors.size();j++)
+        {
+            int test_pos=ndx_neighbors[j];
+            double z_test=inten[test_pos]*voigt(cx[test_pos]-x,sigmax[test_pos],gammax[test_pos])*voigt(cy[test_pos]-y,sigmay[test_pos],gammay[test_pos]);
+            if(z_test>z_current/3.0)
+            {
+                b_found=true;
+                break;
+            }
+        }
+        if(b_found)
+        {
+            pos_start=i;
+            break;
+        }
+    }
+    
+    for(int i=anchor_pos;i<line_x.size();i++)
+    {
+        double x=line_x[i];
+        double y=line_y[i];
+
+        double z_current=inten[current_pos]*voigt(cx[current_pos]-x,sigmax[current_pos],gammax[current_pos])*voigt(cy[current_pos]-y,sigmay[current_pos],gammay[current_pos]);
+
+        bool b_found=false;
+        for(int j=0;j<ndx_neighbors.size();j++)
+        {
+            int test_pos=ndx_neighbors[j];
+            double z_test=inten[test_pos]*voigt(cx[test_pos]-x,sigmax[test_pos],gammax[test_pos])*voigt(cy[test_pos]-y,sigmay[test_pos],gammay[test_pos]);
+            if(z_test>z_current/3.0)
+            {
+                b_found=true;
+                break;
+            }
+        }
+        if(b_found)
+        {
+            pos_end=i;
+            break;
+        }
+    }
+
+    line_x=std::vector<int>(line_x.begin()+pos_start,line_x.begin()+pos_end);
+    line_y=std::vector<int>(line_y.begin()+pos_start,line_y.begin()+pos_end);
+    line_ndx=std::vector<int>(line_ndx.begin()+pos_start,line_ndx.begin()+pos_end);
+    
+    return true;
+}
+  
 
 bool peak2d::cut_one_peak(std::vector<double> target_line_x,std::vector<double>  target_line_y,int current_pos,std::vector<int> ndx_neighbors, int anchor_pos,int &pos_start,int &pos_end)
 {
@@ -2440,7 +2575,7 @@ bool peak2d::check_special_peaks_2()
     peak_exclude.resize(cx.size(),0);
 
 
-    //need inten for following special case 1 code to run:
+    //need inten for following special case code to run:
     inten.clear();
     for(int i=0;i<cx.size();i++)
     {
@@ -2587,6 +2722,7 @@ bool peak2d::check_special_peaks_2()
             }
         }
     }  
+    return true;
 }
 
 bool peak2d::check_special_peaks_3()
@@ -2598,9 +2734,15 @@ bool peak2d::check_special_peaks_3()
     to_remove.clear();
     to_remove.resize(npeak_current,0.0);
 
+
     for(int i=npeak_current-1;i>=0;i--)
     {
-        if(peak_exclude[i]==1) continue;
+        // std::cout<<"check_special_case for peak "<<i<<" is started."<<std::endl;
+
+        // if(peak_exclude[i]==1) continue;
+        if( inten[i] < noise_level * user_scale ) continue;
+        if( shoulx[i]==1 || shouly[i]==1 ) continue; 
+        // if( confidencex[i]<0.7 || confidencey[i]<0.7) continue;
 
         int m=p_2_line_column[i];
         int bc,sc;
@@ -2635,7 +2777,41 @@ bool peak2d::check_special_peaks_3()
         double fwhhx=1.0692*gammax[i]+sqrt(0.8664*gammax[i]*gammax[i]+5.5452*sigmax[i]*sigmax[i]);
         double fwhhy=1.0692*gammay[i]+sqrt(0.8664*gammay[i]*gammay[i]+5.5452*sigmay[i]*sigmay[i]);
 
-        check_special_case(cx[i],cy[i],fwhhx,fwhhy,cline_x,cline_y,cline_ndx,rline_x,rline_y,rline_ndx,new_x,new_y,new_cline_ndx,new_rline_ndx);
+        auto result_x = std::minmax_element (cline_x.begin(),cline_x.end());
+        auto result_y = std::minmax_element (rline_y.begin(),rline_y.end());
+
+        if( (cx[i]==1274 && (cy[i]==1521 || cy[i]==1522)) || (cx[i]==1076 && cy[i]==846))
+        {
+            std::cout<<"x is from "<<*result_x.first<<" to "<<*result_x.second<<std::endl;
+            std::cout<<"y is from "<<*result_y.first<<" to "<<*result_y.second<<std::endl;
+        }
+        
+        int n_min=6;
+        if(model_selection==1)
+        {
+            n_min=10;
+        }
+
+        bool b11 = *result_x.first < cx[i]-n_min;  //line is too short on the left side of the testing peak
+        bool b12 = a_column[cline_ndx[result_x.first-cline_x.begin()]]<noise_level*user_scale2*3.0; //end of line appraoch noise floor
+
+        bool b21 = *result_x.second > cx[i]+n_min; //right side of the testing peak
+        bool b22 = a_column[cline_ndx[result_x.second-cline_x.begin()]]<noise_level*user_scale2*3.0;
+
+        bool b31 = *result_y.first < cy[i]-n_min;  //bottom side
+        bool b32 = a_row[rline_ndx[result_y.second-rline_y.begin()]]<noise_level*user_scale2*3.0;
+
+        bool b41 = *result_y.second < cy[i]+n_min; //top side
+        bool b42 = a_row[rline_ndx[result_y.second-rline_y.begin()]]<noise_level*user_scale2*3.0;
+
+        if( !(b11 || b12) || !(b21 || b22) || !(b31 || b32) || !(b41 || b42) ) 
+        {
+            continue;
+        }
+        
+
+        check_special_case(i,fwhhx,fwhhy,cline_x,cline_y,cline_ndx,rline_x,rline_y,rline_ndx,new_x,new_y,new_cline_ndx,new_rline_ndx);
+        // std::cout<<"check_special_case for peak "<<i<<" is done."<<std::endl;
 
         if(new_x.size()>0)
         {
@@ -2691,9 +2867,8 @@ bool peak2d::get_tilt_of_line(const int flag, const int x,const int y,const doub
     
     
 
-    int cut2=std::min(int(w*0.8+0.5),13); //13
-    int cut1=std::max(int(w*0.25+0.5),3); //4
-    cut1=1;
+    int cut2=100;
+    int cut1=1;
     
 
     k1m=-1;
@@ -2767,20 +2942,50 @@ bool peak2d::check_near_peak(const int x0, const int y0,const int x, const int y
 }
 
 
-bool peak2d::check_special_case(const int x,const int y,const double fx,const double fy, const std::vector<int> &cline_x,const std::vector<int> &cline_y,const std::vector<int> &cline_ndx,const std::vector<int> &rline_x,const std::vector<int> &rline_y,
-                                const std::vector<int> &rline_ndx,std::vector<int> &xn,std::vector<int> &yn,std::vector<int> &cline_n, std::vector<int> &rline_n)
+bool peak2d::check_special_case(const int ndx,const double fx,const double fy,
+                                std::vector<int> &cline_x,std::vector<int> &cline_y,std::vector<int> &cline_ndx,
+                                std::vector<int> &rline_x,std::vector<int> &rline_y,std::vector<int> &rline_ndx,
+                                std::vector<int> &xn,std::vector<int> &yn,std::vector<int> &cline_n, std::vector<int> &rline_n)
 {
     //cline is from column prediciton, that is, cline is mainly horizental
     int k1,k2,m1,m2;
     double ratio1,ratio2;
     bool b1,b2;
     int potential_x1,potential_x2,potential_y1,potential_y2;
+    int x=cx[ndx];
+    int y=cy[ndx];
+
+    std::vector<int> ndx_neighbors=ldw_math_dnn::find_neighboring_peaks(cx,cy,ndx);
+
+    cut_one_peak_v2(cline_x,cline_y,cline_ndx,ndx,ndx_neighbors); //remove segment belongs to other peaks
+    cut_one_peak_v2(rline_x,rline_y,rline_ndx,ndx,ndx_neighbors); //remove segment belongs to other peaks
+    
+    //TO DO: move volume check from get_tilt_of_line to cut_one_peak_v2
 
     get_tilt_of_line(1,x,y,std::min(fx,fy),cline_x,cline_y,cline_ndx,k1,k2,ratio1);
     get_tilt_of_line(2,y,x,std::min(fx,fy),rline_y,rline_x,rline_ndx,m1,m2,ratio2);
 
     b1= ratio1>=0.25 &&  ratio2>=0.25 &&  ratio1+ratio2>=0.6;
     b2=ratio1<=-0.25 && ratio2<=-0.25 && ratio1+ratio2<=-0.6;
+
+    //debug output for spectra3\pseudo_3d\g12d_gtp_cpmg\first
+    // if(x==1202 && y==348)
+    //debug output for spectra3\protein\new_asynu,//debug output for spectra3\protein\new_asynu_a    
+    // if( (x==1274 && (y==1521 || y==1522)) || (x==1076 && y==846))
+    if( x==1390 && y==222 ) //pseudo/g12d_gtp_cpmg/first
+    {
+        std::cout<<"cline:"<<std::endl;
+        for(int i=0;i<cline_x.size();i++)
+        {
+            std::cout<<cline_x[i]<<" "<<cline_y[i]<<std::endl;
+        }
+        std::cout<<"rline:"<<std::endl;
+        for(int i=0;i<rline_x.size();i++)
+        {
+            std::cout<<rline_x[i]<<" "<<rline_y[i]<<std::endl;
+        }
+        std::cout<<"ratio1="<<ratio1<<" ratio2="<<ratio2<<std::endl;
+    }
 
     if( (b1 || b2) && (check_near_peak(x,y,cline_x[k1],cline_y[k1]) && check_near_peak(x,y,rline_x[m1],rline_y[m1]) && check_near_peak(x,y,cline_x[k2],cline_y[k2]) && check_near_peak(x,y,rline_x[m2],rline_y[m2])) )
     {
@@ -2831,12 +3036,12 @@ bool peak2d::find_lines(int xd, int yd, std::vector<int> r, std::vector<int> &x0
     int min_line_length;
     int limit;
 
-    if(model_selection==1) //peak is wide
+    if(model_selection==1 || model_selection==4 ) //peak is wide
     {
         min_line_length=5;
         limit=4;
     }
-    else //peak is narrow
+    else if(model_selection==2 || model_selection==3)
     {
         min_line_length=3;
         limit=2;

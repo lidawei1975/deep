@@ -14,7 +14,7 @@
 int main(int argc, char **argv)
 {
     
-    std::cout<<"Last update: July,2021"<<std::endl;
+    std::cout<<"Last update: Apr.21,2021"<<std::endl;
 
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;
@@ -41,26 +41,24 @@ int main(int argc, char **argv)
 
 
     args.push_back("-in");
-    args2.push_back("test.ft2");
-    args3.push_back("input spectral file names. Multiple files should be seprated by space (test.ft2)");
+    args2.push_back("input.ft2");
+    args3.push_back("input spectral file names. Multiple files should be seprated by space");
 
     // args.push_back("-zf");
     // args2.push_back("0");
     // args3.push_back("addtional fold of zero filling, 0 or 1 (0)");
 
     args.push_back("-peak_in");
-    args2.push_back("input_peaks.tab");
+    args2.push_back("peaks_picked.tab");
     args3.push_back("Read peaks list from this file. Support .tab or .list format (input_peaks.tab)");
     
     args.push_back("-out");
     args2.push_back("peaks.tab");
     args3.push_back("output fitted peaks file name. Multiple files should be seprated by space. Support .tab or .list format");
 
-
     args.push_back("-recon");
     args2.push_back("yes");
     args3.push_back("save reconstructed and differential spectra files in pipe format? (yes)");
-
 
     args.push_back("-maxround");
     args2.push_back("50");
@@ -73,6 +71,19 @@ int main(int argc, char **argv)
     args.push_back("-wy");
     args2.push_back("0.0");
     args3.push_back("maximal FWHH in indirect dimension in ppm, 0 means using information in the input peaks  (0.0)");
+
+    args.push_back("-n_err");
+    args2.push_back("0");
+    args3.push_back("Round of addtional fitting with artifact noise for the estimation of fitting errors");
+
+    args.push_back("-zf1");
+    args2.push_back("1");
+    args3.push_back("Time of zero filling along direct dimension. Skipped if -n_err is less than 5");
+    
+    args.push_back("-zf2");
+    args2.push_back("1");
+    args3.push_back("Time of zero filling along indirect dimension. Skipped if -n_err is less than 5");
+    
 
 
     cmdline.init(args, args2, args3);
@@ -90,8 +101,8 @@ int main(int argc, char **argv)
     double noise_level;
     bool b_read_success=false;
     
-    // zf=atoi(cmdline.query("-zf").c_str());
-    // if(zf!=1) zf=0;
+    zf=atoi(cmdline.query("-zf").c_str());
+    if(zf!=1) zf=0;
     noise_level=atof(cmdline.query("-noise_level").c_str());
     peak_file=cmdline.query("-peak_in");
     infname = cmdline.query("-in");
@@ -123,7 +134,7 @@ int main(int argc, char **argv)
             file_names.push_back(p);
         }
         
-        x.initflags_fit(maxround,too_near_cutoff,i_method,0);
+        x.initflags_fit(maxround,too_near_cutoff,i_method,zf);
         x.set_scale(user,user2);
 
         if (x.init_all_spectra(file_names))
@@ -134,6 +145,11 @@ int main(int argc, char **argv)
             }
             if (noise_level>1e-20) { x.set_noise_level(noise_level);}
 
+            if(std::stoi(cmdline.query("-n_err"))>=5)
+            {
+                x.init_error(1,std::stoi(cmdline.query("-zf1")),std::stoi(cmdline.query("-zf2")),std::stoi(cmdline.query("-n_err")));
+            }
+
             if (x.peak_reading(peak_file) && x.peak_fitting())
             {
                 x.print_peaks(outfname);
@@ -143,7 +159,6 @@ int main(int argc, char **argv)
                     x.generate_recon_and_diff_spectrum();
                     std::cout<<"Finish generate recon and diff spectral files."<<std::endl;
                 }
-                
             }
         }
         x.clear_memory();

@@ -115,11 +115,12 @@ public:
     bool load();
     bool load_m2();
     bool load_m3(); 
+    bool load_m4();
     bool predict(std::vector<float>);
     bool moving_average_output(); 
     bool predict_step2();
 
-    inline bool set_noise_level(float f){noise_level=f;};
+    inline bool set_noise_level(float f){noise_level=f;return true;};
 
 };
 
@@ -180,7 +181,7 @@ private:
     bool row_2_column(void);
     bool find_lines(int,int,std::vector<int>,std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &);
     //int intersect(double vx1,double vy1,double vx2,double vy2,double hx1,double hy1,double hx2,double hy2,double &x,double &y);
-    bool check_special_case(const int,const int,const double, const double,const std::vector<int> &,const std::vector<int> &,const std::vector<int> &,const std::vector<int> &,const std::vector<int> &,const std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &, std::vector<int> &);
+    bool check_special_case(const int,const double, const double,std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &,std::vector<int> &, std::vector<int> &);
     bool get_tilt_of_line(const int flag,const int x, const int y, const double w,const std::vector<int> &line_x,const std::vector<int> &line_y,const std::vector<int> &line_ndx, int &p1, int &p2, double &ratio);
     bool check_near_peak(const int,const int,const int,const int);
     bool predict_step1();
@@ -196,7 +197,8 @@ private:
     bool interp2(std::vector<double>,std::vector<double>,std::vector<double> &);
     bool find_nearest_normal_peak(double x, double y,std::vector<int>,int);
     bool cut_one_peak(std::vector<double> target_line_x,std::vector<double>  target_line_y,int current_pos,std::vector<int> ndx_neighbors, int anchor_pos,int &,int &);
-    
+    bool cut_one_peak_v2(std::vector<int> &,std::vector<int> &,std::vector<int> &,const int,const std::vector<int>);
+
 public:
     peak2d();
     peak2d(int);

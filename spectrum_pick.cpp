@@ -90,13 +90,17 @@ bool spectrum_pick::simple_peak_picking()
         }
     }
 
-    //all 0,
-    sigmax.resize(p1.size(),0.0);
-    sigmay.resize(p1.size(),0.0);
-    gammax.resize(p1.size(),0.0);
-    gammay.resize(p1.size(),0.0);
-    p_confidencex.resize(p1.size(),0.0);
-    p_confidencey.resize(p1.size(),0.0);
+    //fake values.
+    sigmax.resize(p1.size(),3.0);
+    sigmay.resize(p1.size(),3.0);
+    gammax.resize(p1.size(),0.00001);
+    gammay.resize(p1.size(),0.00001);
+    p_confidencex.resize(p1.size(),1.0);
+    p_confidencey.resize(p1.size(),1.0);
+
+
+    get_ppm_from_point();
+
     return true;
 }
 
@@ -255,6 +259,7 @@ bool spectrum_pick::clear_memory()
     {
         delete [] spect;
     }
+    return true;
 }
 
 bool spectrum_pick::linear_regression()
@@ -328,6 +333,9 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
         user_comments.resize(p1.size(), "peak");
     }
 
+    std::vector<int> ndx;
+    ldw_math_spectrum_2d::sortArr(p_intensity,ndx);
+
     std::istringstream iss;
     iss.str(outfname);
     std::string p;
@@ -350,12 +358,12 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
             FILE *fp = fopen(file_names[m].c_str(), "w");
             fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT ASS CONFIDENCE\n");
             fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%s %%4.2f\n");
-            for (unsigned int i = 0; i < p1.size(); i++)
+            for (unsigned int ii = 0; ii < ndx.size(); ii++)
             {
+                int i=ndx[ii];
                 double s1,s2;
                 s1=1.0692*gammax[i]+sqrt(0.8664*gammax[i]*gammax[i]+5.5452*sigmax[i]*sigmax[i]);
                 s2=1.0692*gammay[i]+sqrt(0.8664*gammay[i]*gammay[i]+5.5452*sigmay[i]*sigmay[i]);
-                int kk=round(p2[i]) * xdim + round(p1[i]);
                 fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %s %4.2f\n",i+1,p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
                             int(p1[i]-3),int(p1[i]+3),int(p2[i]-3),int(p2[i]+3),p_intensity[i],user_comments[i].c_str(),std::min(p_confidencex[i],p_confidencey[i]));        
             }
@@ -366,8 +374,9 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
         {
             FILE *fp=fopen(file_names[m].c_str(),"w");
             fprintf(fp,"Assignment         w1         w2   Height Confidence\n");
-            for (unsigned int i = 0; i < p1.size(); i++)
+            for (unsigned int ii = 0; ii < ndx.size(); ii++)
             {
+                int i=ndx[ii];
                 fprintf(fp,"?-? %9.3f %9.3f %+e %4.2f\n",p2_ppm[i], p1_ppm[i],p_intensity[i],std::min(p_confidencex[i],p_confidencey[i]));        
             }
             fclose(fp);
@@ -377,12 +386,13 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
         {
             FILE * fp=fopen(file_names[m].c_str(),"w");
             fprintf(fp,"\"picked_peaks\":[");
-            int npeak=p1.size();
-            for(unsigned int i=0;i<npeak-1;i++)
+            for (unsigned int ii = 0; ii < ndx.size()-1; ii++)
             {
+                int i=ndx[ii];
                 fprintf(fp,"{\"cs_x\": %f,\"cs_y\": %f, \"type\": 1, \"index\": %f, \"sigmax\": %f,  \"sigmay\": %f,\"gammax\": %f,  \"gammay\": %f},",p1_ppm[i],p2_ppm[i],p_intensity[i],sigmax[i],sigmay[i],gammax[i],gammay[i]);
             }
-            fprintf(fp,"{\"cs_x\": %f,\"cs_y\": %f, \"type\": 1, \"index\": %f, \"sigmax\": %f,  \"sigmay\": %f, \"gammax\": %f,  \"gammay\": %f}",p1_ppm[npeak-1],p2_ppm[npeak-1],p_intensity[npeak-1],sigmax[npeak-1],sigmay[npeak-1],gammax[npeak-1],gammay[npeak-1]);
+            int n=ndx[ndx.size()-1];
+            fprintf(fp,"{\"cs_x\": %f,\"cs_y\": %f, \"type\": 1, \"index\": %f, \"sigmax\": %f,  \"sigmay\": %f, \"gammax\": %f,  \"gammay\": %f}",p1_ppm[n],p2_ppm[n],p_intensity[n],sigmax[n],sigmay[n],gammax[n],gammay[n]);
 
             fprintf(fp,"]");
             fclose(fp);
