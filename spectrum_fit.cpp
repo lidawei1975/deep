@@ -3847,8 +3847,8 @@ bool spectrum_fit::print_peaks(std::string outfname)
                 for (unsigned int i0 = 0; i0 < p1.size(); i0++)
                 {
                     int i=ndx[i0];
-                    float s1=std::sqrt(sigmax[i]/2.0)*2.355f;
-                    float s2=std::sqrt(sigmay[i]/2.0)*2.355f;
+                    float s1=sigmax[i]*2.355f;
+                    float s2=sigmay[i]*2.355f;
                     fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %4d",peak_index[i],p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
                                 int(p1[i]-3),int(p1[i]+3),int(p2[i]-3),int(p2[i]+3),amplitudes[i],delta_height[i],user_comments[i].c_str(),group[i]+1,num_sums[i][0],fitted_volume[i],nround[i]);
                     if(spects.size()>1)
