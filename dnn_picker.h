@@ -115,7 +115,6 @@ public:
     bool load();
     bool load_m2();
     bool load_m3(); 
-    bool load_m4();
     bool predict(std::vector<float>);
     bool moving_average_output(); 
     bool predict_step2();

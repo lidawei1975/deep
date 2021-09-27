@@ -19,7 +19,7 @@
 extern float ann_data[];
 extern float ann_data_m2[];
 extern float ann_data_m3[];
-extern float ann_data_m4[];
+
 
 extern "C"  
 {
@@ -792,53 +792,6 @@ bool peak1d::load()
 };
 
 
-bool peak1d::load_m4()
-{
-    model_selection=4;
-
-    int n=0;
-    c0.set_size(11,1,40);  //nkernel, ninput, nfilter
-    // c0.read("conv1d.txt");
-    n+=c0.read(ann_data_m4+n);
-    
-    c1.set_size(1,40,20); //knernel, ninput, nfilter
-    // c1.read("conv1d_1.txt");
-    n+=c1.read(ann_data_m4+n);
-    
-    c2.set_size(11,20,10); //knernel, ninput, nfilter
-    // c2.read("conv1d_2.txt");
-    n+=c2.read(ann_data_m4+n);
-
-    c3.set_size(1,10,20); //knernel, ninput, nfilter
-    // c3.read("conv1d_3.txt");
-    n+=c3.read(ann_data_m4+n);
-
-    c4.set_size(1,20,10); //knernel, ninput, nfilter
-    // c4.read("conv1d_4.txt");
-    n+=c4.read(ann_data_m4+n);
-
-    c5.set_size(11,10,30); //knernel, ninput, nfilter
-    // c5.read("conv1d_5.txt");
-    n+=c5.read(ann_data_m4+n);
-
-    c6.set_size(1,30,18); //knernel, ninput, nfilter
-    // c6.read("conv1d_6.txt");
-    n+=c6.read(ann_data_m4+n);
-
-    c7.set_size(1,18,8); //knernel, ninput, nfilter
-    // c7.read("conv1d_7.txt");
-    n+=c7.read(ann_data_m4+n);
-
-    p1.set_size(18,3);  //ninput, npool
-    
-    d.set_act(softmax);
-    d.set_size(18,3); //ninput=18, nfilter=3
-    // d.read("my_layer.txt");
-    n+=d.read(ann_data_m4+n);
-
-    return true;
-};
-
 bool peak1d::load_m2()
 {
     model_selection=2;
@@ -877,13 +830,13 @@ bool peak1d::load_m3() //1D, wide peak with baseline
     model_selection=3;
 
     int n=0;
-    c0.set_size(11,1,40);  //nkernel, ninput, nfilter
+    c0.set_size(9,1,40);  //nkernel, ninput, nfilter
     n+=c0.read(ann_data_m3+n);
     
     c1.set_size(1,40,20); //knernel, ninput, nfilter
     n+=c1.read(ann_data_m3+n);
     
-    c2.set_size(11,20,10); //knernel, ninput, nfilter
+    c2.set_size(5,20,10); //knernel, ninput, nfilter
     n+=c2.read(ann_data_m3+n);
 
     c3.set_size(1,10,20); //knernel, ninput, nfilter
@@ -892,7 +845,7 @@ bool peak1d::load_m3() //1D, wide peak with baseline
     c4.set_size(1,20,10); //knernel, ninput, nfilter
     n+=c4.read(ann_data_m3+n);
 
-    c5.set_size(11,10,30); //knernel, ninput, nfilter
+    c5.set_size(5,10,30); //knernel, ninput, nfilter
     n+=c5.read(ann_data_m3+n);
 
     c6.set_size(1,30,18); //knernel, ninput, nfilter
@@ -969,14 +922,18 @@ bool peak1d::predict_step2()
 
     //to do: define cutoff according to predicted peak width
     double cutoff=4.0;
-    if(model_selection==2) cutoff=2.5;
+    if(model_selection==2 ) cutoff=2.5;
+    else if(model_selection==3) cutoff=2.5;
+    else cutoff=4.0; //model 1
 
     p_segment.push_back(0);
     for(int i=2;i<ndim-2;i++) //exclude terminal 2 data point!!
     {
         // if(output1[i*3+2]+output1[i*3+1]>output1[i*3] && output1[i*3]<output1[i*3-3] && output1[i*3]<output1[i*3+3])
         
-        bool b1=output1[i*3+2]+output1[i*3+1]>output1[i*3];
+        bool b1;
+        b1=output1[i*3+2]+output1[i*3+1]>output1[i*3];
+        if(model_selection==3) b1=output1[i*3+2]+output1[i*3+1]>output1[i*3]*0.8; //a little generour for model 3
         int ii=i-1;bool b11=output1[ii*3+2]+output1[ii*3+1]>output1[ii*3];
         ii=ii+1;   bool b12=output1[ii*3+2]+output1[ii*3+1]>output1[ii*3];
         b1= b1 || b11 || b12;
@@ -1321,7 +1278,6 @@ bool peak2d::init_ann(int index_model)
     if(index_model==1) return p1.load();
     if(index_model==2) return p1.load_m2();
     if(index_model==3) return p1.load_m3();
-    if(index_model==4) return p1.load_m4();
     return true;
 }
 
@@ -1769,8 +1725,11 @@ std::vector<int>  peak2d::select_max_nonoverlap_set(std::vector<int> tx,std::vec
     std::vector<int> ndxs;
     int n=tx.size();
     std::vector< std::vector<int> > neighbor;
+    std::vector<std::vector<int>> distance;
     std::vector< std::vector<int> > cliques;
     neighbor.resize(n,std::vector<int>(n,0));
+    distance.resize(n,std::vector<int>(n,0.0));
+    
 
 
     for(int i=0;i<n;i++)
@@ -1778,10 +1737,12 @@ std::vector<int>  peak2d::select_max_nonoverlap_set(std::vector<int> tx,std::vec
         for(int j=i+1;j<n;j++)
         {
             int d=abs(tx[i]-tx[j])+abs(ty[i]-ty[j]);
-            if(d>=cutoff)
+            if(d>cutoff)
             {
                 neighbor[i][j]=neighbor[j][i]=1;
             }
+            distance[i][j]=d;
+            distance[j][i]=d;
         }
     }
 
@@ -1790,14 +1751,33 @@ std::vector<int>  peak2d::select_max_nonoverlap_set(std::vector<int> tx,std::vec
     c.solver();
     cliques=c.output();
 
-    int index=-1;
-    int max_n=0;
+    std::vector<int> total_distance;
     for(int i=0;i<cliques.size();i++)
     {
-        if(cliques[i].size()>max_n)
+        int t=0;
+        for(int j=0;j<cliques[i].size();j++)
+        {
+            for(int j2=j+1;j2<cliques[i].size();j2++)
+            {
+                t+=distance[cliques[i][j]][cliques[i][j2]];
+            }
+        }
+        total_distance.push_back(t);
+    }
+
+    int index=-1;
+    int max_n=0;
+    int max_distance=0;
+    for(int i=0;i<cliques.size();i++)
+    {
+        if(cliques[i].size()>=max_n)
         {
             max_n=cliques[i].size();
-            index=i;
+            if(total_distance[i]>max_distance)
+            {
+                max_distance=total_distance[i];
+                index=i;
+            }
         }
     }
 
@@ -1817,7 +1797,7 @@ bool peak2d::predict_step3()
 {
     //to do: define cutoff according to predicted peak width
     int ncutoff=6;
-    if(model_selection==2) ncutoff=4;
+    if(model_selection==2 || model_selection==3 ) ncutoff=4;
 
     //new algorithm
     std::vector<int> tx;
@@ -2786,7 +2766,7 @@ bool peak2d::check_special_peaks_3()
             std::cout<<"y is from "<<*result_y.first<<" to "<<*result_y.second<<std::endl;
         }
         
-        int n_min=6;
+        int n_min=6;  //model 2 and 3
         if(model_selection==1)
         {
             n_min=10;
@@ -2905,7 +2885,7 @@ bool peak2d::get_tilt_of_line(const int flag, const int x,const int y,const doub
                 if(current_a<0.3*max_a || current_a>max_a) continue;
                 double dx=cline_x_right[k2]-cline_x_left[k1];
                 double dy=cline_y_right[k2]-cline_y_left[k1];
-                if(fabs(dx)>=w*0.6 && fabs(dx)>=4 && fabs(dy/dx)>ratio_abs)
+                if(fabs(dx)>=w*0.6 && fabs(dx)>=4 && fabs(dy)>=1 && fabs(dy/dx)>ratio_abs)
                 {
                     ratio_abs=fabs(dy/dx);
                     ratio=dy/dx;
@@ -2932,7 +2912,7 @@ bool peak2d::check_near_peak(const int x0, const int y0,const int x, const int y
         {
             continue;
         }
-        if(abs(cx[i]-x)+abs(cy[i]-y)<=4)
+        if(abs(cx[i]-x)+abs(cy[i]-y)<=6)
         {
             b=false;
             break;
@@ -2972,20 +2952,20 @@ bool peak2d::check_special_case(const int ndx,const double fx,const double fy,
     // if(x==1202 && y==348)
     //debug output for spectra3\protein\new_asynu,//debug output for spectra3\protein\new_asynu_a    
     // if( (x==1274 && (y==1521 || y==1522)) || (x==1076 && y==846))
-    if( x==1390 && y==222 ) //pseudo/g12d_gtp_cpmg/first
-    {
-        std::cout<<"cline:"<<std::endl;
-        for(int i=0;i<cline_x.size();i++)
-        {
-            std::cout<<cline_x[i]<<" "<<cline_y[i]<<std::endl;
-        }
-        std::cout<<"rline:"<<std::endl;
-        for(int i=0;i<rline_x.size();i++)
-        {
-            std::cout<<rline_x[i]<<" "<<rline_y[i]<<std::endl;
-        }
-        std::cout<<"ratio1="<<ratio1<<" ratio2="<<ratio2<<std::endl;
-    }
+    // if( x==1390 && y==222 ) //pseudo/g12d_gtp_cpmg/first
+    // {
+    //     std::cout<<"cline:"<<std::endl;
+    //     for(int i=0;i<cline_x.size();i++)
+    //     {
+    //         std::cout<<cline_x[i]<<" "<<cline_y[i]<<std::endl;
+    //     }
+    //     std::cout<<"rline:"<<std::endl;
+    //     for(int i=0;i<rline_x.size();i++)
+    //     {
+    //         std::cout<<rline_x[i]<<" "<<rline_y[i]<<std::endl;
+    //     }
+    //     std::cout<<"ratio1="<<ratio1<<" ratio2="<<ratio2<<std::endl;
+    // }
 
     if( (b1 || b2) && (check_near_peak(x,y,cline_x[k1],cline_y[k1]) && check_near_peak(x,y,rline_x[m1],rline_y[m1]) && check_near_peak(x,y,cline_x[k2],cline_y[k2]) && check_near_peak(x,y,rline_x[m2],rline_y[m2])) )
     {
@@ -3036,7 +3016,7 @@ bool peak2d::find_lines(int xd, int yd, std::vector<int> r, std::vector<int> &x0
     int min_line_length;
     int limit;
 
-    if(model_selection==1 || model_selection==4 ) //peak is wide
+    if(model_selection==1 ) //peak is wide
     {
         min_line_length=5;
         limit=4;
