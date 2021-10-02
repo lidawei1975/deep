@@ -35,11 +35,13 @@ namespace ldw_math_spectrum_2d
             file_name_full=str;
         }
 
+        // std::cout<<"file_name_full is "<<file_name_full<<std::endl;
+
         found = file_name_full.find_last_of(".");
         if(found!=std::string::npos)
         {
-            file_name=str.substr(0,found);
-            file_name_ext=str.substr(found+1);
+            file_name=file_name_full.substr(0,found);
+            file_name_ext=file_name_full.substr(found+1);
             b=true;
         }
         else
@@ -48,6 +50,10 @@ namespace ldw_math_spectrum_2d
             file_name=file_name_full;
         }
 
+        // std::cout<<"path is "<<path_name<<std::endl;
+        // std::cout<<"file_name is "<<file_name<<std::endl;
+        // std::cout<<"file_name_ext is "<<file_name_ext<<std::endl;
+        
 
         return b;
     }
@@ -225,16 +231,6 @@ bool spectrum_io::init(std::string infname, int noise_flag)
 
     b_read=read_spectrum(infname);
 
-    if(b_negative==true)
-    {
-        for(int i=0;i<xdim*ydim;i++)
-        {
-            spect[i]=-spect[i];
-        }
-        std::cout<<"Negative mode, flip spectral data. "<<std::endl;
-    }
-    
-    
     if(b_read)
     {
         if(fabs(begin2-stop2)>5*fabs(begin1-stop1) || begin2>20.0)
@@ -246,7 +242,17 @@ bool spectrum_io::init(std::string infname, int noise_flag)
             spectrum_type=tocsy_spectrum;//tocsy
         }
         std::cout<<"Done reading"<<std::endl;
+
         if(noise_flag==1) noise();    //estimate noise level  
+        
+        if(b_negative==true)
+        {
+            for(int i=0;i<xdim*ydim;i++)
+            {
+                spect[i]=-spect[i];
+            }
+            std::cout<<"Negative mode, flip spectral data. "<<std::endl;
+        }
     }
     return b_read;
 }
@@ -506,7 +512,12 @@ bool spectrum_io::read_topspin_txt(std::string infname)
     std::vector<std::string> ps;
     std::stringstream iss;
     std::ifstream fin(infname.c_str());
-    //ifstream fin("input.txt");
+
+    if(!fin)
+    {
+        std::cout<<"Can't open "<<infname<<" to read."<<std::endl;
+        return false;
+    }
 
     double f1left,f1right,f2left,f2right;
 
@@ -649,6 +660,13 @@ bool spectrum_io::read_txt(std::string infname)
     std::vector<float> temp;
 
     std::ifstream fin(infname.c_str());
+
+    if(!fin)
+    {
+        std::cout<<"Can't open "<<infname<<" to read."<<std::endl;
+        return false;
+    }
+
     xdim=ydim=0;
     while( getline(fin, line))
     {

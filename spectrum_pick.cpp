@@ -192,7 +192,7 @@ bool spectrum_pick::ann_peak_picking(int flag,int expand)  //default flag is 0, 
             p2.erase(p2.begin() + i);
         }
     }
-    std::cout<<"Total picked "<<p1.size()<<" peaks."<<std::endl;
+    // std::cout<<"Total picked "<<p1.size()<<" peaks."<<std::endl;
 
     // linear_regression();
 
@@ -335,6 +335,7 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
 
     std::vector<int> ndx;
     ldw_math_spectrum_2d::sortArr(p_intensity,ndx);
+    std::reverse(ndx.begin(),ndx.end());
 
     std::istringstream iss;
     iss.str(outfname);
@@ -356,15 +357,15 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
         {
             //.tab file for nmrDraw
             FILE *fp = fopen(file_names[m].c_str(), "w");
-            fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT ASS CONFIDENCE\n");
-            fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%s %%4.2f\n");
+            fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT ASS CONFIDENCE POINTER\n");
+            fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%s %%4.2f %%3s\n");
             for (unsigned int ii = 0; ii < ndx.size(); ii++)
             {
                 int i=ndx[ii];
                 double s1,s2;
                 s1=1.0692*gammax[i]+sqrt(0.8664*gammax[i]*gammax[i]+5.5452*sigmax[i]*sigmax[i]);
                 s2=1.0692*gammay[i]+sqrt(0.8664*gammay[i]*gammay[i]+5.5452*sigmay[i]*sigmay[i]);
-                fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %s %4.2f\n",i+1,p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
+                fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %s %4.2f <--\n",i+1,p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
                             int(p1[i]-3),int(p1[i]+3),int(p2[i]-3),int(p2[i]+3),p_intensity[i],user_comments[i].c_str(),std::min(p_confidencex[i],p_confidencey[i]));        
             }
             fclose(fp);

@@ -1,0 +1,24 @@
+Oct 1, 2021
+    More user friendly. 
+    Add pointer column in output nmrpipe format peak list
+    Replace FWHH with PPP
+    Sorted output peaks from high to low
+    Change peak fitter program's name to voigt_fit
+    Change default peak list file names
+    Remove weak peaks in fitter's output
+
+
+Sep 27, 2021
+    add model 3, fine tune of algorithm
+    add exact_fit in peak_fit, in progress
+    add MC based error estimation in peak_fit, in progress
+
+Sep 2, 2021
+    fine tune of algorithm
+
+Jul 29, 2021
+    add peak fitting tools
+    bug fix
+
+Mar 20, 2021
+    initial version

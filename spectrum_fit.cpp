@@ -2948,12 +2948,21 @@ bool spectrum_fit::init_all_spectra(std::vector<std::string> fnames_)
     fnames=fnames_;
     for (int i = fnames.size() - 1; i >= 0; i--)
     {
-        spectrum_io::init(fnames[i]);
-        spects.push_back(spect);
+        if(spectrum_io::init(fnames[i]))
+        {
+            spects.push_back(spect);
+        }
     }
     std::reverse(spects.begin(),spects.end());
     nspect=spects.size();
-    return true;
+    if(nspect>0)
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
 };
 
 
@@ -3331,6 +3340,37 @@ bool spectrum_fit::peak_fitting()
         real_peak_fitting_with_error(zf1,zf2,err_nround);
         fit_gather(1);
     }
+
+    //remove weak peaks!!
+    for(int i=p1.size()-1;i>=0;i--)
+    {
+        if(p_intensity[i]<noise_level*user_scale)
+        {
+            p1.erase(p1.begin()+i);
+            p2.erase(p2.begin()+i);
+            p_intensity.erase(p_intensity.begin()+i);
+            p_intensity_all_spectra.erase(p_intensity_all_spectra.begin()+i);
+            num_sums.erase(num_sums.begin()+i);
+            group.erase(group.begin()+i);
+            err.erase(err.begin()+i);
+            peak_index.erase(peak_index.begin()+i);
+            sigmax.erase(sigmax.begin()+i);
+            sigmay.erase(sigmay.begin()+i);
+            gammax.erase(gammax.begin()+i);
+            gammay.erase(gammay.begin()+i);
+
+            //deltas
+            delta_sigmax.erase(delta_sigmax.begin()+i);
+            delta_sigmay.erase(delta_sigmay.begin()+i);
+            delta_gammax.erase(delta_gammax.begin()+i);
+            delta_gammay.erase(delta_gammay.begin()+i);
+            delta_x.erase(delta_x.begin()+i);
+            delta_y.erase(delta_y.begin()+i);
+            delta_amplitude.erase(delta_amplitude.begin()+i);
+            delta_volume.erase(delta_volume.begin()+i);
+        }
+    }
+
     return true;
 }
 
@@ -3513,6 +3553,15 @@ bool spectrum_fit::generate_recon_and_diff_spectrum()
         std::string path_name,file_name,file_name_ext;
         ldw_math_spectrum_2d::SplitFilename (fnames[file_ndx],path_name,file_name,file_name_ext);
 
+        if(peak_shape==gaussian_type)
+        {
+            file_name="gaussian_"+file_name;    
+        }
+        else
+        {
+            file_name="voigt_"+file_name;    
+        }
+
         spe.clear();
 
         std::vector<double> intens;
@@ -3542,6 +3591,9 @@ bool spectrum_fit::generate_recon_and_diff_spectrum()
             }
             spe_float.push_back(t);
         }
+
+
+
         std::cout<<"Write recon to "<<path_name+"/recon_"+file_name+".ft2"<<std::endl;
         write_pipe(spe_float,path_name+"/recon_"+file_name+".ft2");
     
@@ -3557,6 +3609,7 @@ bool spectrum_fit::generate_recon_and_diff_spectrum()
             spe_float.push_back(t);
         }
         write_pipe(spe_float,path_name+"/diff_"+file_name+".ft2");
+        std::cout<<"Write diff to "<<path_name+"/diff_"+file_name+".ft2"<<std::endl;
     }
     return true;
 };
@@ -3728,6 +3781,7 @@ bool spectrum_fit::print_peaks(std::string outfname)
 
 
     ldw_math_spectrum_2d::sortArr(amplitudes,ndx);
+    std::reverse(ndx.begin(),ndx.end());
 
 
     //if multiple spectral file. 
@@ -3786,7 +3840,7 @@ bool spectrum_fit::print_peaks(std::string outfname)
             if(peak_shape==voigt_type || peak_shape==exact_type)
             {
                 //fprintf(fp,"#x y ppm_x ppm_y intensity sigmax sigmay (gammx gammay) fitted_volume num_volume type group\n");
-                fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL SIMGAX SIGMAY GAMMAX GAMMAY NROUND");
+                fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL SIMGAX SIGMAY GAMMAX GAMMAY NROUND POINTER");
                 if(spects.size()>1)
                 {
                     for(int i=0;i<spects.size();i++)
@@ -3796,7 +3850,7 @@ bool spectrum_fit::print_peaks(std::string outfname)
                 }
                 fprintf(fp,"\n");
 
-                fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%f %%f %%f %%f %%4d");
+                fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%f %%f %%f %%f %%4d %%3s");
                 if(spects.size()>1)
                 {
                     for(int i=0;i<spects.size();i++)
@@ -3813,7 +3867,7 @@ bool spectrum_fit::print_peaks(std::string outfname)
                     float s1=0.5346*gammax[i]*2+std::sqrt(0.2166*4*gammax[i]*gammax[i]+sigmax[i]*sigmax[i]*8*0.6931);
                     float s2=0.5346*gammay[i]*2+std::sqrt(0.2166*4*gammay[i]*gammay[i]+sigmay[i]*sigmay[i]*8*0.6931);
 
-                    fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %f %f %f %f %4d",
+                    fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %f %f %f %f %4d <--",
                                 peak_index[i],p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
                                 int(p1[i]-3),int(p1[i]+3),int(p2[i]-3),int(p2[i]+3),amplitudes[i],delta_height[i],user_comments[i].c_str(),group[i]+1,num_sums[i][0],p_intensity[i],sigmax[i],sigmay[i],gammax[i],gammay[i],nround[i]);
                     if(spects.size()>1)
@@ -3830,17 +3884,23 @@ bool spectrum_fit::print_peaks(std::string outfname)
             
             if(peak_shape==gaussian_type)
             {
-                fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL NROUND");
-                for(int i=0;i<spects.size();i++)
+                fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL NROUND POINTER");
+                if(spects.size()>1)
                 {
-                    fprintf(fp," Z_A%d",i);
+                    for(int i=0;i<spects.size();i++)
+                    {
+                        fprintf(fp," Z_A%d",i);
+                    }
+                    fprintf(fp,"\n");
                 }
-                fprintf(fp,"\n");
 
-                fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%4d");
-                for(int i=0;i<spects.size();i++)
+                fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%4d %%3s");
+                if(spects.size()>1)
                 {
-                    fprintf(fp," %%7.4f");
+                    for(int i=0;i<spects.size();i++)
+                    {
+                        fprintf(fp," %%7.4f");
+                    }
                 }
                 fprintf(fp,"\n");
 
@@ -3849,7 +3909,7 @@ bool spectrum_fit::print_peaks(std::string outfname)
                     int i=ndx[i0];
                     float s1=sigmax[i]*2.355f;
                     float s2=sigmay[i]*2.355f;
-                    fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %4d",peak_index[i],p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
+                    fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %4d <--",peak_index[i],p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
                                 int(p1[i]-3),int(p1[i]+3),int(p2[i]-3),int(p2[i]+3),amplitudes[i],delta_height[i],user_comments[i].c_str(),group[i]+1,num_sums[i][0],fitted_volume[i],nround[i]);
                     if(spects.size()>1)
                     {
@@ -3985,6 +4045,13 @@ bool spectrum_fit::peak_reading(std::string infname)
     {
         b_read=false;
         std::cout<<"ERROR: unknown peak list file format. Skip peaks reading."<<std::endl;
+        return b_read;
+    }
+
+    if(b_read==false)
+    {
+        std::cout<<"Can't read peaks from "<<infname<<std::endl;
+        return b_read;
     }
 
     //set gamma if it is not readed in.
@@ -4093,6 +4160,9 @@ bool spectrum_fit::peak_reading_sparky(std::string fname)
     int ass=-1;
 
     std::ifstream fin(fname);
+
+    if(!fin) return false;
+
     getline(fin,line);
     iss.str(line);
     while(iss>>p)
@@ -4190,6 +4260,12 @@ bool spectrum_fit::peak_reading_pipe(std::string fname)
     int ass=-1;
 
     std::ifstream fin(fname);
+
+    if(!fin)
+    {
+        return false;
+    }
+
     getline(fin,line);
     iss.str(line);
     while(iss>>p)
@@ -4325,6 +4401,8 @@ bool spectrum_fit::peak_reading_json(std::string infname)
     Json::Value root,peaks;
     std::ifstream fin;
     fin.open(infname);
+
+    if(!fin) return false;
 
     fin>>root;
     peaks=root["picked_peaks"];

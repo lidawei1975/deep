@@ -9,7 +9,7 @@ class CCommandline
 
   protected:
   public:
-    void pharse(int argc, char **argv);
+    bool pharse(int argc, char **argv);
     void init(std::vector<std::string>, std::vector<std::string>);
     void init(std::vector<std::string>, std::vector<std::string>, std::vector<std::string>);
     void print();

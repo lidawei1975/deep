@@ -14,46 +14,41 @@
 int main(int argc, char **argv)
 {
     
-    std::cout<<"Last update: Apr.21,2021"<<std::endl;
+    std::cout<<"Last update: Oct. 2021"<<std::endl;
 
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;
 
     args.push_back("-h");
     args2.push_back("no");
-    args3.push_back("print help message then quit (no)");
+    args3.push_back("print help message then quit");
     
     args.push_back("-method");
     args2.push_back("voigt");
-    args3.push_back("Peak shape: gaussian or voigt (voigt).");   
+    args3.push_back("Peak shape: gaussian or voigt.");   
 
     args.push_back("-scale");
     args2.push_back("5.5");
-    args3.push_back("user defined noise scale factor for minimal peak intensity (5.5)");
+    args3.push_back("user defined noise scale factor for minimal peak intensity");
 
     args.push_back("-scale2");
     args2.push_back("3.0");
-    args3.push_back("user defined noise floor scale factor (3.0)");
+    args3.push_back("user defined noise floor scale factor");
 
     args.push_back("-noise_level");
     args2.push_back("0");
-    args3.push_back("Direct set noise level to this value. Noise level will be estimated from sepctrum if input is 0.0 (0.0)");
-
+    args3.push_back("Direct set noise level to this value. Noise level will be estimated from sepctrum if input is 0.0");
 
     args.push_back("-in");
-    args2.push_back("input.ft2");
+    args2.push_back("test.ft2");
     args3.push_back("input spectral file names. Multiple files should be seprated by space");
 
-    // args.push_back("-zf");
-    // args2.push_back("0");
-    // args3.push_back("addtional fold of zero filling, 0 or 1 (0)");
-
     args.push_back("-peak_in");
-    args2.push_back("peaks_picked.tab");
-    args3.push_back("Read peaks list from this file. Support .tab or .list format (input_peaks.tab)");
+    args2.push_back("peaks.tab");
+    args3.push_back("Read peaks list from this file. Support .tab or .list format");
     
     args.push_back("-out");
-    args2.push_back("peaks.tab");
+    args2.push_back("fitted.tab");
     args3.push_back("output fitted peaks file name. Multiple files should be seprated by space. Support .tab or .list format");
 
     args.push_back("-recon");
@@ -87,13 +82,12 @@ int main(int argc, char **argv)
 
 
     cmdline.init(args, args2, args3);
-    cmdline.pharse(argc, argv);
+    if(!cmdline.pharse(argc, argv)) return 1;
 
     std::string infname,outfname,peak_file;
 
     float water;
     int maxround;
-    int zf;
     double user,user2;
     double wx,wy;
     double smooth;
@@ -101,8 +95,6 @@ int main(int argc, char **argv)
     double noise_level;
     bool b_read_success=false;
     
-    zf=atoi(cmdline.query("-zf").c_str());
-    if(zf!=1) zf=0;
     noise_level=atof(cmdline.query("-noise_level").c_str());
     peak_file=cmdline.query("-peak_in");
     infname = cmdline.query("-in");
@@ -117,13 +109,26 @@ int main(int argc, char **argv)
    
     int i_method=2;
     if(cmdline.query("-method") == "gaussian") i_method=1;
+    else if(cmdline.query("-method").rfind("g", 0) == 0) i_method=1;
+    else if(cmdline.query("-method").rfind("G", 0) == 0) i_method=1;
     else if (cmdline.query("-method") == "voigt") i_method=2;
+    else if (cmdline.query("-method").rfind("v", 0) == 0) i_method=2;
+    else if (cmdline.query("-method").rfind("V", 0) == 0) i_method=2;
+    else 
+    {
+        std::cout<<"Unrecognized fitting line shape. Exit."<<std::endl;
+        return 1;
+    }
 
     cmdline.print();
     if (cmdline.query("-h") != "yes")
     {
         class spectrum_fit x;
-        std::cout<<"Input files are "<<infname<<std::endl<<std::endl;
+        std::cout<<"Input files are "<<infname<<std::endl;
+        if(i_method==1) std::cout<<"Fitting line shape is Gaussian"<<std::endl;
+        else std::cout<<"Fitting line shape is Voigt"<<std::endl;
+        std::cout<<std::endl;
+        
         std::istringstream iss;
         iss.str(infname);
         std::string p;
@@ -134,7 +139,7 @@ int main(int argc, char **argv)
             file_names.push_back(p);
         }
         
-        x.initflags_fit(maxround,too_near_cutoff,i_method,zf);
+        x.initflags_fit(maxround,too_near_cutoff,i_method,0);
         x.set_scale(user,user2);
 
         if (x.init_all_spectra(file_names))
@@ -160,8 +165,13 @@ int main(int argc, char **argv)
                     std::cout<<"Finish generate recon and diff spectral files."<<std::endl;
                 }
             }
+            // x.clear_memory();
         }
-        x.clear_memory();
+        else
+        {
+            std::cout<<"Canot read any spectrum file."<<std::endl;
+        }
+        
     }
     return 0;
 }

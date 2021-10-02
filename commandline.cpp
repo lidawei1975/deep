@@ -6,11 +6,12 @@
 #include "commandline.h"
 
 
-void CCommandline::pharse(int argc, char **argv)
+bool CCommandline::pharse(int argc, char **argv)
 {
     int i, j;
     for (i = 1; i < argc; i++)
     {
+        bool b=false;
         for (j = 0; j < narg; j++)
         {
             if (arguments.at(j).compare(argv[i]) == 0) 
@@ -25,11 +26,19 @@ void CCommandline::pharse(int argc, char **argv)
                     parameters.at(j).append(argv[i + 1]);
                     parameters.at(j).append(" ");
                     i++;
-                }                    
+                }    
+                b=true;
+                continue;                
             }
         }
+        
+        if(b==false)
+        {
+            std::cout<<"ERROR, unrecognized commandline argument "<<argv[i]<<std::endl;
+            return false;
+        }
     }
-    return;
+    return true;
 }
 
 void CCommandline::init(std::vector<std::string> in, std::vector<std::string> in2)
