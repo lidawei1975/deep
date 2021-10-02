@@ -952,7 +952,7 @@ bool gaussian_fit::one_fit_voigt_intensity_only(int xsize,int ysize,std::vector<
 bool gaussian_fit::one_fit_voigt(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e, int n)
 {
 
-    if(n==0)
+    if(n<=0)
     {
     
         double ee;
@@ -976,17 +976,18 @@ bool gaussian_fit::one_fit_voigt(int xsize,int ysize,std::vector<double> *zz, do
 
         for(int i=0;i<3;i++)
         {
-            double gammax_try=test_gammax[i];
-            double sigmax_try=sqrt(((fwhhx-1.0692*gammax_try)*(fwhhx-1.0692*gammax_try)-0.2166*4*gammax_try*gammax_try)/(8*0.6931));
             for(int j=0;j<3;j++)
             {
+                double gammax_try=test_gammax[i];
+                double sigmax_try=sqrt(((fwhhx-1.0692*gammax_try)*(fwhhx-1.0692*gammax_try)-0.2166*4*gammax_try*gammax_try)/(8*0.6931));
                 double gammay_try=test_gammay[j];
                 double sigmay_try=sqrt(((fwhhy-1.0692*gammay_try)*(fwhhy-1.0692*gammay_try)-0.2166*4*gammay_try*gammay_try)/(8*0.6931));
                 a_try=inten/(voigt(0,sigmax_try,gammax_try)*voigt(0,sigmay_try,gammay_try));
                 x0_try=x0;
                 y0_try=y0;
-                // std::cout<<" sigmax="<<sigmax_try<<" sigmay="<<sigmay_try<<" gammax="<<gammax_try<<" gammay_try="<<gammay_try;
+                // std::cout<<"inten="<<inten<<" sigmax="<<sigmax_try<<" sigmay="<<sigmay_try<<" gammax="<<gammax_try<<" gammay="<<gammay_try<<" ==> ";
                 one_fit_voigt_core(xsize,ysize, zz, x0_try, y0_try, a_try, sigmax_try, sigmay_try,gammax_try,gammay_try,&ee); 
+                // std::cout<<" sigmax="<<sigmax_try<<" sigmay="<<sigmay_try<<" gammax="<<gammax_try<<" gammay="<<gammay_try;
                 // std::cout<<" ee="<<ee<<std::endl;
                 if(ee<min_e)
                 {
@@ -1008,7 +1009,7 @@ bool gaussian_fit::one_fit_voigt(int xsize,int ysize,std::vector<double> *zz, do
     {
         one_fit_voigt_core(xsize,ysize, zz, x0, y0, a, sigmax, sigmay,gammax,gammay,e);
     }
-    
+    // std::cout<<"Final, sigmax="<<sigmax<<" sigmay="<<sigmay<<" gammax="<<gammax<<" gammay="<<gammay<<std::endl;
     
     return true;
 };
@@ -1105,7 +1106,7 @@ bool gaussian_fit::one_fit_voigt_v2(std::vector<double> *xx,std::vector<double> 
 
 bool gaussian_fit::multiple_fit_voigt(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x0, double &y0, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n)
 {
-    if(n==0)
+    if(n<=0)
     {
     
         double ee;
@@ -2252,7 +2253,7 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
             {
                 //voigt_convolution_region(x[current_peak_index],y[current_peak_index],sigmax[current_peak_index],sigmay[current_peak_index],gammax[current_peak_index],gammay[current_peak_index]);
 
-                voigt_convolution_within_region(i_peak,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &(analytical_spectra[i_peak]),0.5);
+                voigt_convolution_within_region(i_peak,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &(analytical_spectra[i_peak]),2.0);
             }
 
             current_xdim=i1-i0;
@@ -2654,7 +2655,7 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                 double total_z = 0.0;
                 if (peak_shape == gaussian_type) 
                 {
-                    gaussain_convolution_within_region(i_peak,a[i_peak][spectrum_index], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), &(analytical_spectra[i_peak]),2.0);
+                    gaussain_convolution_within_region(i_peak,a[i_peak][spectrum_index], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), &(analytical_spectra[i_peak]),0.5);
                 }
                 if (peak_shape == voigt_type)
                 {
@@ -3348,6 +3349,9 @@ bool spectrum_fit::peak_fitting()
         {
             p1.erase(p1.begin()+i);
             p2.erase(p2.begin()+i);
+            p1_ppm.erase(p1_ppm.begin()+i);
+            p2_ppm.erase(p2_ppm.begin()+i);
+            
             p_intensity.erase(p_intensity.begin()+i);
             p_intensity_all_spectra.erase(p_intensity_all_spectra.begin()+i);
             num_sums.erase(num_sums.begin()+i);
@@ -3356,18 +3360,27 @@ bool spectrum_fit::peak_fitting()
             peak_index.erase(peak_index.begin()+i);
             sigmax.erase(sigmax.begin()+i);
             sigmay.erase(sigmay.begin()+i);
-            gammax.erase(gammax.begin()+i);
-            gammay.erase(gammay.begin()+i);
+            if (peak_shape==voigt_type || peak_shape == exact_type)
+            {
+                gammax.erase(gammax.begin()+i);
+                gammay.erase(gammay.begin()+i);
+            }
 
             //deltas
-            delta_sigmax.erase(delta_sigmax.begin()+i);
-            delta_sigmay.erase(delta_sigmay.begin()+i);
-            delta_gammax.erase(delta_gammax.begin()+i);
-            delta_gammay.erase(delta_gammay.begin()+i);
-            delta_x.erase(delta_x.begin()+i);
-            delta_y.erase(delta_y.begin()+i);
-            delta_amplitude.erase(delta_amplitude.begin()+i);
-            delta_volume.erase(delta_volume.begin()+i);
+            if(flag_with_error==1)
+            {
+                delta_sigmax.erase(delta_sigmax.begin()+i);
+                delta_sigmay.erase(delta_sigmay.begin()+i);
+                if (peak_shape==voigt_type || peak_shape == exact_type)
+                {
+                    delta_gammax.erase(delta_gammax.begin()+i);
+                    delta_gammay.erase(delta_gammay.begin()+i);
+                }
+                delta_x.erase(delta_x.begin()+i);
+                delta_y.erase(delta_y.begin()+i);
+                delta_amplitude.erase(delta_amplitude.begin()+i);
+                delta_volume.erase(delta_volume.begin()+i);
+            }
         }
     }
 
@@ -3498,21 +3511,6 @@ bool spectrum_fit::fit_gather(int flag_error)
     }
 
     std::cout<<"Totally fitted "<<p1.size()<<" peaks from the raw spectrum"<<std::endl;
-
-
-    p1_ppm.clear();
-    p2_ppm.clear();
-
-    for (unsigned int i = 0; i < p1.size(); i++)
-    {
-        double f1 = begin1 + step1 * (p1[i]);  //direct dimension
-        double f2 = begin2 + step2 * (p2[i]);  //indirect dimension
-        p1_ppm.push_back(f1);
-        p2_ppm.push_back(f2);
-
-        sigmax[i]=fabs(sigmax[i]);
-        sigmay[i]=fabs(sigmay[i]);
-    }
     //std::cout<<"Done fitting"<<std::endl;
 
 
@@ -3536,6 +3534,20 @@ bool spectrum_fit::fit_gather(int flag_error)
             delta_amplitude.insert(delta_amplitude.end(),fits[i].delta_amplitude.begin(), fits[i].delta_amplitude.end());
             delta_volume.insert(delta_volume.end(),fits[i].delta_volume.begin(), fits[i].delta_volume.end());
         }
+    }
+
+    p1_ppm.clear();
+    p2_ppm.clear();
+
+    for (unsigned int i = 0; i < p1.size(); i++)
+    {
+        double f1 = begin1 + step1 * (p1[i]);  //direct dimension
+        double f2 = begin2 + step2 * (p2[i]);  //indirect dimension
+        p1_ppm.push_back(f1);
+        p2_ppm.push_back(f2);
+
+        sigmax[i]=fabs(sigmax[i]);
+        sigmay[i]=fabs(sigmay[i]);
     }
 
     std::cout<<"Finish gathering fitting result."<<std::endl;
@@ -3891,8 +3903,8 @@ bool spectrum_fit::print_peaks(std::string outfname)
                     {
                         fprintf(fp," Z_A%d",i);
                     }
-                    fprintf(fp,"\n");
                 }
+                fprintf(fp,"\n");
 
                 fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%4d %%3s");
                 if(spects.size()>1)

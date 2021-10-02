@@ -6,6 +6,7 @@ Oct 1, 2021
     Change peak fitter program's name to voigt_fit
     Change default peak list file names
     Remove weak peaks in fitter's output
+    Bug fix in voigt_fit for Voigt line shaping fitting of single spectrum
 
 
 Sep 27, 2021
