@@ -239,6 +239,9 @@ class gaussian_fit
     std::vector<int> cannot_move;
     std::vector<double> original_ratio;
 
+    std::vector<std::vector<double>> batch_x,batch_y,batch_sigmax,batch_sigmay,batch_gammax,batch_gammay;
+    std::vector<std::vector<std::vector<double>>> batch_a;
+
     std::vector<double> delta_x,delta_y,delta_sigmax,delta_sigmay,delta_gammax,delta_gammay;
     std::vector< std::vector<double>> delta_amplitude,delta_volume;  //delta[peak_index][spe_index]
 
@@ -252,6 +255,7 @@ class gaussian_fit
     //other varibles need direct access
     int xstart, ystart;
     int xdim, ydim;
+    double xppm_per_step,yppm_per_step;
     std::vector< std::vector<double> > surface;      //2D spectrum matrix, column by column order. outlayer: list of spectra
 
     
@@ -265,7 +269,7 @@ class gaussian_fit
     int get_my_index();
     int get_nround();
     void set_everything(fit_type t, int r, int index);
-    void set_peak_paras(double x, double y, double noise, double height, double near);
+    void set_peak_paras(double x, double y, double noise, double height, double near,double xppm,double yppm);
     
 };
 
@@ -295,6 +299,8 @@ class spectrum_fit : public spectrum_io
     int flag_with_error;
     int zf1,zf2; //times of zero filling along x and y, needed for generation of realistic noise.
     int err_nround;
+
+    std::vector<int> excluded_peaks;
 
 private:
 
@@ -326,8 +332,8 @@ public:
     std::vector< std::vector<double> > p_intensity_all_spectra; //p_intensity_all_spectra[peak_index][spec_index]; p_intensity_all_spectra[?][0] === p_intensities
     std::vector< std::vector<double> >num_sums; // numerical integral (volume) of each peak of each spectrum. num_sums[peak_index][spect_index]
     
-    std::vector<double> delta_x,delta_y,delta_sigmax,delta_sigmay,delta_gammax,delta_gammay;
-    std::vector< std::vector<double>> delta_amplitude,delta_volume;
+    // std::vector<double> delta_x,delta_y,delta_sigmax,delta_sigmay,delta_gammax,delta_gammay;
+    // std::vector< std::vector<double>> delta_amplitude,delta_volume;
     
     std::vector<gaussian_fit> fits; 
 
@@ -339,12 +345,13 @@ public:
 
     bool initflags_fit(int n,double c,int im, int zf_);
     bool init_error(int,int,int,int);
-    bool print_peaks(std::string fname);
+    bool print_peaks(std::string fnames,bool b_recon);
     // bool print_intensities(std::string outfname);
     bool generate_recon_and_diff_spectrum();
     bool clear_memory();
-    bool fit_gather(int flag_error);
-    bool peak_reading(std::string infname);
+    bool fit_gather_original();
+    bool fit_gather(int);
+    bool peak_reading(std::string);
     bool peak_fitting();
 
     inline void set_peak_width(double x,double y) {wx=x;wy=y;}

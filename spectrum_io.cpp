@@ -1024,6 +1024,7 @@ bool spectrum_io::read_sparky(std::string infname)
 void spectrum_io::noise()
 {
     std::cout<<"In noise estimation, xdim*ydim is "<<xdim*ydim<<std::endl;
+
     std::vector<float> t(spect, spect+xdim*ydim);
     
 
@@ -1096,7 +1097,7 @@ void spectrum_io::noise()
             scores.push_back(fabs(spect[j*xdim+i]));   
         }
         sort(scores.begin(), scores.end());
-        noise_level_columns.push_back(scores[ydim/2]*1.4826);
+        noise_level_columns.push_back(scores[ydim/3]*1.4826);
     }
 
     //estimate noise level row by row 
@@ -1109,7 +1110,7 @@ void spectrum_io::noise()
             scores.push_back(fabs(spect[j*xdim+i]));   
         }
         sort(scores.begin(), scores.end());
-        noise_level_rows.push_back(scores[xdim/2]*1.4826);
+        noise_level_rows.push_back(scores[xdim/3]*1.4826);
     }
 
 };

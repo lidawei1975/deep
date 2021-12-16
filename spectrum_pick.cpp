@@ -104,28 +104,8 @@ bool spectrum_pick::simple_peak_picking()
     return true;
 }
 
-bool spectrum_pick::ann_peak_picking(int flag,int expand)  //default flag is 0, default expand is 0
+bool spectrum_pick::ann_peak_picking(int flag,int expand, int flag_t1_noise)  //default flag is 0, default expand is 0
 {
-
-    //reality check
-    // bool b=false;
-    // for(int i=0;i<xdim*ydim;i++)
-    // {
-    //     if(spect[i]>noise_level * user_scale)
-    //     {
-    //         b=true;
-    //         break;
-    //     }
-    // }
-    
-    // if(b==false)
-    // {
-    //     std::cout<<"Total picked 0 peaks."<<std::endl;
-    //     return b;
-    // }
-
-
-
     std::vector<int> p_type; //no used at this time
 
     class peak2d p(flag); //flag==0:  run special case, 1: not run. 2: inertia based method
@@ -215,7 +195,33 @@ bool spectrum_pick::ann_peak_picking(int flag,int expand)  //default flag is 0, 
             p2.erase(p2.begin() + i);
         }
     }
-    std::cout<<"Total picked "<<p1.size()<<" peaks."<<std::endl;
+    std::cout<<"Picked "<<p1.size()<<" peaks."<<std::endl;
+
+
+    //remove peaks using column by column noise estimation
+    if(flag_t1_noise==1)
+    {
+        for (int i = p1.size() - 1; i >= 0; i--)
+        {
+            int pp1 = std::min(std::max(0,int(p1[i] + 0.5)),xdim-1);
+            int pp2 = int(p2[i] + 0.5);
+            if (p_intensity[i] <= noise_level_columns[pp1] * user_scale )
+            {
+                p_intensity.erase(p_intensity.begin() + i);
+                p_confidencex.erase(p_confidencex.begin() + i);
+                p_confidencey.erase(p_confidencey.begin() + i);
+                
+                sigmax.erase(sigmax.begin() + i);
+                sigmay.erase(sigmay.begin() + i);
+                gammax.erase(gammax.begin() + i);
+                gammay.erase(gammay.begin() + i);
+                p1.erase(p1.begin() + i);
+                p2.erase(p2.begin() + i);
+            }
+        }
+        std::cout<<"Number of peak is "<<p1.size()<<" after T1 noise removal."<<std::endl;  
+    }
+
 
     get_ppm_from_point();
     

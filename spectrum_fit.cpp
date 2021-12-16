@@ -1440,6 +1440,8 @@ bool gaussian_fit::init(int x00,int y00,int xdim_, int ydim_, std::vector< std::
             y.erase(y.begin() + i);
             sigmax.erase(sigmax.begin() + i);
             sigmay.erase(sigmay.begin() + i);
+            gammax.erase(gammax.begin() + i);
+            gammay.erase(gammay.begin() + i);
             original_ndx.erase(original_ndx.begin()+i);
             cannot_move.erase(cannot_move.begin()+i);
         }
@@ -1816,6 +1818,7 @@ bool gaussian_fit::run(int flag_first)
         else 
         {
             b=run_multi_peaks(rmax);
+            // run_multi_peaks_method2(); //fit all peaks togather
         }
     }
     else //multiple spectra from pseudo 3D 
@@ -1865,9 +1868,9 @@ bool gaussian_fit::run_with_error_estimation(int zf1,int zf2,int nround)
     std::vector<std::vector<double>> good_a,good_num_sum;
     std::vector<std::vector<double>> good_surface;
     
-    std::vector<std::vector<double>> batch_x,batch_y,batch_sigmax,batch_sigmay,batch_gammax,batch_gammay;
-    std::vector<std::vector<std::vector<double>>> batch_amplitude;
-    std::vector<std::vector<std::vector<double>>> batch_volume;
+
+    // std::vector<std::vector<std::vector<double>>> batch_amplitude;
+    // std::vector<std::vector<std::vector<double>>> batch_volume;
     
     
     run(1);  //always first step, get a,sigmax,sigmay,gammax,gammay,num_sum,err,x,y
@@ -1879,8 +1882,8 @@ bool gaussian_fit::run_with_error_estimation(int zf1,int zf2,int nround)
     good_sigmay=sigmay;
     good_gammax=gammax;
     good_gammay=gammay;
-    good_num_sum=num_sum;
-    good_error=err;
+    // good_num_sum=num_sum;
+    // good_error=err;
     good_surface=surface;
 
     //add random noise
@@ -1914,66 +1917,76 @@ bool gaussian_fit::run_with_error_estimation(int zf1,int zf2,int nround)
         sigmay=good_sigmay;
         gammax=good_gammax;
         gammay=good_gammay;
-        num_sum=good_num_sum;
-        err=good_error;
-        run(0); //do not remove any peaks
+        // num_sum=good_num_sum;
+        // err=good_error;
+
+        //do not remove any peaks or exclude any peaks in fitting
+        for(int i=0;i<to_remove.size();i++)
+        {
+            to_remove[i]=0;
+        }
+
+        run(0); 
+
+
         batch_x.push_back(x);
         batch_y.push_back(y);
         batch_sigmax.push_back(sigmax);
         batch_sigmay.push_back(sigmay);
         batch_gammax.push_back(gammax);
         batch_gammay.push_back(gammay);
+        batch_a.push_back(a);
         
-        if(peak_shape==voigt_type)
-        {
-            batch_volume.push_back(a);  
-            std::vector<std::vector<double>> amplitude(x.size(),std::vector<double>(surface.size(),0.0));
+        // if(peak_shape==voigt_type)
+        // {
+        //     batch_volume.push_back(a);  
+        //     std::vector<std::vector<double>> amplitude(x.size(),std::vector<double>(surface.size(),0.0));
 
-            for(int i=0;i<a.size();i++)
-            {
-                for(int j=0;j<a[0].size();j++)
-                {
-                    amplitude[i][j]=a[i][j]*voigt(0.0,sigmax[i],gammax[i])*voigt(0.0,sigmay[i],gammay[i]);
-                }
-            }
-            batch_amplitude.push_back(amplitude);
-        }
-        else if(peak_shape==gaussian_type)
-        {
-            batch_amplitude.push_back(a);
-            std::vector<std::vector<double>> volume(x.size(),std::vector<double>(surface.size(),0.0));
+        //     for(int i=0;i<a.size();i++)
+        //     {
+        //         for(int j=0;j<a[0].size();j++)
+        //         {
+        //             amplitude[i][j]=a[i][j]*voigt(0.0,sigmax[i],gammax[i])*voigt(0.0,sigmay[i],gammay[i]);
+        //         }
+        //     }
+        //     batch_amplitude.push_back(amplitude);
+        // }
+        // else if(peak_shape==gaussian_type)
+        // {
+        //     batch_amplitude.push_back(a);
+        //     std::vector<std::vector<double>> volume(x.size(),std::vector<double>(surface.size(),0.0));
             
-            for(int i=0;i<a.size();i++)
-            {
-                for(int j=0;j<a[0].size();j++)
-                {
-                    volume[i][j]=a[i][j]*sqrt(fabs(sigmax[i]*sigmay[i]))*3.14159265358979;
-                }
-            }
+        //     for(int i=0;i<a.size();i++)
+        //     {
+        //         for(int j=0;j<a[0].size();j++)
+        //         {
+        //             volume[i][j]=a[i][j]*sqrt(fabs(sigmax[i]*sigmay[i]))*3.14159265358979;
+        //         }
+        //     }
             
-            batch_volume.push_back(volume); 
-        }
+        //     batch_volume.push_back(volume); 
+        // }
     }
 
     //estiamte std of each batched varible
-    ldw_math_spectrum_fit::calcualte_std_vector(batch_x,delta_x);
-    ldw_math_spectrum_fit::calcualte_std_vector(batch_y,delta_y);
-    ldw_math_spectrum_fit::calcualte_std_vector(batch_sigmax,delta_sigmax);
-    ldw_math_spectrum_fit::calcualte_std_vector(batch_sigmay,delta_sigmay);
-    ldw_math_spectrum_fit::calcualte_std_vector(batch_gammax,delta_gammax);
-    ldw_math_spectrum_fit::calcualte_std_vector(batch_gammay,delta_gammay);
+    // ldw_math_spectrum_fit::calcualte_std_vector(batch_x,delta_x);
+    // ldw_math_spectrum_fit::calcualte_std_vector(batch_y,delta_y);
+    // ldw_math_spectrum_fit::calcualte_std_vector(batch_sigmax,delta_sigmax);
+    // ldw_math_spectrum_fit::calcualte_std_vector(batch_sigmay,delta_sigmay);
+    // ldw_math_spectrum_fit::calcualte_std_vector(batch_gammax,delta_gammax);
+    // ldw_math_spectrum_fit::calcualte_std_vector(batch_gammay,delta_gammay);
     
-    ldw_math_spectrum_fit::calcualte_std_vector2(batch_amplitude,delta_amplitude);
-    ldw_math_spectrum_fit::calcualte_std_vector2(batch_volume,delta_volume);
+    // ldw_math_spectrum_fit::calcualte_std_vector2(batch_amplitude,delta_amplitude);
+    // ldw_math_spectrum_fit::calcualte_std_vector2(batch_volume,delta_volume);
 
 
     //temp
-    std::cout<<"in gaussian fit, x,y,delta_x,delta_y"<<std::endl;
-    for(int i=0;i<delta_x.size();i++)
-    {
-        std::cout<<good_x[i]<<" "<<good_y[i]<<" "<<delta_x[i]<<" "<<delta_y[i]<<std::endl;
-    }
-    std::cout<<std::endl;
+    // std::cout<<"in gaussian fit, x,y,delta_x,delta_y"<<std::endl;
+    // for(int i=0;i<delta_x.size();i++)
+    // {
+    //     std::cout<<good_x[i]<<" "<<good_y[i]<<" "<<delta_x[i]<<" "<<delta_y[i]<<std::endl;
+    // }
+    // std::cout<<std::endl;
 
     //reverse saved fitting result (w/o artifical noise)
     x=good_x;
@@ -1983,8 +1996,8 @@ bool gaussian_fit::run_with_error_estimation(int zf1,int zf2,int nround)
     sigmay=good_sigmay;
     gammax=good_gammax;
     gammay=good_gammay;
-    num_sum=good_num_sum;
-    err=good_error=err;
+    // num_sum=good_num_sum;
+    // err=good_error=err;
     
     return true;
 }
@@ -1999,6 +2012,13 @@ bool gaussian_fit::run_multi_peaks_method2()
 {
     int npeak = x.size();
 
+    ceres::Solver::Options options;
+    options.max_num_iterations = 50;
+    options.function_tolerance = 1e-5;
+    options.parameter_tolerance =1e-5;
+    options.initial_trust_region_radius = 10;
+    options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
+    options.minimizer_progress_to_stdout = false;
 
     ceres::Solver::Summary summary;
     ceres::Problem problem;
@@ -2192,6 +2212,8 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
     x_old.clear();
     y_old.clear();
 
+    // std::ofstream fdebug("debug_"+std::to_string(my_index)+".txt");
+
     bool flag_break = false;
     int loop;
     for (loop = 0; loop < loop_max; loop++)
@@ -2318,7 +2340,13 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
             }
 
             err.at(i_peak) = e;
-            // std::cout<<"after fit, peak "<<original_ndx[i]<<" x="<<x[i]<<" y="<<y[i]<<" xdim="<<xdim<<" ydim="<<ydim<<" region x is "<<i0<<" "<<i1<<" y is "<<j0<<" "<<j1<<std::endl;
+            // std::cout<<"after fit at loop "<<loop<<" peak "<<original_ndx[i_peak]<<" x="<<x[i_peak]<<" y="<<y[i_peak]<<" xdim="<<xdim<<" ydim="<<ydim;
+            // std::cout<<" sx="<<sigmax.at(i_peak);
+            // std::cout<<" gx="<<gammax.at(i_peak);
+            // std::cout<<" sy="<<sigmay.at(i_peak);
+            // std::cout<<" gy="<<gammay.at(i_peak);
+            // std::cout<<std::endl;
+            
 
 
             if (peak_shape == gaussian_type)
@@ -2368,9 +2396,13 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                     double dx = x[k1] - x[k2];
                     double dy = y[k1] - y[k2];
                     
-                    if (dx * dx + dy * dy < cut_near) //too close peaks
+                    if ( (dx * dx + dy * dy < cut_near) || (fabs(dx*xppm_per_step)+0.1*fabs(dy*yppm_per_step)<0.002) ) //too close peaks
                     {
-                        
+                        if (  (fabs(dx*xppm_per_step)+0.1*fabs(dy*yppm_per_step)<0.002) )
+                        {
+                            std::cout<<"dx is "<<dx<<" ppm per step is "<<xppm_per_step<<" dy is "<<dy<<" ppm per step is "<<yppm_per_step<<std::endl;
+                        }
+
                         if (fabs(a[k1][0]) > fabs(a[k2][0]))
                         {
                             //a[k2] = 0.0;
@@ -2463,9 +2495,19 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
         {
             flag_break = true;
         }
+
+        // fdebug<<loop<<" ";
+        // for(int k=0;k<x.size();k++)
+        // {
+        //     fdebug<<x[k]+xstart<<" "<<y[k]+ystart<<" "<<a[k][0]<<" ";
+        // }
+        // fdebug<<std::endl;
+
+
         std::cout<<"\r"<<"Iteration "<<loop+1<<"  "<<std::flush;
     } //loop
     std::cout<<std::endl;
+    // fdebug.close();
 
     nround = loop;
 
@@ -2905,13 +2947,15 @@ void gaussian_fit::set_everything(fit_type t, int r, int index)
     rmax = r;
     my_index = index;
 }
-void gaussian_fit::set_peak_paras(double x, double y, double noise, double height, double near)
+void gaussian_fit::set_peak_paras(double x, double y, double noise, double height, double near,double s1,double s2)
 {
     gaussian_fit_wx = x;
     gaussian_fit_wy = y;
     noise_level = noise;
     minimal_height = height;
     too_near_cutoff = near;
+    xppm_per_step=s1;
+    yppm_per_step=s2;
 };
 
 
@@ -3207,7 +3251,7 @@ bool spectrum_fit::prepare_fit()
         std::vector<double> xx,yy,sx,sy,gx,gy;
         std::vector<int> ori_index;
         std::vector<int> region_peak_cannot_move_flag;
-        xx.clear();yy.clear();sx.clear();sy.clear();ori_index.clear(); //do not need
+        xx.clear();yy.clear();sx.clear();sy.clear();ori_index.clear();gx.clear();gy.clear(); //do not need
 
 
         for(unsigned int i1=0;i1<clusters2[i0].size();i1++)
@@ -3263,17 +3307,9 @@ bool spectrum_fit::prepare_fit()
 
             if(zf==0)
             {
+                // std::cout<<"c="<<counter<<" sizes are "<<sx.size()<<" "<<gx.size()<<std::endl;
                 myfit.init(min1, min2, max1 - min1 , max2 - min2 , spect_parts, xx, yy, aas, sx, sy,gx,gy,ori_index,region_peak_cannot_move_flag);
-                myfit.set_peak_paras(wx*1.5,wy*1.5,noise_level,noise_level*user_scale2,too_near_cutoff); 
-                // if(counter==177 || counter==572)
-                // {
-                //     std::cout<<counter<<std::endl;
-                //     std::cout<<"Size of xx is "<<xx.size()<<std::endl;
-                //     std::cout<<"Size of sx is "<<sx.size()<<std::endl;
-                //     std::cout<<"Size of ori_index is "<<ori_index.size()<<std::endl;    
-
-                //     myfit.assess_size();                
-                // }
+                myfit.set_peak_paras(wx*1.5,wy*1.5,noise_level,noise_level*user_scale2,too_near_cutoff,step1,step2); 
             }
             else if(zf==1)
             {
@@ -3306,7 +3342,7 @@ bool spectrum_fit::prepare_fit()
                 }
 
                 myfit.init(min1, min2, d1*2-1 , d2*2-1 , spect_parts, xx, yy, aas, sx, sy,gx,gy,ori_index,region_peak_cannot_move_flag);
-                myfit.set_peak_paras(wx*3,wy*3,noise_level,noise_level*user_scale2,too_near_cutoff*2.0); 
+                myfit.set_peak_paras(wx*3,wy*3,noise_level,noise_level*user_scale2,too_near_cutoff*2.0,step1,step2); 
             }
             fits.emplace_back(myfit);
             counter++;
@@ -3334,55 +3370,13 @@ bool spectrum_fit::peak_fitting()
     if(flag_with_error==0)
     {
         real_peak_fitting();
-        fit_gather(0);
     }
     else
     {
         real_peak_fitting_with_error(zf1,zf2,err_nround);
-        fit_gather(1);
     }
 
-    //remove weak peaks!!
-    for(int i=p1.size()-1;i>=0;i--)
-    {
-        if(p_intensity[i]<noise_level*user_scale)
-        {
-            p1.erase(p1.begin()+i);
-            p2.erase(p2.begin()+i);
-            p1_ppm.erase(p1_ppm.begin()+i);
-            p2_ppm.erase(p2_ppm.begin()+i);
-            
-            p_intensity.erase(p_intensity.begin()+i);
-            p_intensity_all_spectra.erase(p_intensity_all_spectra.begin()+i);
-            num_sums.erase(num_sums.begin()+i);
-            group.erase(group.begin()+i);
-            err.erase(err.begin()+i);
-            peak_index.erase(peak_index.begin()+i);
-            sigmax.erase(sigmax.begin()+i);
-            sigmay.erase(sigmay.begin()+i);
-            if (peak_shape==voigt_type || peak_shape == exact_type)
-            {
-                gammax.erase(gammax.begin()+i);
-                gammay.erase(gammay.begin()+i);
-            }
 
-            //deltas
-            if(flag_with_error==1)
-            {
-                delta_sigmax.erase(delta_sigmax.begin()+i);
-                delta_sigmay.erase(delta_sigmay.begin()+i);
-                if (peak_shape==voigt_type || peak_shape == exact_type)
-                {
-                    delta_gammax.erase(delta_gammax.begin()+i);
-                    delta_gammay.erase(delta_gammay.begin()+i);
-                }
-                delta_x.erase(delta_x.begin()+i);
-                delta_y.erase(delta_y.begin()+i);
-                delta_amplitude.erase(delta_amplitude.begin()+i);
-                delta_volume.erase(delta_volume.begin()+i);
-            }
-        }
-    }
 
     return true;
 }
@@ -3390,6 +3384,7 @@ bool spectrum_fit::peak_fitting()
 bool spectrum_fit::real_peak_fitting()
 {
     for (int i = 0; i < fits.size(); i++)
+    // for (int i = 435; i < 436; i++)
     {
         std::cout << "Cluster " << fits[i].get_my_index() << " has " << fits[i].x.size() << " peaks before fitting. Region is " << fits[i].xstart << " " << fits[i].xstart + fits[i].xdim << " " << fits[i].ystart << " " << fits[i].ystart + fits[i].ydim << std::endl;
         if (fits[i].run() == false || fits[i].a.size() == 0)
@@ -3419,7 +3414,7 @@ bool spectrum_fit::real_peak_fitting_with_error(int zf1,int zf2,int nround)
    return true;
 };
 
-bool spectrum_fit::fit_gather(int flag_error)
+bool spectrum_fit::fit_gather_original()
 {
     p1.clear();
     p2.clear();
@@ -3427,25 +3422,17 @@ bool spectrum_fit::fit_gather(int flag_error)
     sigmay.clear();
     gammax.clear();
     gammay.clear();
+    p_intensity.clear();
+    p_intensity_all_spectra.clear();
     nround.clear();
     group.clear();
     err.clear();
     peak_index.clear();
-    
-    p_intensity.clear();
-    p_intensity_all_spectra.clear();
     num_sums.clear();
-
-
-
-    double zf_step=1.0;
-    if(zf==0) zf_step=1.0;
-    else if(zf==1) zf_step=0.5;
-
+    
     for(int i=0;i<fits.size();i++)
     {
         if(fits[i].a.size()==0) continue; 
-
         if(fits[i].assess_size()==false)
         {
             std::cout<<"SOMETHING IS WRONG!!!!"<<std::endl;
@@ -3453,8 +3440,8 @@ bool spectrum_fit::fit_gather(int flag_error)
 
         for (unsigned int ii = 0; ii < fits[i].x.size(); ii++)
         {
-            p1.push_back(fits[i].x.at(ii)*zf_step + fits[i].xstart);
-            p2.push_back(fits[i].y.at(ii)*zf_step + fits[i].ystart);
+            p1.push_back(fits[i].x.at(ii) + fits[i].xstart);
+            p2.push_back(fits[i].y.at(ii) + fits[i].ystart);
             group.push_back(i);
             nround.push_back(fits[i].get_nround());
             p_intensity.push_back(fits[i].a[ii][0]); //intensity of first spectrum only.
@@ -3480,7 +3467,6 @@ bool spectrum_fit::fit_gather(int flag_error)
         assess_size();
     }
 
-    //if it is a load, fits[i].comments will be empty. we set all names to "peak".
     if(user_comments.size()==0)
     {
         user_comments.resize(p1.size(),"peak");    
@@ -3497,44 +3483,7 @@ bool spectrum_fit::fit_gather(int flag_error)
         }
         user_comments=temp_comments;
     }
-
-    for(int i=0;i<sigmax.size();i++)
-    {
-        sigmax[i]*=zf_step;
-        sigmay[i]*=zf_step;
-        gammax[i]*=zf_step;
-        gammay[i]*=zf_step;
-        for(int j=0;j<num_sums[i].size();j++)
-        {
-            num_sums[i][j]*=(zf_step*zf_step);
-        }
-    }
-
     std::cout<<"Totally fitted "<<p1.size()<<" peaks from the raw spectrum"<<std::endl;
-    //std::cout<<"Done fitting"<<std::endl;
-
-
-    if(flag_error==1) //gather fitting uncertainties too
-    {
-        for(int i=0;i<fits.size();i++)
-        {
-            if(fits[i].a.size()==0) continue; 
-
-            if(fits[i].assess_size()==false)
-            {
-                std::cout<<"SOMETHING IS WRONG!!!!"<<std::endl;
-            }
-
-            delta_sigmax.insert(delta_sigmax.end(), fits[i].delta_sigmax.begin(), fits[i].delta_sigmax.end());
-            delta_sigmay.insert(delta_sigmay.end(), fits[i].delta_sigmay.begin(), fits[i].delta_sigmay.end());
-            delta_gammax.insert(delta_gammax.end(), fits[i].delta_gammax.begin(), fits[i].delta_gammax.end());
-            delta_gammay.insert(delta_gammay.end(), fits[i].delta_gammay.begin(), fits[i].delta_gammay.end());
-            delta_x.insert(delta_x.end(),fits[i].delta_x.begin(), fits[i].delta_x.end());
-            delta_y.insert(delta_y.end(),fits[i].delta_y.begin(), fits[i].delta_y.end());
-            delta_amplitude.insert(delta_amplitude.end(),fits[i].delta_amplitude.begin(), fits[i].delta_amplitude.end());
-            delta_volume.insert(delta_volume.end(),fits[i].delta_volume.begin(), fits[i].delta_volume.end());
-        }
-    }
 
     p1_ppm.clear();
     p2_ppm.clear();
@@ -3551,6 +3500,112 @@ bool spectrum_fit::fit_gather(int flag_error)
     }
 
     std::cout<<"Finish gathering fitting result."<<std::endl;
+    
+    //remove weak peaks!!
+    excluded_peaks.resize(p1.size());
+    for(int i=p1.size()-1;i>=0;i--)
+    {
+        if(p_intensity[i]<noise_level*user_scale)
+        {
+            excluded_peaks[i]=1;
+        }
+    }
+
+    for(int i=excluded_peaks.size()-1;i>=0;i--)
+    {
+        if(excluded_peaks[i]==1)
+        {
+            p1.erase(p1.begin()+i);
+            p2.erase(p2.begin()+i);
+            p1_ppm.erase(p1_ppm.begin()+i);
+            p2_ppm.erase(p2_ppm.begin()+i);
+            
+            p_intensity.erase(p_intensity.begin()+i);
+            p_intensity_all_spectra.erase(p_intensity_all_spectra.begin()+i);
+            num_sums.erase(num_sums.begin()+i);
+            group.erase(group.begin()+i);
+            err.erase(err.begin()+i);
+            peak_index.erase(peak_index.begin()+i);
+            sigmax.erase(sigmax.begin()+i);
+            sigmay.erase(sigmay.begin()+i);
+            if (peak_shape==voigt_type || peak_shape == exact_type)
+            {
+                gammax.erase(gammax.begin()+i);
+                gammay.erase(gammay.begin()+i);
+            }
+            nround.erase(nround.begin()+i);
+        }
+    }
+    std::cout<<"Finish remove weak peaks."<<std::endl;
+    return true;
+}
+
+bool spectrum_fit::fit_gather(int c)
+{
+    p1.clear();
+    p2.clear();
+    sigmax.clear();
+    sigmay.clear();
+    gammax.clear();
+    gammay.clear();
+    p_intensity.clear();
+    p_intensity_all_spectra.clear();
+
+   
+    for(int i=0;i<fits.size();i++)
+    {
+        if(fits[i].a.size()==0) continue; 
+    
+        for (unsigned int ii = 0; ii < fits[i].x.size(); ii++)
+        {
+            p1.push_back(fits[i].batch_x[c].at(ii) + fits[i].xstart);
+            p2.push_back(fits[i].batch_y[c].at(ii) + fits[i].ystart);
+            p_intensity.push_back(fits[i].batch_a[c][ii][0]); //intensity of first spectrum only.
+        }
+
+        sigmax.insert(sigmax.end(), fits[i].batch_sigmax[c].begin(), fits[i].batch_sigmax[c].end());
+        sigmay.insert(sigmay.end(), fits[i].batch_sigmay[c].begin(), fits[i].batch_sigmay[c].end());
+        p_intensity_all_spectra.insert(p_intensity_all_spectra.end(), fits[i].batch_a[c].begin(), fits[i].batch_a[c].end()); 
+    
+        if (peak_shape==voigt_type || peak_shape == exact_type) //exact type, gamma is actually phasing err
+        {
+            gammax.insert(gammax.end(), fits[i].batch_gammax[c].begin(), fits[i].batch_gammax[c].end());
+            gammay.insert(gammay.end(), fits[i].batch_gammay[c].begin(), fits[i].batch_gammay[c].end());
+        }
+    }
+
+
+    p1_ppm.clear();
+    p2_ppm.clear();
+    for (unsigned int i = 0; i < p1.size(); i++)
+    {
+        double f1 = begin1 + step1 * (p1[i]);  //direct dimension
+        double f2 = begin2 + step2 * (p2[i]);  //indirect dimension
+        p1_ppm.push_back(f1);
+        p2_ppm.push_back(f2);
+        sigmax[i]=fabs(sigmax[i]);
+        sigmay[i]=fabs(sigmay[i]);
+    }
+
+    for(int i=excluded_peaks.size()-1;i>=0;i--)
+    {
+        if(excluded_peaks[i]==1)
+        {
+            p1.erase(p1.begin()+i);
+            p2.erase(p2.begin()+i);
+            p1_ppm.erase(p1_ppm.begin()+i);
+            p2_ppm.erase(p2_ppm.begin()+i);
+            p_intensity.erase(p_intensity.begin()+i);
+            p_intensity_all_spectra.erase(p_intensity_all_spectra.begin()+i);
+            sigmax.erase(sigmax.begin()+i);
+            sigmay.erase(sigmay.begin()+i);
+            if (peak_shape==voigt_type || peak_shape == exact_type)
+            {
+                gammax.erase(gammax.begin()+i);
+                gammay.erase(gammay.begin()+i);
+            }
+        }
+    }
     return true;
 }
 
@@ -3746,89 +3801,8 @@ std::vector<double> centerx, std::vector<double> centery, std::vector< std::vect
     return 1;
 };
 
-bool spectrum_fit::print_peaks(std::string outfname)
+bool spectrum_fit::print_peaks(std::string outfname, bool b_recon)
 {
-    assess_size();
-
-    std::vector<int> ndx;
-    std::vector<double> amplitudes,fitted_volume;
-    std::vector< std::vector<double> > amplitudes_all_spectra;
-
-    if(peak_shape==gaussian_type)
-    {
-        amplitudes=p_intensity;
-        for(int i=0;i<p_intensity.size();i++)
-        {
-            fitted_volume.push_back(p_intensity[i]*sqrt(fabs(sigmax[i]*sigmay[i]))*3.14159265358979);
-        }
-    }
-    else if(peak_shape==voigt_type)
-    {
-        fitted_volume=p_intensity;
-        for(int i=0;i<p_intensity.size();i++)
-        {
-            amplitudes.push_back(p_intensity[i]*(voigt(0.0,sigmax[i],gammax[i])*voigt(0.0,sigmay[i],gammay[i])));   
-        }
-    }
-    else if(peak_shape==exact_type)
-    {
-        fitted_volume=p_intensity;
-        amplitudes=p_intensity;
-    }
-
-
-    std::vector<double> delta_height;
-
-    if(flag_with_error==0)
-    {
-        delta_height=err;   //without error est, use fitting RMSD as delta_height 
-    }
-    else
-    {
-        for(int i=0;i<p_intensity.size();i++)
-        {
-            delta_height.push_back(delta_amplitude[i][0]);
-        }
-    }
-
-
-    ldw_math_spectrum_2d::sortArr(amplitudes,ndx);
-    std::reverse(ndx.begin(),ndx.end());
-
-
-    //if multiple spectral file. 
-    if(spects.size()>1)
-    {
-        if(peak_shape==gaussian_type)
-        {
-            amplitudes_all_spectra=p_intensity_all_spectra;       
-        }
-        else if(peak_shape==voigt_type)
-        {
-            amplitudes_all_spectra.resize(p_intensity_all_spectra.size());
-            for(int i=0;i<p_intensity_all_spectra.size();i++)
-            {
-                for(int k=0;k<p_intensity_all_spectra[i].size();k++)
-                {
-                    float temp=p_intensity_all_spectra[i][k]*(voigt(0.0,sigmax[i],gammax[i])*voigt(0.0,sigmay[i],gammay[i]));
-                    amplitudes_all_spectra[i].push_back(temp);
-                }
-            }
-        }
-    
-
-        //rescale amplitudes_all_spectra using first spectrum
-        for (int i = 0; i < p_intensity_all_spectra.size(); i++)
-        {
-            for (int k = 1; k < p_intensity_all_spectra[i].size(); k++)
-            {
-
-                amplitudes_all_spectra[i][k] /= amplitudes_all_spectra[i][0];
-            }
-            amplitudes_all_spectra[i][0]=1.0;
-        }
-    }
-
 
     std::istringstream iss;
     iss.str(outfname);
@@ -3844,153 +3818,247 @@ bool spectrum_fit::print_peaks(std::string outfname)
     std::string slist(".list");
     std::string sjson(".json");
 
-    for(int m=0;m<file_names.size();m++)
+    if(flag_with_error==0)
     {
-        if(std::equal(stab.rbegin(), stab.rend(), file_names[m].rbegin()))
+        err_nround=0;
+    }
+
+    std::vector<int> ndx;
+
+    for (int c = -1; c < err_nround; c++)
+    {
+        if(c==-1) //original fitting without addtional noise
         {
-            FILE *fp = fopen(file_names[m].c_str(), "w");
-            if(peak_shape==voigt_type || peak_shape==exact_type)
+            fit_gather_original();
+            assess_size();
+        }
+        else
+        {
+            fit_gather(c); //gather result with noise
+        }
+
+        
+        std::vector<double> amplitudes, fitted_volume;
+        std::vector<std::vector<double>> amplitudes_all_spectra;
+
+        if (peak_shape == gaussian_type)
+        {
+            amplitudes = p_intensity;
+            for (int i = 0; i < p_intensity.size(); i++)
             {
-                //fprintf(fp,"#x y ppm_x ppm_y intensity sigmax sigmay (gammx gammay) fitted_volume num_volume type group\n");
-                fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL SIMGAX SIGMAY GAMMAX GAMMAY NROUND POINTER");
-                if(spects.size()>1)
-                {
-                    for(int i=0;i<spects.size();i++)
-                    {
-                        fprintf(fp," Z_A%d",i);
-                    }
-                }
-                fprintf(fp,"\n");
-
-                fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%f %%f %%f %%f %%4d %%3s");
-                if(spects.size()>1)
-                {
-                    for(int i=0;i<spects.size();i++)
-                    {
-                        fprintf(fp," %%7.4f");
-                    }
-                }
-                fprintf(fp,"\n");
-                for (unsigned int i0 = 0; i0 < p1.size(); i0++)
-                {
-                    //fitted p_tensity is actually area because external function voigt is correctly rescaled to make sure integral is 1. 
-                    //Here temp is the real intensity. 
-                    int i=ndx[i0];
-                    float s1=0.5346*gammax[i]*2+std::sqrt(0.2166*4*gammax[i]*gammax[i]+sigmax[i]*sigmax[i]*8*0.6931);
-                    float s2=0.5346*gammay[i]*2+std::sqrt(0.2166*4*gammay[i]*gammay[i]+sigmay[i]*sigmay[i]*8*0.6931);
-
-                    fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %f %f %f %f %4d <--",
-                                peak_index[i],p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
-                                int(p1[i]-3),int(p1[i]+3),int(p2[i]-3),int(p2[i]+3),amplitudes[i],delta_height[i],user_comments[i].c_str(),group[i]+1,num_sums[i][0],p_intensity[i],sigmax[i],sigmay[i],gammax[i],gammay[i],nround[i]);
-                    if(spects.size()>1)
-                    {
-                        for(int j=0;j<spects.size();j++)
-                        {
-                            fprintf(fp," %7.4f",amplitudes_all_spectra[i][j]);
-                        }
-                    }
-                    fprintf(fp,"\n");
-                }
-                fclose(fp);
+                fitted_volume.push_back(p_intensity[i] * sqrt(fabs(sigmax[i] * sigmay[i])) * 3.14159265358979);
             }
-            
-            if(peak_shape==gaussian_type)
+        }
+        else if (peak_shape == voigt_type)
+        {
+            fitted_volume = p_intensity;
+            for (int i = 0; i < p_intensity.size(); i++)
             {
-                fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL NROUND POINTER");
-                if(spects.size()>1)
-                {
-                    for(int i=0;i<spects.size();i++)
-                    {
-                        fprintf(fp," Z_A%d",i);
-                    }
-                }
-                fprintf(fp,"\n");
+                amplitudes.push_back(p_intensity[i] * (voigt(0.0, sigmax[i], gammax[i]) * voigt(0.0, sigmay[i], gammay[i])));
+            }
+        }
+        else if (peak_shape == exact_type)
+        {
+            fitted_volume = p_intensity;
+            amplitudes = p_intensity;
+        }
 
-                fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%4d %%3s");
-                if(spects.size()>1)
-                {
-                    for(int i=0;i<spects.size();i++)
-                    {
-                        fprintf(fp," %%7.4f");
-                    }
-                }
-                fprintf(fp,"\n");
+        if(c==-1) //sort peaks according to height fitted without addtional noise
+        {
+            ldw_math_spectrum_2d::sortArr(amplitudes, ndx);
+            std::reverse(ndx.begin(), ndx.end());
+        }
 
-                for (unsigned int i0 = 0; i0 < p1.size(); i0++)
+        //if multiple spectral file.
+        if (spects.size() > 1)
+        {
+            if (peak_shape == gaussian_type)
+            {
+                amplitudes_all_spectra = p_intensity_all_spectra;
+            }
+            else if (peak_shape == voigt_type)
+            {
+                amplitudes_all_spectra.resize(p_intensity_all_spectra.size());
+                for (int i = 0; i < p_intensity_all_spectra.size(); i++)
                 {
-                    int i=ndx[i0];
-                    float s1=sigmax[i]*2.355f;
-                    float s2=sigmay[i]*2.355f;
-                    fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %4d <--",peak_index[i],p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
-                                int(p1[i]-3),int(p1[i]+3),int(p2[i]-3),int(p2[i]+3),amplitudes[i],delta_height[i],user_comments[i].c_str(),group[i]+1,num_sums[i][0],fitted_volume[i],nround[i]);
-                    if(spects.size()>1)
+                    for (int k = 0; k < p_intensity_all_spectra[i].size(); k++)
                     {
-                        for(int j=0;j<spects.size();j++)
-                        {
-                            fprintf(fp," %7.4f",amplitudes_all_spectra[i][j]);
-                        }
+                        float temp = p_intensity_all_spectra[i][k] * (voigt(0.0, sigmax[i], gammax[i]) * voigt(0.0, sigmay[i], gammay[i]));
+                        amplitudes_all_spectra[i].push_back(temp);
                     }
-                    fprintf(fp,"\n");
                 }
-                fclose(fp);
+            }
+
+            //rescale amplitudes_all_spectra using first spectrum
+            for (int i = 0; i < p_intensity_all_spectra.size(); i++)
+            {
+                for (int k = 1; k < p_intensity_all_spectra[i].size(); k++)
+                {
+
+                    amplitudes_all_spectra[i][k] /= amplitudes_all_spectra[i][0];
+                }
+                amplitudes_all_spectra[i][0] = 1.0;
             }
         }
 
-        else if(std::equal(slist.rbegin(), slist.rend(), file_names[m].rbegin()))
+
+
+        for (int m = 0; m < file_names.size(); m++)
         {
-            //for Sparky format
-            FILE *fp = fopen(file_names[m].c_str(), "w");
-            fprintf(fp, "Assignment         w1         w2   Height\n");
-            for (unsigned int i = 0; i < p1.size(); i++)
+            if (std::equal(stab.rbegin(), stab.rend(), file_names[m].rbegin()))
             {
-                fprintf(fp, "?-? %9.3f %9.3f %+e\n", p2_ppm[i], p1_ppm[i], amplitudes[i]);
+                FILE *fp;
+                if(c==-1) fp = fopen(file_names[m].c_str(), "w");
+                else fp = fopen((file_names[m].substr(0,file_names[m].length()-4)+"_err_"+std::to_string(c)+".tab").c_str(), "w");
+                if (peak_shape == voigt_type || peak_shape == exact_type)
+                {
+                    //fprintf(fp,"#x y ppm_x ppm_y intensity sigmax sigmay (gammx gammay) fitted_volume num_volume type group\n");
+                    fprintf(fp, "VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL SIMGAX SIGMAY GAMMAX GAMMAY NROUND POINTER");
+                    if (spects.size() > 1)
+                    {
+                        for (int i = 0; i < spects.size(); i++)
+                        {
+                            fprintf(fp, " Z_A%d", i);
+                        }
+                    }
+                    fprintf(fp, "\n");
+
+                    fprintf(fp, "FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%f %%f %%f %%f %%4d %%3s");
+                    if (spects.size() > 1)
+                    {
+                        for (int i = 0; i < spects.size(); i++)
+                        {
+                            fprintf(fp, " %%7.4f");
+                        }
+                    }
+                    fprintf(fp, "\n");
+                    for (unsigned int i0 = 0; i0 < p1.size(); i0++)
+                    {
+                        //fitted p_tensity is actually area because external function voigt is correctly rescaled to make sure integral is 1.
+                        //Here temp is the real intensity.
+                        int i = ndx[i0];
+                        float s1 = 0.5346 * gammax[i] * 2 + std::sqrt(0.2166 * 4 * gammax[i] * gammax[i] + sigmax[i] * sigmax[i] * 8 * 0.6931);
+                        float s2 = 0.5346 * gammay[i] * 2 + std::sqrt(0.2166 * 4 * gammay[i] * gammay[i] + sigmay[i] * sigmay[i] * 8 * 0.6931);
+
+                        fprintf(fp, "%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %f %f %f %f %4d <--",
+                                peak_index[i], p1[i] + 1, p2[i] + 1, p1_ppm[i], p2_ppm[i], s1, s2,
+                                int(p1[i] - 3), int(p1[i] + 3), int(p2[i] - 3), int(p2[i] + 3), amplitudes[i], err[i], user_comments[i].c_str(), group[i] + 1, num_sums[i][0], p_intensity[i], sigmax[i], sigmay[i], gammax[i], gammay[i], nround[i]);
+                        if (spects.size() > 1)
+                        {
+                            for (int j = 0; j < spects.size(); j++)
+                            {
+                                fprintf(fp, " %7.4f", amplitudes_all_spectra[i][j]);
+                            }
+                        }
+                        fprintf(fp, "\n");
+                    }
+                    fclose(fp);
+                }
+
+                if (peak_shape == gaussian_type)
+                {
+                    fprintf(fp, "VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL NROUND POINTER");
+                    if (spects.size() > 1)
+                    {
+                        for (int i = 0; i < spects.size(); i++)
+                        {
+                            fprintf(fp, " Z_A%d", i);
+                        }
+                    }
+                    fprintf(fp, "\n");
+
+                    fprintf(fp, "FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%4d %%3s");
+                    if (spects.size() > 1)
+                    {
+                        for (int i = 0; i < spects.size(); i++)
+                        {
+                            fprintf(fp, " %%7.4f");
+                        }
+                    }
+                    fprintf(fp, "\n");
+
+                    for (unsigned int i0 = 0; i0 < p1.size(); i0++)
+                    {
+                        int i = ndx[i0];
+                        float s1 = sigmax[i] * 2.355f;
+                        float s2 = sigmay[i] * 2.355f;
+                        fprintf(fp, "%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %4d <--", peak_index[i], p1[i] + 1, p2[i] + 1, p1_ppm[i], p2_ppm[i], s1, s2,
+                                int(p1[i] - 3), int(p1[i] + 3), int(p2[i] - 3), int(p2[i] + 3), amplitudes[i], err[i], user_comments[i].c_str(), group[i] + 1, num_sums[i][0], fitted_volume[i], nround[i]);
+                        if (spects.size() > 1)
+                        {
+                            for (int j = 0; j < spects.size(); j++)
+                            {
+                                fprintf(fp, " %7.4f", amplitudes_all_spectra[i][j]);
+                            }
+                        }
+                        fprintf(fp, "\n");
+                    }
+                    fclose(fp);
+                }
             }
-            fclose(fp);
+
+            else if (std::equal(slist.rbegin(), slist.rend(), file_names[m].rbegin()))
+            {
+                //for Sparky format
+                FILE *fp2; 
+                if(c==-1) fp2 = fopen(file_names[m].c_str(), "w");
+                else fp2 = fopen((file_names[m].substr(0,file_names[m].length()-5)+"_err_"+std::to_string(c)+".list").c_str(), "w");
+                fprintf(fp2, "Assignment         w1         w2   Height\n");
+                for (unsigned int i = 0; i < p1.size(); i++)
+                {
+                    fprintf(fp2, "?-? %9.3f %9.3f %+e\n", p2_ppm[i], p1_ppm[i], amplitudes[i]);
+                }
+                fclose(fp2);
+            }
+
+            else if (std::equal(sjson.rbegin(), sjson.rend(), file_names[m].rbegin()))
+            {
+                // json format output, Gaussian only at this time.
+                FILE *fp3;
+                if(c==-1) fp3 = fopen(file_names[m].c_str(), "w");
+                else fp3 = fopen((file_names[m].substr(0,file_names[m].length()-5)+"_err_"+std::to_string(c)+".json").c_str(), "w"); 
+                if (peak_shape == gaussian_type)
+                {
+                    fprintf(fp3, "\"fitted_peaks\":[");
+
+                    int npeak = p_intensity.size();
+                    for (unsigned int i = 0; i < npeak - 1; i++)
+                    {
+                        float temp = p_intensity[i] * sqrt(fabs(sigmax[i] * sigmay[i])) * 3.14159265358979f;
+                        fprintf(fp3, "{\"cs_x\": %f,\"cs_y\": %f, \"intergral\": %f, \"intergral2\": %f, \"sigmax\": %f, \"sigmay\": %f, \"type\": 1, \"index\": %f},", p1_ppm[i], p2_ppm[i], fitted_volume[i], num_sums[i][0], sigmax[i], sigmay[i], amplitudes[i]);
+                    }
+                    float temp = p_intensity[npeak - 1] * sqrt(fabs(sigmax[npeak - 1] * sigmay[npeak - 1])) * 3.14159265358979f;
+                    fprintf(fp3, "{\"cs_x\": %f,\"cs_y\": %f, \"intergral\": %f, \"intergral2\": %f, \"sigmax\": %f, \"sigmay\": %f,  \"type\": 1, \"index\": %f}", p1_ppm[npeak - 1], p2_ppm[npeak - 1], fitted_volume[npeak - 1], num_sums[npeak - 1][0], sigmax[npeak - 1], sigmay[npeak - 1], amplitudes[npeak - 1]);
+
+                    fprintf(fp3, "]");
+                }
+                else if (peak_shape == voigt_type)
+                {
+                    fprintf(fp3, "\"fitted_peaks\":[");
+
+                    int npeak = p_intensity.size();
+                    for (unsigned int i = 0; i < npeak - 1; i++)
+                    {
+                        float temp = p_intensity[i] * sqrt(fabs(sigmax[i] * sigmay[i])) * 3.14159265358979f;
+                        fprintf(fp3, "{\"cs_x\": %f,\"cs_y\": %f, \"intergral\": %f, \"intergral2\": %f, \"sigmax\": %f, \"sigmay\": %f,  \"gammax\": %f,  \"gammay\": %f, \"type\": 1, \"index\": %f},", p1_ppm[i], p2_ppm[i], fitted_volume[i], num_sums[i][0], sigmax[i], sigmay[i], gammax[i], gammay[i], amplitudes[i]);
+                    }
+                    float temp = p_intensity[npeak - 1] * sqrt(fabs(sigmax[npeak - 1] * sigmay[npeak - 1])) * 3.14159265358979f;
+                    fprintf(fp3, "{\"cs_x\": %f,\"cs_y\": %f, \"intergral\": %f, \"intergral2\": %f, \"sigmax\": %f, \"sigmay\": %f,  \"gammax\": %f,  \"gammay\": %f,  \"type\": 1, \"index\": %f}", p1_ppm[npeak - 1], p2_ppm[npeak - 1], fitted_volume[npeak - 1], num_sums[npeak - 1][0], sigmax[npeak - 1], sigmay[npeak - 1], gammax[npeak - 1], gammay[npeak - 1], amplitudes[npeak - 1]);
+
+                    fprintf(fp3, "]");
+                }
+                fclose(fp3);
+            }
         }
-    
-
-        else if(std::equal(sjson.rbegin(), sjson.rend(), file_names[m].rbegin()))
+        if(c==-1 && b_recon==true)
         {
-            // json format output, Gaussian only at this time.
-            FILE *fp3 = fopen(file_names[m].c_str(), "w");
-            if(peak_shape==gaussian_type)
-            {
-                fprintf(fp3, "\"fitted_peaks\":[");
-
-                int npeak = p_intensity.size();
-                for (unsigned int i = 0; i < npeak - 1; i++)
-                {
-                    float temp = p_intensity[i] * sqrt(fabs(sigmax[i] * sigmay[i])) * 3.14159265358979f;
-                    fprintf(fp3, "{\"cs_x\": %f,\"cs_y\": %f, \"intergral\": %f, \"intergral2\": %f, \"sigmax\": %f, \"sigmay\": %f, \"type\": 1, \"index\": %f},", p1_ppm[i], p2_ppm[i], fitted_volume[i], num_sums[i][0], sigmax[i], sigmay[i], amplitudes[i]);
-                }
-                float temp = p_intensity[npeak - 1] * sqrt(fabs(sigmax[npeak - 1] * sigmay[npeak - 1])) * 3.14159265358979f;
-                fprintf(fp3, "{\"cs_x\": %f,\"cs_y\": %f, \"intergral\": %f, \"intergral2\": %f, \"sigmax\": %f, \"sigmay\": %f,  \"type\": 1, \"index\": %f}", p1_ppm[npeak - 1], p2_ppm[npeak - 1], fitted_volume[npeak - 1], num_sums[npeak - 1][0], sigmax[npeak - 1], sigmay[npeak - 1], amplitudes[npeak - 1]);
-
-                fprintf(fp3, "]");
-            }
-            else if(peak_shape==voigt_type)
-            {
-                fprintf(fp3, "\"fitted_peaks\":[");
-
-                int npeak = p_intensity.size();
-                for (unsigned int i = 0; i < npeak - 1; i++)
-                {
-                    float temp = p_intensity[i] * sqrt(fabs(sigmax[i] * sigmay[i])) * 3.14159265358979f;
-                    fprintf(fp3, "{\"cs_x\": %f,\"cs_y\": %f, \"intergral\": %f, \"intergral2\": %f, \"sigmax\": %f, \"sigmay\": %f,  \"gammax\": %f,  \"gammay\": %f, \"type\": 1, \"index\": %f},", p1_ppm[i], p2_ppm[i], fitted_volume[i], num_sums[i][0], sigmax[i], sigmay[i],  gammax[i], gammay[i], amplitudes[i]);
-                }
-                float temp = p_intensity[npeak - 1] * sqrt(fabs(sigmax[npeak - 1] * sigmay[npeak - 1])) * 3.14159265358979f;
-                fprintf(fp3, "{\"cs_x\": %f,\"cs_y\": %f, \"intergral\": %f, \"intergral2\": %f, \"sigmax\": %f, \"sigmay\": %f,  \"gammax\": %f,  \"gammay\": %f,  \"type\": 1, \"index\": %f}", p1_ppm[npeak - 1], p2_ppm[npeak - 1], fitted_volume[npeak - 1], num_sums[npeak - 1][0], sigmax[npeak - 1], sigmay[npeak - 1],  gammax[npeak - 1], gammay[npeak - 1], amplitudes[npeak - 1]);
-
-                fprintf(fp3, "]");
-            }
-            fclose(fp3);
+            generate_recon_and_diff_spectrum();
+            std::cout<<"Finish generate recon and diff spectral files."<<std::endl;
         }
     }
 
     return 1;
 };
-
-
 
 // bool spectrum_fit::print_intensities(std::string outfname)
 // {
@@ -4029,7 +4097,6 @@ bool spectrum_fit::assess_size()
     }
     return b;
 }
-
 
 bool spectrum_fit::peak_reading(std::string infname)
 {

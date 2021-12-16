@@ -11,7 +11,7 @@
 
 int main(int argc, char **argv)
 {
-    std::cout<<"Last update: Oct. 2021"<<std::endl;
+    std::cout<<"Last update: Dec. 2021"<<std::endl;
  
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;
@@ -44,6 +44,10 @@ int main(int argc, char **argv)
     args2.push_back("1");
     args3.push_back("Model selection for ANN picker, 1: PPP 6-20, 2: PPP 4-12, 3: 3-9");
 
+    args.push_back("-t1_noise");
+    args2.push_back("no");
+    args3.push_back("Remove possible t1 noise peaks");
+
     args.push_back("-debug_flag1");
     args2.push_back("0");
     args3.push_back("Reserved debug flag.(0:normal, 1:no special peak, 2: test new method)");
@@ -61,7 +65,13 @@ int main(int argc, char **argv)
     double max_width;
     int model_selection;
     int debug_flag1;
+    int t1_flag=0;
     bool b_negative;
+
+    if(cmdline.query("-t1_noise")=="yes" || cmdline.query("-t1_noise")=="y") 
+    {
+        t1_flag=1;
+    }
 
     b_negative=false;
     b_negative=cmdline.query("-negative")=="yes" || cmdline.query("-negative")=="y";
@@ -93,7 +103,7 @@ int main(int argc, char **argv)
         if(x.init(infname)) //read and zero filling
         {
             if (noise_level>1e-20) { x.set_noise_level(noise_level);}
-            x.ann_peak_picking(debug_flag1,0); //picking and fitting, output
+            x.ann_peak_picking(debug_flag1,0,t1_flag); //picking
             x.print_peaks_picking(outfname);
         }
         // x.clear_memory();

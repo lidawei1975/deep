@@ -40,7 +40,7 @@ int main(int argc, char **argv)
     args3.push_back("Direct set noise level to this value. Noise level will be estimated from sepctrum if input is 0.0");
 
     args.push_back("-in");
-    args2.push_back("test.ft2");
+    args2.push_back("input.csv");
     args3.push_back("input spectral file names. Multiple files should be seprated by space");
 
     args.push_back("-peak_in");
@@ -56,7 +56,7 @@ int main(int argc, char **argv)
     args3.push_back("save reconstructed and differential spectra files in pipe format? (yes)");
 
     args.push_back("-maxround");
-    args2.push_back("50");
+    args2.push_back("100");
     args3.push_back("maximal rounds in iterative fitting process(50)");
 
     args.push_back("-wx");
@@ -157,13 +157,8 @@ int main(int argc, char **argv)
 
             if (x.peak_reading(peak_file) && x.peak_fitting())
             {
-                x.print_peaks(outfname);
+                x.print_peaks(outfname,cmdline.query("-recon")=="yes");
                 std::cout<<"Finish print peaks."<<std::endl;
-                if(cmdline.query("-recon")=="yes")
-                {
-                    x.generate_recon_and_diff_spectrum();
-                    std::cout<<"Finish generate recon and diff spectral files."<<std::endl;
-                }
             }
             // x.clear_memory();
         }
