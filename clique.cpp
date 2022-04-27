@@ -21,7 +21,7 @@ cmaxclique::~cmaxclique(){}
 int cmaxclique::pivot(std::vector<int> input)
 {
 
-    int index;
+    int index=0;
     int m=0;
     
     for(int i=0;i<input.size();i++)

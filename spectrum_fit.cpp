@@ -3923,7 +3923,7 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon)
                     }
                     fprintf(fp, "\n");
 
-                    fprintf(fp, "FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%f %%f %%f %%f %%4d %%3s");
+                    fprintf(fp, "FORMAT %%5d %%9.3f %%9.3f %%8.4f %%8.4f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%f %%f %%f %%f %%4d %%3s");
                     if (spects.size() > 1)
                     {
                         for (int i = 0; i < spects.size(); i++)
@@ -3940,7 +3940,7 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon)
                         float s1 = 0.5346 * gammax[i] * 2 + std::sqrt(0.2166 * 4 * gammax[i] * gammax[i] + sigmax[i] * sigmax[i] * 8 * 0.6931);
                         float s2 = 0.5346 * gammay[i] * 2 + std::sqrt(0.2166 * 4 * gammay[i] * gammay[i] + sigmay[i] * sigmay[i] * 8 * 0.6931);
 
-                        fprintf(fp, "%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %f %f %f %f %4d <--",
+                        fprintf(fp, "%5d %9.3f %9.3f %8.4f %8.4f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %f %f %f %f %4d <--",
                                 peak_index[i], p1[i] + 1, p2[i] + 1, p1_ppm[i], p2_ppm[i], s1, s2,
                                 int(p1[i] - 3), int(p1[i] + 3), int(p2[i] - 3), int(p2[i] + 3), amplitudes[i], err[i], user_comments[i].c_str(), group[i] + 1, num_sums[i][0], p_intensity[i], sigmax[i], sigmay[i], gammax[i], gammay[i], nround[i]);
                         if (spects.size() > 1)
@@ -3967,7 +3967,7 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon)
                     }
                     fprintf(fp, "\n");
 
-                    fprintf(fp, "FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%4d %%3s");
+                    fprintf(fp, "FORMAT %%5d %%9.3f %%9.3f %%8.4f %%8.4f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%+e %%s %%4d %%+e %%+e %%4d %%3s");
                     if (spects.size() > 1)
                     {
                         for (int i = 0; i < spects.size(); i++)
@@ -3982,7 +3982,7 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon)
                         int i = ndx[i0];
                         float s1 = sigmax[i] * 2.355f;
                         float s2 = sigmay[i] * 2.355f;
-                        fprintf(fp, "%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %4d <--", peak_index[i], p1[i] + 1, p2[i] + 1, p1_ppm[i], p2_ppm[i], s1, s2,
+                        fprintf(fp, "%5d %9.3f %9.3f %8.4f %8.4f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %4d <--", peak_index[i], p1[i] + 1, p2[i] + 1, p1_ppm[i], p2_ppm[i], s1, s2,
                                 int(p1[i] - 3), int(p1[i] + 3), int(p2[i] - 3), int(p2[i] + 3), amplitudes[i], err[i], user_comments[i].c_str(), group[i] + 1, num_sums[i][0], fitted_volume[i], nround[i]);
                         if (spects.size() > 1)
                         {
@@ -4006,7 +4006,7 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon)
                 fprintf(fp2, "Assignment         w1         w2   Height\n");
                 for (unsigned int i = 0; i < p1.size(); i++)
                 {
-                    fprintf(fp2, "?-? %9.3f %9.3f %+e\n", p2_ppm[i], p1_ppm[i], amplitudes[i]);
+                    fprintf(fp2, "?-? %9.4f %9.4f %+e\n", p2_ppm[i], p1_ppm[i], amplitudes[i]);
                 }
                 fclose(fp2);
             }
