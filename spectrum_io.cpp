@@ -60,8 +60,16 @@ namespace ldw_math_spectrum_2d
 
     void get_ppm_from_header(const double ref,const double sw,const double frq, double &stop, double &begin)
     {
-        stop = ref / frq;
-        begin = stop + sw / frq;
+        if(fabs(frq)>1e-10)
+        {
+            stop = ref / frq;
+            begin = stop + sw / frq;
+        }
+        else
+        {
+            stop=2.0;
+            begin=1.0; //arbitary
+        }
         return;
     }
 
@@ -166,7 +174,6 @@ spectrum_io::spectrum_io()
     begin2=1000;
     stop2=-1000; //will be updated once read in spe
 
-    b_negative=false;
     b_pipe=false;
 };
 
@@ -243,16 +250,7 @@ bool spectrum_io::init(std::string infname, int noise_flag)
         }
         std::cout<<"Done reading"<<std::endl;
 
-        if(noise_flag==1) noise();    //estimate noise level  
-        
-        if(b_negative==true)
-        {
-            for(int i=0;i<xdim*ydim;i++)
-            {
-                spect[i]=-spect[i];
-            }
-            std::cout<<"Negative mode, flip spectral data. "<<std::endl;
-        }
+        if(noise_flag==1) noise();    //estimate noise level 
     }
     return b_read;
 }
@@ -493,15 +491,6 @@ bool spectrum_io::get_ppm_from_point()
     return true;
 };
 
-bool spectrum_io::zero_negative()
-{
-    for(int i=0;i<xdim*ydim;i++)
-    {
-        if(spect[i]<0.0)
-            spect[i]=0.0;
-    }
-    return true;
-};
 
 //read topspin file in ASCIC format, genearted using command totxt
 bool spectrum_io::read_topspin_txt(std::string infname)
@@ -761,7 +750,7 @@ bool spectrum_io::read_pipe(std::string infname)
     xdim = int(header[100 - 1]);
 
     int ndim=int(header[10-1]);
-    for(int i=0;i<ndim;i++)
+    for(int i=0;i<4;i++)
     {
         ldw_math_spectrum_2d::get_ppm_from_header( refs[i], sws[i], frqs[i],  stops[i],  begins[i]);
     }
@@ -786,6 +775,11 @@ bool spectrum_io::read_pipe(std::string infname)
     step2=(stop2-begin2)/ydim;
     begin2+=step2;
 
+    double sws_direct=sws[direct_ndx];
+    double sws_indirect=sws[indirect_ndx];
+    double frqs_direct=frqs[direct_ndx];
+    double frqs_indirect=frqs[indirect_ndx];
+
     //read in spectrum
     //saved row by row in nmrpipe
     spect = new float[xdim * ydim];
@@ -800,11 +794,11 @@ bool spectrum_io::read_pipe(std::string infname)
     }
 
 
-    std::cout << "Spectrum width are " << sws[0] << " Hz and " << sws[1] << " Hz" << std::endl;
-    std::cout << "Fields are " << frqs[0] << " mHz and " << frqs[1] << " mHz" << std::endl;
+    std::cout << "Spectrum width are " << sws_direct << " Hz and " << sws_indirect << " Hz" << std::endl;
+    std::cout << "Fields are " << frqs_direct << " mHz and " << frqs_indirect << " mHz" << std::endl;
     std::cout << "Direct dimension size is " << xdim << " indirect dimension is " << ydim << std::endl;
     std::cout << "  Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " and last is " << stop1 << std::endl;
-    std::cout << "Indirect dimension offset is " << begin2 << ", ppm per steo is " << step2 << " and last is " << stop2 << std::endl;
+    std::cout << "Indirect dimension offset is " << begin2 << ", ppm per step is " << step2 << " and last is " << stop2 << std::endl;
 
     fclose(fp);
 

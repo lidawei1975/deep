@@ -70,7 +70,7 @@ std::vector<double> &kernel,int &i0,int &i1, int &j0, int &j1)
     return true;
 };
 
-bool spectrum_pick::simple_peak_picking()
+bool spectrum_pick::simple_peak_picking(bool b_negative)
 {
     for(int j=1;j<ydim-1;j++)
     {
@@ -90,6 +90,27 @@ bool spectrum_pick::simple_peak_picking()
         }
     }
 
+    if(b_negative)
+    {
+         for(int j=1;j<ydim-1;j++)
+        {
+            for(int i=1;i<xdim-1;i++)
+            {
+                if (-spect[j * xdim + i] > noise_level * user_scale 
+                && -spect[j * xdim + i] > -spect[j * xdim + i + 1] 
+                && -spect[j * xdim + i] > -spect[j * xdim + i - 1] 
+                && -spect[j * xdim + i] > -spect[j * xdim + xdim + i] 
+                && -spect[j * xdim + i] > -spect[j * xdim - xdim + i]
+                && -spect[j * xdim + i] > -noise_level*user_scale)
+                {
+                    p1.push_back(i);
+                    p2.push_back(j);
+                    p_intensity.push_back(spect[j * xdim + i]);
+                }
+            }
+        }   
+    }
+
     //fake values.
     sigmax.resize(p1.size(),3.0);
     sigmay.resize(p1.size(),3.0);
@@ -104,17 +125,18 @@ bool spectrum_pick::simple_peak_picking()
     return true;
 }
 
-bool spectrum_pick::ann_peak_picking(int flag,int expand, int flag_t1_noise)  //default flag is 0, default expand is 0
+bool spectrum_pick::ann_peak_picking(int flag,int expand, int flag_t1_noise, bool b_negative)  //default flag is 0, default expand is 0, default b_negative=false
 {
     std::vector<int> p_type; //no used at this time
 
     class peak2d p(flag); //flag==0:  run special case, 1: not run. 2: inertia based method
     p.init_ann(model_selection); //read in ann parameters. 1: protein para set, 2: meta para set.
+    class peak2d pp(flag); //flag==0:  run special case, 1: not run. 2: inertia based method
+    pp.init_ann(model_selection); //read in ann parameters. 1: protein para set, 2: meta para set.
    
-    zero_negative();
 
     std::vector<float> sp;
-    if(expand==1)
+    if(expand==1) //need revision to address b_negative mode!!!!
     {
         //spect[j * xdim + i]  i: xdim, j: ydim; row by row format
         std::vector<double> final_data;
@@ -144,44 +166,47 @@ bool spectrum_pick::ann_peak_picking(int flag,int expand, int flag_t1_noise)  //
     else
     {
         sp.assign(spect,spect+xdim*ydim);
+        for(int i=0;i<sp.size();i++)
+        {
+            if(sp[i]<0.0)
+                sp[i]=0.0;
+        }
         p.init_spectrum(xdim,ydim,noise_level,user_scale,user_scale2,sp,1);
         p.predict();
         //get p1,p2,p_intensity,sigma,gamma from ANN here
+
         p.extract_result(p1,p2,p_intensity,sigmax,sigmay,gammax,gammay,p_type,p_confidencex,p_confidencey);
-    }
 
-
-    // remove peaks that are below noise*user_scale
-    for (int i = p1.size() - 1; i >= 0; i--)
-    {
-        int pp1 = int(p1[i] + 0.5);
-        int pp2 = int(p2[i] + 0.5);
-        double pp = spect[pp1 + pp2 * xdim];
-
-        if (p_intensity[i] <= noise_level * user_scale && pp <= noise_level * user_scale)
+        if(b_negative==true)
         {
-            p_intensity.erase(p_intensity.begin() + i);
-            p_confidencex.erase(p_confidencex.begin() + i);
-            p_confidencey.erase(p_confidencey.begin() + i);
-            
-            sigmax.erase(sigmax.begin() + i);
-            sigmay.erase(sigmay.begin() + i);
-            gammax.erase(gammax.begin() + i);
-            gammay.erase(gammay.begin() + i);
-            p1.erase(p1.begin() + i);
-            p2.erase(p2.begin() + i);
+           
+            sp.clear();
+            sp.assign(spect,spect+xdim*ydim);
+            for(int i=0;i<sp.size();i++)
+            {
+                if(sp[i]<0.0)
+                    sp[i]=-sp[i];
+                else
+                    sp[i]=0.0;
+            }
+            pp.init_spectrum(xdim,ydim,noise_level,user_scale,user_scale2,sp,1);
+            pp.predict();
+            //get p1,p2,p_intensity,sigma,gamma from ANN here
+            int n=p_intensity.size();
+            pp.extract_result(p1,p2,p_intensity,sigmax,sigmay,gammax,gammay,p_type,p_confidencex,p_confidencey);
+            for(int m=n;m<p_intensity.size();m++)
+            {
+                p_intensity[m]=-p_intensity[m];    
+            }
         }
     }
-    // std::cout<<"Total picked "<<p1.size()<<" peaks."<<std::endl;
-
-    // linear_regression();
 
     //remove peaks that are below noise*user_scale
     for (int i = p1.size() - 1; i >= 0; i--)
     {
         int pp1 = int(p1[i] + 0.5);
         int pp2 = int(p2[i] + 0.5);
-        if (p_intensity[i] <= noise_level * user_scale )
+        if (fabs(p_intensity[i]) <= noise_level * user_scale )
         {
             p_intensity.erase(p_intensity.begin() + i);
             p_confidencex.erase(p_confidencex.begin() + i);
@@ -205,7 +230,7 @@ bool spectrum_pick::ann_peak_picking(int flag,int expand, int flag_t1_noise)  //
         {
             int pp1 = std::min(std::max(0,int(p1[i] + 0.5)),xdim-1);
             int pp2 = int(p2[i] + 0.5);
-            if (p_intensity[i] <= noise_level_columns[pp1] * user_scale )
+            if (fabs(p_intensity[i]) <= noise_level_columns[pp1] * user_scale )
             {
                 p_intensity.erase(p_intensity.begin() + i);
                 p_confidencex.erase(p_confidencex.begin() + i);
@@ -363,15 +388,17 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
         {
             //.tab file for nmrDraw
             FILE *fp = fopen(file_names[m].c_str(), "w");
+            fprintf(fp,"DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n",xdim,begin1,stop1);
+            fprintf(fp,"DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n",ydim,begin2,stop2);
             fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT ASS CONFIDENCE POINTER\n");
-            fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%8.3f %%8.3f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%s %%4.2f %%3s\n");
+            fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%10.6f %%10.6f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%s %%4.2f %%3s\n");
             for (unsigned int ii = 0; ii < ndx.size(); ii++)
             {
                 int i=ndx[ii];
                 double s1,s2;
                 s1=1.0692*gammax[i]+sqrt(0.8664*gammax[i]*gammax[i]+5.5452*sigmax[i]*sigmax[i]);
                 s2=1.0692*gammay[i]+sqrt(0.8664*gammay[i]*gammay[i]+5.5452*sigmay[i]*sigmay[i]);
-                fprintf(fp,"%5d %9.3f %9.3f %8.3f %8.3f %7.3f %7.3f %4d %4d %4d %4d %+e %s %4.2f <--\n",i+1,p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
+                fprintf(fp,"%5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %s %4.2f <--\n",ii+1,p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
                             int(p1[i]-3),int(p1[i]+3),int(p2[i]-3),int(p2[i]+3),p_intensity[i],user_comments[i].c_str(),std::min(p_confidencex[i],p_confidencey[i]));        
             }
             fclose(fp);
@@ -384,7 +411,7 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
             for (unsigned int ii = 0; ii < ndx.size(); ii++)
             {
                 int i=ndx[ii];
-                fprintf(fp,"?-? %9.3f %9.3f %+e %4.2f\n",p2_ppm[i], p1_ppm[i],p_intensity[i],std::min(p_confidencex[i],p_confidencey[i]));        
+                fprintf(fp,"?-? %10.6f %10.6f %+e %4.2f\n",p2_ppm[i], p1_ppm[i],p_intensity[i],std::min(p_confidencex[i],p_confidencey[i]));        
             }
             fclose(fp);
         }
@@ -392,7 +419,7 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
         else if(std::equal(sjson.rbegin(), sjson.rend(), file_names[m].rbegin()))
         {
             FILE * fp=fopen(file_names[m].c_str(),"w");
-            fprintf(fp,"\"picked_peaks\":[");
+            fprintf(fp,"{\"picked_peaks\":[");
             for (unsigned int ii = 0; ii < ndx.size()-1; ii++)
             {
                 int i=ndx[ii];
@@ -401,7 +428,7 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
             int n=ndx[ndx.size()-1];
             fprintf(fp,"{\"cs_x\": %f,\"cs_y\": %f, \"type\": 1, \"index\": %f, \"sigmax\": %f,  \"sigmay\": %f, \"gammax\": %f,  \"gammay\": %f}",p1_ppm[n],p2_ppm[n],p_intensity[n],sigmax[n],sigmay[n],gammax[n],gammay[n]);
 
-            fprintf(fp,"]");
+            fprintf(fp,"]}");
             fclose(fp);
         }
     }

@@ -1,12 +1,13 @@
 #include <string>
+#include <cstring>
 #include <vector>
 #include <cstdio>
 #include <iostream>
+#include <fstream>
 
 #include "commandline.h"
 
-
-bool CCommandline::pharse(int argc, char **argv)
+bool CCommandline::pharse_core(int argc, char ** argv)
 {
     int i, j;
     for (i = 1; i < argc; i++)
@@ -38,6 +39,57 @@ bool CCommandline::pharse(int argc, char **argv)
             return false;
         }
     }
+    return true;
+}
+
+
+bool CCommandline::pharse(int argc, char **argv)
+{
+    
+    if (pharse_core(argc, argv) == false)
+    {
+        return false;
+    }
+
+    //check to see whether -f is set or not
+    std::string arguments_file=query("-f");
+    if(arguments_file != "none")
+    {
+        std::ifstream fin(arguments_file);
+        if(!fin)
+        {
+            return true;
+        }
+        std::vector<std::string> ps;
+        std::string s;
+
+        //simulte commandline arguments, first argument is the program name
+        ps.push_back(argv[0]);
+
+        while(fin>>s)
+        {
+            ps.push_back(s);
+        }
+        fin.close();
+
+        //convert to char **
+        char ** argv2=new char*[ps.size()];
+        for(int i=0;i<ps.size();i++)
+        {
+            argv2[i]=new char[ps.at(i).size()+1];
+            strcpy(argv2[i],ps.at(i).c_str());
+        }
+
+        //pharse again
+        if (pharse_core(ps.size(), argv2) == false)
+        {
+            return false;
+        }
+        return true;
+    }
+
+
+
     return true;
 }
 
@@ -112,9 +164,9 @@ std::string CCommandline::query(std::string in)
         std::cout<<"Unrecognized command line argument: "<<in<<std::endl;
     }
 
-    const auto strBegin = out.find_first_not_of(" ");
-    const auto strEnd = out.find_last_not_of(" ");
-    const auto strRange = strEnd - strBegin + 1;
+    const std::size_t strBegin = out.find_first_not_of(" ");
+    const std::size_t strEnd = out.find_last_not_of(" ");
+    const std::size_t strRange = strEnd - strBegin + 1;
 
     return out.substr(strBegin, strRange);
 

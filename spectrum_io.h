@@ -30,7 +30,6 @@ class spectrum_io
 {
 public:
     double begin3,stop3,step3;  //3rd (indirect) dimension, in case of 3D
-    bool b_negative;
 
 protected:
     enum spectrum_type spectrum_type; //0: unknonw, 1: hsqc, 2:tocsy
@@ -85,7 +84,6 @@ public:
     std::vector<double> gammax,gammay; //for voigt fittting and ann picking, set to 0 in picking!
  protected:   
     bool get_ppm_from_point();
-    bool zero_negative();
 
 public:
     spectrum_io();
@@ -95,11 +93,7 @@ public:
     bool read_spectrum(std::string); //read spectrum
     bool write_pipe(std::vector<std::vector<float> > spect, std::string fname);
     bool save_mnova(std::string fname);
-    
-    inline void set_negative_mode()
-    {
-        b_negative=true;
-    };
+
     
     inline float * get_spect_data()
     {

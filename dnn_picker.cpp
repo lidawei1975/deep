@@ -883,8 +883,54 @@ bool peak1d::predict(std::vector<float> input_)
         }
     }
 
+    //filter out peaks around minimal (valley between two peaks).
+    //Because of unkbnown reason, DNN may introduce some false positve around minimal point.
+    //this is a lazy method to remove them. A better way is to increase # of this type of profile in the training set.
     min_flag.clear();
     min_flag.resize(input.size(),0);
+
+    for(int i=3;i<input.size()-3;i++)
+    {
+        if(input[i]<input[i-1] && input[i]<input[i+1] && input[i]<input[i-2] && input[i]<input[i+2] && input[i]<input[i-3] && input[i]<input[i+3])
+        { 
+            int left=i-3;
+            for(int j=left;j>=0;j--)
+            {
+                if(input[j]<input[j+1])
+                {
+                    left=j+1;
+                    break;
+                }
+            }
+
+            int right=i+3;
+            for(int j=right;j<input.size()-1;j++)
+            {
+                if(input[j]>input[j+1])  
+                {
+                    right=j;
+                    break;
+                }
+            }
+
+            double d1=right-i;
+            double d2=i-left;
+            double r1=d1/d2;
+
+            double h1=input[right]-input[i];
+            double h2=input[left]-input[i];
+            double r2=h1/h2;
+            
+            if(r1<1.4 && r1>1/1.4 && r2<1.4 && r2>1/1.4)
+            {
+                min_flag[i-2]=1;
+                min_flag[i-1]=1;
+                min_flag[i]=1;
+                min_flag[i+1]=1;
+                min_flag[i+2]=1;
+            }
+        }
+    }
    
     std::vector<float> t1,t2,t3,t4,t5,t6,t7,t8;
     ndim=input.size();
@@ -942,9 +988,9 @@ bool peak1d::predict_step2()
         
         bool b2=output1[i*3+1]>output1[i*3-3+1] && output1[i*3+1]>output1[i*3+3+1] && output1[i*3+1]>0.1;
         bool b3=output1[i*3+2]>output1[i*3-3+2] && output1[i*3+2]>output1[i*3+3+2] && output1[i*3+2]>0.1;
-        bool b4=(min_flag[i]==0);
+        bool b4=(min_flag[i]==0);  //exclude minimal and its two neighbor
 
-        //exclude minimal and its two neighbor
+
         if( output1[i*3]>0.75 && p_type.size()!=p_segment[p_segment.size()-1] )
         {
             p_segment.push_back(p_type.size());    
@@ -2760,11 +2806,11 @@ bool peak2d::check_special_peaks_3()
         auto result_x = std::minmax_element (cline_x.begin(),cline_x.end());
         auto result_y = std::minmax_element (rline_y.begin(),rline_y.end());
 
-        if( (cx[i]==1274 && (cy[i]==1521 || cy[i]==1522)) || (cx[i]==1076 && cy[i]==846))
-        {
-            std::cout<<"x is from "<<*result_x.first<<" to "<<*result_x.second<<std::endl;
-            std::cout<<"y is from "<<*result_y.first<<" to "<<*result_y.second<<std::endl;
-        }
+        // if( (cx[i]==1274 && (cy[i]==1521 || cy[i]==1522)) || (cx[i]==1076 && cy[i]==846))
+        // {
+        //     std::cout<<"x is from "<<*result_x.first<<" to "<<*result_x.second<<std::endl;
+        //     std::cout<<"y is from "<<*result_y.first<<" to "<<*result_y.second<<std::endl;
+        // }
         
         int n_min=6;  //model 2 and 3
         if(model_selection==1)
@@ -3219,9 +3265,6 @@ bool peak2d::print_prediction()
 bool peak2d::extract_result(std:: vector<double> &p1,std:: vector<double> &p2,std:: vector<double> &p_intensity,
         std:: vector<double> &sx,std:: vector<double> &sy,std:: vector<double> &gx,std:: vector<double> &gy,std::vector<int> &p_type, std::vector<double> &confx, std::vector<double> &confy)
 {
-    p1.clear();
-    p2.clear();
-
     for(int i=0;i<cx.size();i++)
     {
         p1.push_back(double(cx[i]));
@@ -3238,13 +3281,13 @@ bool peak2d::extract_result(std:: vector<double> &p1,std:: vector<double> &p2,st
         
     }
 
-    p_intensity=inten;
-    sx=sigmax;
-    sy=sigmay;
-    gx=gammax;
-    gy=gammay;
-    confx=confidencex;
-    confy=confidencey;
-    
+    p_intensity.insert(p_intensity.end(),inten.begin(),inten.end());
+    sx.insert(sx.end(),sigmax.begin(),sigmax.end());
+    sy.insert(sy.end(),sigmay.begin(),sigmay.end());
+    gx.insert(gx.end(),gammax.begin(),gammax.end());
+    gy.insert(gy.end(),gammay.begin(),gammay.end());
+    confx.insert(confx.end(),confidencex.begin(),confidencex.end());
+    confy.insert(confy.end(),confidencey.begin(),confidencey.end());
+        
     return true;
 }

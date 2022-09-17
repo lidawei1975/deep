@@ -7,6 +7,8 @@ class CCommandline
     std::vector<std::string> informations;
     int error_flag;
 
+    bool pharse_core(int argc, char ** argv);
+
   protected:
   public:
     bool pharse(int argc, char **argv);

@@ -23,8 +23,12 @@ int main(int argc, char **argv)
     args2.push_back("no");
     args3.push_back("print help message then quit");
     
+    args.push_back("-f");
+    args2.push_back("none");
+    args3.push_back("Parguments file");
+
     args.push_back("-method");
-    args2.push_back("voigt");
+    args2.push_back("gaussian");
     args3.push_back("Peak shape: gaussian or voigt.");   
 
     args.push_back("-scale");
@@ -40,11 +44,11 @@ int main(int argc, char **argv)
     args3.push_back("Direct set noise level to this value. Noise level will be estimated from sepctrum if input is 0.0");
 
     args.push_back("-in");
-    args2.push_back("input.csv");
+    args2.push_back("04.csv");
     args3.push_back("input spectral file names. Multiple files should be seprated by space");
 
     args.push_back("-peak_in");
-    args2.push_back("peaks.tab");
+    args2.push_back(" picked_peaks.json");
     args3.push_back("Read peaks list from this file. Support .tab or .list format");
     
     args.push_back("-out");
@@ -55,9 +59,17 @@ int main(int argc, char **argv)
     args2.push_back("yes");
     args3.push_back("save reconstructed and differential spectra files in pipe format? (yes)");
 
+    args.push_back("-folder");
+    args2.push_back("./sim_diff");
+    args3.push_back("save reconstructed and differential spectra files in this folder.");
+
     args.push_back("-maxround");
     args2.push_back("100");
     args3.push_back("maximal rounds in iterative fitting process(50)");
+
+    args.push_back("-combine");
+    args2.push_back("0.04");
+    args3.push_back("Cutoff to combine tightly overlapping peaks, 0.04 (0.08,0.12) for high(medium,low) quality spectrum");
 
     args.push_back("-wx");
     args2.push_back("0.0");
@@ -93,6 +105,7 @@ int main(int argc, char **argv)
     double smooth;
     double too_near_cutoff;
     double noise_level;
+    double removal_cutoff;
     bool b_read_success=false;
     
     noise_level=atof(cmdline.query("-noise_level").c_str());
@@ -102,6 +115,7 @@ int main(int argc, char **argv)
     maxround=atoi(cmdline.query("-maxround").c_str());
     user=atof(cmdline.query("-scale").c_str());
     user2=atof(cmdline.query("-scale2").c_str());
+    removal_cutoff=atof(cmdline.query("-combine").c_str());
     wx=atof(cmdline.query("-wx").c_str());
     wy=atof(cmdline.query("-wy").c_str());
     too_near_cutoff=0.1;
@@ -139,7 +153,7 @@ int main(int argc, char **argv)
             file_names.push_back(p);
         }
         
-        x.initflags_fit(maxround,too_near_cutoff,i_method,0);
+        x.initflags_fit(maxround,removal_cutoff,too_near_cutoff,i_method,0);
         x.set_scale(user,user2);
 
         if (x.init_all_spectra(file_names))
@@ -155,11 +169,12 @@ int main(int argc, char **argv)
                 x.init_error(1,std::stoi(cmdline.query("-zf1")),std::stoi(cmdline.query("-zf2")),std::stoi(cmdline.query("-n_err")));
             }
 
-            if (x.peak_reading(peak_file) && x.peak_fitting())
+            if (x.peak_reading(peak_file))
             {
-                x.print_peaks(outfname,cmdline.query("-recon")=="yes");
-                std::cout<<"Finish print peaks."<<std::endl;
+                 x.peak_fitting();
             }
+            x.print_peaks(outfname,cmdline.query("-recon")=="yes",cmdline.query("-folder"));
+            std::cout<<"Finish print peaks."<<std::endl;
             // x.clear_memory();
         }
         else
