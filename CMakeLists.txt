@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 2.8)
 
 project(deep_picker)
 
-
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
 
@@ -27,6 +26,12 @@ target_link_libraries(deep_picker libcerf)
 add_executable(simple_picker main_simple_picking.cpp spectrum_io.cpp spectrum_simple_picking.cpp $<TARGET_OBJECTS:commandline> )
 
 
+
+# 1d peak picking
+add_executable(deep_picker_1d main_peak_picking_1d.cpp spectrum_pick_1d.cpp spectrum_io_1d.cpp $<TARGET_OBJECTS:dnn> $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+target_link_libraries(deep_picker_1d libcerf)
+
+
 # fitting part, need Ceres
 
 find_package(Ceres)
@@ -40,6 +45,13 @@ if(Ceres_FOUND)
     target_include_directories(voigt_fit PRIVATE  ${EIGEN3_INCLUDE_DIR})
     target_link_libraries(voigt_fit ${CERES_LIBRARIES})
     target_link_libraries(voigt_fit libcerf)
+
+
+    add_executable(peak_fit_1d main_peak_fitting_1d.cpp spectrum_io_1d.cpp spectrum_fit_1d.cpp kiss_fft.c $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+    target_include_directories(peak_fit_1d PRIVATE  ${CERES_INCLUDE_DIRS})
+    target_include_directories(peak_fit_1d PRIVATE  ${EIGEN3_INCLUDE_DIR})
+    target_link_libraries(peak_fit_1d ${CERES_LIBRARIES})
+    target_link_libraries(peak_fit_1d libcerf)
 
 
 endif()
