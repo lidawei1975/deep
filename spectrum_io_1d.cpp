@@ -75,57 +75,6 @@ bool spectrum_io_1d::init(double user_, double user2_, double noise_)
     return true;
 };
 
-bool spectrum_io_1d::peak_partition(int nmin)
-{
-    double boundary_cutoff = noise_level * user_scale2;
-    if (spect[0] > boundary_cutoff)
-    {
-        signa_boudaries.push_back(0);
-    }
-
-    for (int j = 1; j < ndata; j++)
-    {
-        if (spect[j - 1] <= boundary_cutoff && spect[j] > boundary_cutoff)
-        {
-            signa_boudaries.push_back(std::max(j - 10, 0));
-        }
-        else if (spect[j - 1] > boundary_cutoff && spect[j] <= boundary_cutoff)
-        {
-            noise_boudaries.push_back(std::min(j + 10, ndata));
-        }
-    }
-    if (noise_boudaries.size() < signa_boudaries.size())
-    {
-        noise_boudaries.push_back(ndata);
-    }
-
-    bool b = true;
-    while (b)
-    {
-        b = false;
-        for (int j = signa_boudaries.size() - 1; j >= 1; j--)
-        {
-            if (signa_boudaries[j] <= noise_boudaries[j - 1])
-            {
-                signa_boudaries.erase(signa_boudaries.begin() + j);
-                noise_boudaries.erase(noise_boudaries.begin() + j - 1);
-            }
-        }
-    }
-
-    // combine noise_boudaries and signa_boudaries if too close
-    for (int j = signa_boudaries.size() - 1; j >= 1; j--)
-    {
-        if (signa_boudaries[j] - noise_boudaries[j - 1] < nmin)
-        {
-            signa_boudaries.erase(signa_boudaries.begin() + j);
-            noise_boudaries.erase(noise_boudaries.begin() + j - 1);
-        }
-    }
-
-    return true;
-};
-
 bool spectrum_io_1d::direct_set_spectrum(std::vector<float> &spe_)
 {
     spect = spe_;
@@ -167,6 +116,7 @@ bool spectrum_io_1d::read_spectrum(std::string infname)
 
     input_spectrum_fname = infname; // save for later use
 
+    std::string sldw(".ldw");
     std::string stxt(".txt");
     std::string sft1(".ft1");
     std::string sjson(".json");
@@ -174,6 +124,10 @@ bool spectrum_io_1d::read_spectrum(std::string infname)
     if (std::equal(stxt.rbegin(), stxt.rend(), infname.rbegin()))
     {
         b_read = read_spectrum_txt(infname);
+    }
+    else if (std::equal(sldw.rbegin(), sldw.rend(), infname.rbegin()))
+    {
+        b_read = read_spectrum_ldw(infname);
     }
     else if (std::equal(sft1.rbegin(), sft1.rend(), infname.rbegin()))
     {
@@ -189,7 +143,7 @@ bool spectrum_io_1d::read_spectrum(std::string infname)
     }
 
     std::cout << "Spectrum size is " << ndata << std::endl;
-    std::cout << "From " << stop1 << " to " << begin1 << " and step is " << step1 << std::endl;
+    std::cout << "From " << begin1 << " to " << stop1 << " and step is " << step1 << std::endl;
 
     est_noise_level();
 
@@ -294,7 +248,30 @@ bool spectrum_io_1d::write_spectrum(std::string infname)
     return true;
 }
 
-bool spectrum_io_1d::read_spectrum_txt(std::string infname)
+bool spectrum_io_1d::stride_spectrum(int n)
+{
+    if (n < 1)
+    {
+        std::cout << "Error: stride number must be larger than 1." << std::endl;
+        return false;
+    }
+
+    int nstride =  ndata / n;
+
+    std::vector<float> temp;
+    temp.resize(nstride);
+    for (int i = 0; i < nstride; i++)
+    {
+        temp[i] = spect[i * n];
+    }
+    spect = temp;
+    ndata = spect.size();
+    step1 = step1 * n;
+    return true;
+}
+
+//simple text file format, defined by myself
+bool spectrum_io_1d::read_spectrum_ldw(std::string infname)
 {
     std::ifstream fin(infname);
 
@@ -317,6 +294,77 @@ bool spectrum_io_1d::read_spectrum_txt(std::string infname)
     return true;
 }
 
+//ascii file saved by Topspin totxt command
+bool spectrum_io_1d::read_spectrum_txt(std::string infname)
+{
+    std::string line;
+    std::ifstream fin(infname);
+
+    bool b_left = false;
+    bool b_right = false;
+    bool b_size = false;
+
+    spect.clear();
+
+    //read line by line
+    while (std::getline(fin, line))
+    {
+        //if line is empty, skip
+        if (line.empty())
+        {
+            continue;
+        }
+
+        //if line starts with #, look for key words LEFT, RIGHT in one line and key words SIZE in another line
+        if (line[0] == '#')
+        {
+            if (line.find("LEFT") != std::string::npos && line.find("RIGHT") != std::string::npos)
+            {
+                std::string temp;
+                //get substring after LEFT
+                std::string line_part1 = line.substr(line.find("LEFT") + 4 + 1); // + 1 to skip space
+                std::istringstream iss1(line_part1);
+                iss1 >> temp  >> begin1; //LEFT = 12.09875 ppm
+                b_left = true;
+            
+                std::string line_part2 = line.substr(line.find("RIGHT") + 5 + 1); // + 1 to skip space
+                std::istringstream iss2(line_part2);
+                iss2 >> temp >> stop1; //RIGHT = -3.1234 ppm
+                b_right = true;
+            }
+
+            if(line.find("SIZE") != std::string::npos)
+            {
+                std::string temp;
+                std::string line_part = line.substr(line.find("SIZE") + 4 + 1); // + 1 to skip space
+                std::istringstream iss(line_part);
+                iss >> temp >> ndata; // SIZE = 1024
+                b_size = true;
+            }
+            continue;
+        }
+
+        /* *All other lines are data and they are all float
+        * They should be after the two lines with key words LEFT, RIGHT and SIZE
+        * One number per line
+        */
+        if (b_left == true && b_right == true && b_size == true)
+        {
+            float data=std::stof(line);
+            spect.push_back(data);
+        }
+    }
+
+    if(spect.size()!=ndata)
+    {
+        std::cout<<"Error: spectrum_io_1d::read_spectrum_txt, ndata is not equal to the number of data points. Set ndata=spect.size()"<<std::endl;
+        ndata = spect.size();
+    }
+
+    step1 = (stop1 - begin1) / ndata;
+    return true;
+}
+
 bool spectrum_io_1d::read_spectrum_json(std::string infname)
 {
     Json::Value root;
@@ -325,31 +373,7 @@ bool spectrum_io_1d::read_spectrum_json(std::string infname)
         return false;
 
     fin >> root;
-
-    if (root.isMember("spectrum_phase_fwhh"))
-    {
-        std::cout << "Read spectrum_phase_fwhh" << std::endl;
-        root = root["spectrum_phase_fwhh"];
-        read_spectrum_json_format2(root);
-    }
-    else if (root.isMember("spectrum_phase"))
-    {
-        std::cout << "Read spectrum_phase" << std::endl;
-        root = root["spectrum_phase"];
-        read_spectrum_json_format2(root);
-    }
-    else if (root.isMember("spectrum"))
-    {
-        std::cout << "Read spectrum" << std::endl;
-        root = root["spectrum"];
-        read_spectrum_json_format2(root);
-    }
-    else
-    {
-        std::cout << "Raw spectral data without name." << std::endl;
-        read_spectrum_json_format1(root);
-    }
-
+    read_spectrum_json_format1(root);
     return true;
 };
 
@@ -363,8 +387,33 @@ bool spectrum_io_1d::read_spectrum_json_format1(Json::Value &root)
 
     for (int i = 0; i < data2.size(); i += 1)
     {
-        spect.push_back(std::atof(data2[i].asCString()));
-        ppm.push_back(std::atof(data1[i].asCString()));
+        if(data2[i].isDouble()==true)
+        {
+            spect.push_back(data2[i].asDouble());
+        }
+        else if(data2[i].isString()==true)
+        {
+            spect.push_back(std::stof(data2[i].asString()));
+        }
+        else
+        {
+            std::cout<<"Error: spectrum_io_1d::read_spectrum_json_format1, data2[i] is not double or string."<<std::endl;
+            return false;
+        }
+
+        if(data1[i].isDouble()==true)
+        {
+            ppm.push_back(data1[i].asDouble());
+        }
+        else if(data1[i].isString()==true)
+        {
+            ppm.push_back(std::stof(data1[i].asString()));
+        }
+        else
+        {
+            std::cout<<"Error: spectrum_io_1d::read_spectrum_json_format1, data1[i] is not double or string."<<std::endl;
+            return false;
+        }
     }
     // std::reverse(spe.begin(),spe.end());
 
@@ -375,24 +424,6 @@ bool spectrum_io_1d::read_spectrum_json_format1(Json::Value &root)
     return true;
 };
 
-bool spectrum_io_1d::read_spectrum_json_format2(Json::Value &root)
-{
-    std::vector<float> ppm;
-
-    for (int i = 0; i < root.size(); i += 1)
-    {
-        spect.push_back(root[i][1].asDouble());
-        ppm.push_back(root[i][0].asDouble());
-    }
-    // std::reverse(spe.begin(),spe.end());
-
-    ndata = spect.size();
-    begin1 = ppm[0];
-    stop1 = ppm[ndata - 1];
-    step1 = (stop1 - begin1) / (ndata - 1);
-
-    return true;
-};
 
 bool spectrum_io_1d::est_noise_level_general()
 {

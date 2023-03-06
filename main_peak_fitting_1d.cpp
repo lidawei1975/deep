@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     args3.push_back("print help message then quit");
 
     args.push_back("-f");
-    args2.push_back("arguments.txt");
+    args2.push_back("arguments_vf1d.txt");
     args3.push_back("Arguments file");
 
     args.push_back("-method");
@@ -53,12 +53,16 @@ int main(int argc, char **argv)
     args3.push_back("user defined noise level scale factor for peak fitting");
 
     args.push_back("-noise_level");
-    args2.push_back("15000");
+    args2.push_back("0.0");
     args3.push_back("Direct set noise level to this value, estimate from sepctrum if input is 0.0");
 
     args.push_back("-in");
     args2.push_back("serum.ft1"); 
     args3.push_back("input file name (test.ft1)");
+
+    args.push_back("-stride");
+    args2.push_back("1");
+    args3.push_back("stride factor for spectrum (3)");
 
     args.push_back("-peak_in");
     args2.push_back("peaks.tab");
@@ -69,7 +73,7 @@ int main(int argc, char **argv)
     args3.push_back("output file name");
     
     args.push_back("-maxround");
-    args2.push_back("5");
+    args2.push_back("50");
     args3.push_back("maximal rounds in iterative fitting process(50)");
 
     args.push_back("-n_err");
@@ -83,6 +87,10 @@ int main(int argc, char **argv)
     args.push_back("-out_json");
     args2.push_back("yes");
     args3.push_back("Output fitted peaks and reconstructed spectrum in json format for further analysis");
+
+    args.push_back("-individual");
+    args2.push_back("yes");
+    args3.push_back("Include individual profile of fitted peaks in json format");
 
     args.push_back("-recon");
     args2.push_back("yes");
@@ -101,11 +109,14 @@ int main(int argc, char **argv)
     int maxround;
     int fit_type_flag=2;
     bool b_out_json=false;
+    bool b_individual_peaks=false;
     bool b_recon=false;
+    int n_stride=1;
 
     maxround=atoi(cmdline.query("-maxround").c_str());
     b_out_json=cmdline.query("-out_json")=="yes" || cmdline.query("-out_json")=="y";
     b_recon=cmdline.query("-recon")=="yes" || cmdline.query("-recon")=="y";
+    b_individual_peaks=cmdline.query("-individual")=="yes" || cmdline.query("-individual")=="y";
 
 
     double noise_level=stod(cmdline.query("-noise_level"));
@@ -115,6 +126,7 @@ int main(int argc, char **argv)
     outfname = cmdline.query("-out");
     user=atof(cmdline.query("-scale").c_str());
     user2=atof(cmdline.query("-scale2").c_str());
+    n_stride=atoi(cmdline.query("-stride").c_str());
 
 
     if(cmdline.query("-method") == "gaussian") fit_type_flag=1;
@@ -157,13 +169,13 @@ int main(int argc, char **argv)
             x.init_error(zf,n_err);
         }
 
-        if(x.init_all_spectra(file_names)) //read spectra.
+        if(x.init_all_spectra(file_names,n_stride)) //read spectra.
         {
             if(x.peak_reading(peakfname))
             {
                 x.peak_fitting(); //fitting
             }
-            x.output(outfname,b_out_json,b_recon,cmdline.query("-folder")); //output
+            x.output(outfname,b_out_json,b_individual_peaks,b_recon,cmdline.query("-folder")); //output
         }
     }
 

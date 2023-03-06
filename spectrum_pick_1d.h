@@ -22,8 +22,14 @@ private:
    
     int mod_selection;
     class peak1d p1;
+    bool b_negative; //if true, we will pick negative peaks besides positive peaks
+
+    std::vector<int> final_segment_begin,final_segment_stop; //updated in peak_partition_step2 only.
 
     bool substract_baseline();
+    bool peak_partition_1d();
+    bool peak_partition_step2();
+    bool run_ann(bool b_neg=false);
 
 public:
 
@@ -38,7 +44,7 @@ public:
     ~spectrum_pick_1d();
     bool init_mod(int);
     bool work(std::string outfname);
-    bool work2();
+    bool work2(bool b_negative=false);
     bool get_peak_pos(std::vector<int> &);
     bool print_peaks(std::string outfname);
     bool get_peaks(struct spectrum_1d_peaks & );

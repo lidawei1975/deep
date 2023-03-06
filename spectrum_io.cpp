@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "commandline.h"
-#include "dnn_picker.h"
 #include "spectrum_io.h"
 
 
@@ -713,15 +712,17 @@ bool spectrum_io::read_pipe(std::string infname)
         return false;
     }
 
-    if(int(header[221])!=0)
+    bool b_transpose = int(header[221]) == 1;  //0 normal, 1: transpose
+
+    if(b_transpose==0 && int(header[24])!=2)
     {
-        std::cout<<" Please do NOT transpose your spectrum"<<std::endl;
+        std::cout<<" First dimension should always be dimension 2 in non-transposed spectrum, it is "<<int(header[24])<<std::endl;
         return false;
     }
-
-    if(int(header[24])!=2)
+    
+    if(b_transpose==1 && int(header[24])!=1)
     {
-        std::cout<<" First dimension should always be dimension 2 in nmrPipe"<<std::endl;
+        std::cout<<" First dimension should always be dimension 1 in transposed spectrum, it is "<<int(header[24])<<std::endl;
         return false;
     }
 
@@ -757,19 +758,28 @@ bool spectrum_io::read_pipe(std::string infname)
 
     //X is always the 2rd dimension
     int direct_ndx=int(header[24])-1;
+
+    //Z can be 4 or 3
+    int indirect_ndxz=int(header[26])-1;  //C start from 0,not 1
+    
+    //Y can be 3rd or 1st dimension
+    int indirect_ndx=int(header[25])-1;  //C start from 0,not 1
+
+    if(b_transpose==1)
+    {
+        std::swap(xdim,ydim);
+        std::swap(direct_ndx,indirect_ndx);
+    }
+
     begin1=begins[direct_ndx];
     stop1=stops[direct_ndx];
     step1=(stop1-begin1)/xdim;
     begin1+=step1;
     
-    //Z can be 4 or 3
-    int indirect_ndxz=int(header[26])-1;  //C start from 0,not 1
     begin3=begins[indirect_ndxz];
     stop3=stops[indirect_ndxz];
     //we don't have zdim or step3
-    
-    //Y can be 3rd or 1st dimension
-    int indirect_ndx=int(header[25])-1;  //C start from 0,not 1
+
     begin2=begins[indirect_ndx];
     stop2=stops[indirect_ndx];
     step2=(stop2-begin2)/ydim;
@@ -784,13 +794,28 @@ bool spectrum_io::read_pipe(std::string infname)
     //saved row by row in nmrpipe
     spect = new float[xdim * ydim];
 
-
-    for (unsigned int i = 0; i < ydim; i++)
+    if(b_transpose==0)
     {
-        unsigned int temp;
-        temp = fread(spect + i * xdim, sizeof(float), xdim, fp);
-        if (temp != xdim)
-            return false;
+        for (unsigned int i = 0; i < ydim; i++)
+        {
+            unsigned int temp;
+            temp = fread(spect + i * xdim, sizeof(float), xdim, fp);
+            if (temp != xdim)
+                return false;
+        }
+    }
+    else
+    {
+        for (unsigned int i = 0; i < xdim; i++)
+        {
+            for (unsigned int j = 0; j < ydim; j++)
+            {
+                unsigned int temp;
+                temp = fread(spect + j * xdim + i, sizeof(float), 1, fp);
+                if (temp != 1)
+                    return false;
+            }
+        }
     }
 
 

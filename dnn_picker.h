@@ -1,3 +1,6 @@
+#ifndef DNN_PICKER_H
+#define DNN_PICKER_H
+
 //define activation funciton
 
 enum activation_function{linear, relo, softmax};
@@ -212,3 +215,5 @@ public:
     bool extract_result(std:: vector<double> &,std:: vector<double> &,std:: vector<double> &,std:: vector<double> &,std:: vector<double> &,std:: vector<double> &,std:: vector<double> &,std::vector<int> &,std::vector<double> &,std::vector<double> &);
     
 };
+
+#endif

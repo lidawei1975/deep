@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 2.8)
 
 project(deep_picker)
 
+set(CMAKE_BUILD_TYPE Debug)
+
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
 
@@ -18,6 +20,9 @@ add_library(jsoncpp OBJECT jsoncpp.cpp )
 add_library(libcerf STATIC erfcx.c err_fcts.c im_w_of_x.c w_of_z.c)
 
 
+# voigt convolution auxiliary tool
+add_executable(voigt_conv main_voigt_conv.cpp $<TARGET_OBJECTS:jsoncpp>)
+target_link_libraries(voigt_conv libcerf)
 
 # 2D peak picking
 add_executable(deep_picker main_peak_picking.cpp spectrum_io.cpp spectrum_pick.cpp $<TARGET_OBJECTS:dnn> $<TARGET_OBJECTS:commandline> )
@@ -30,6 +35,13 @@ add_executable(simple_picker main_simple_picking.cpp spectrum_io.cpp spectrum_si
 # 1d peak picking
 add_executable(deep_picker_1d main_peak_picking_1d.cpp spectrum_pick_1d.cpp spectrum_io_1d.cpp $<TARGET_OBJECTS:dnn> $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
 target_link_libraries(deep_picker_1d libcerf)
+
+
+# 1d phase correction
+add_executable(phase_1d main_phasing_1d_v2.cpp phasing_dnn.cpp spectrum_io_1d.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+
+# 1d fwhh estimation
+add_executable(fwhh_1d main_fwhh_1d.cpp spectrum_fwhh_1d.cpp spectrum_io_1d.cpp fwhh_dnn.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
 
 
 # fitting part, need Ceres

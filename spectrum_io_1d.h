@@ -31,12 +31,12 @@ protected:
 
     std::string input_spectrum_fname;
 
+    bool read_spectrum_ldw(std::string);
     bool read_spectrum_txt(std::string);
     bool read_spectrum_ft(std::string);
     bool read_spectrum_json(std::string);
     bool read_spectrum_json_format1(Json::Value &root);
-    bool read_spectrum_json_format2(Json::Value &root);
-    bool peak_partition(int n_min=0);
+    
     
 
 public:
@@ -48,6 +48,7 @@ public:
     bool init(double,double,double);
     bool read_spectrum(std::string);
     bool direct_set_spectrum(std::vector<float> &);
+    bool stride_spectrum(int);
     bool release_spectrum(); //to save memory after peaks picking.
     bool save_experimental_spectrum(std::string);  //save spectrum in json format
     bool write_spectrum(std::string); //write spectrum in nmrpipe format, header is copied from reading!!

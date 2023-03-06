@@ -134,25 +134,61 @@ bool spectrum_pick_1d::work(std::string outfname)
     return true;
 };
 
-bool spectrum_pick_1d::substract_baseline()
+
+bool spectrum_pick_1d::peak_partition_1d()
 {
-    for(int i=0;i<ndata;i++)
+    double boundary_cutoff = noise_level * user_scale2;
+    if (spect[0] > boundary_cutoff)
     {
-        spect[i]-=baseline[i];
+        signa_boudaries.push_back(0);
     }
+
+    for (int j = 1; j < ndata; j++)
+    {
+        if (spect[j - 1] <= boundary_cutoff && spect[j] > boundary_cutoff)
+        {
+            signa_boudaries.push_back(std::max(j - 10, 0));
+        }
+        else if (spect[j - 1] > boundary_cutoff && spect[j] <= boundary_cutoff)
+        {
+            noise_boudaries.push_back(std::min(j + 10, ndata));
+        }
+    }
+    if (noise_boudaries.size() < signa_boudaries.size())
+    {
+        noise_boudaries.push_back(ndata);
+    }
+
+    bool b = true;
+    while (b)
+    {
+        b = false;
+        for (int j = signa_boudaries.size() - 1; j >= 1; j--)
+        {
+            if (signa_boudaries[j] <= noise_boudaries[j - 1])
+            {
+                signa_boudaries.erase(signa_boudaries.begin() + j);
+                noise_boudaries.erase(noise_boudaries.begin() + j - 1);
+            }
+        }
+    }
+
+    // combine noise_boudaries and signa_boudaries if too close
+    for (int j = signa_boudaries.size() - 1; j >= 1; j--)
+    {
+        if (signa_boudaries[j] - noise_boudaries[j - 1] < 1)
+        {
+            signa_boudaries.erase(signa_boudaries.begin() + j);
+            noise_boudaries.erase(noise_boudaries.begin() + j - 1);
+        }
+    }
+
     return true;
-}
+};
 
-//segment by segment prediction, as in peak2d
-bool spectrum_pick_1d::work2()
+
+bool spectrum_pick_1d::peak_partition_step2()
 {
-    // substract_baseline();
-    p1.set_noise_level(noise_level);
-    int ndim = spect.size();
-
-    std::vector<int> final_segment_begin,final_segment_stop;
-    peak_partition();
-
     for (int j = 0; j < signa_boudaries.size(); j++)
     {
         int begin = signa_boudaries[j];
@@ -208,9 +244,11 @@ bool spectrum_pick_1d::work2()
 
     }
 
-#ifdef LDW_DEBUG
-    std::ofstream foutd("picked_peaks_1d.tab.debug");
-#endif
+    return true;
+}
+
+bool spectrum_pick_1d::run_ann(bool b_neg)
+{
     for (int j = 0; j < final_segment_begin.size(); j++)
     {
         int begin = final_segment_begin[j];
@@ -237,39 +275,98 @@ bool spectrum_pick_1d::work2()
         p1.predict(data);
         p1.predict_step2();
 
-#ifdef LDW_DEBUG
-        int nn = p1.output1.size() / 3;
-        for (int k = 20; k < nn -20 ; k++)
-        {
-            foutd << begin0 + k - 20 << " " << p1.output1[k * 3] << " " << p1.output1[k * 3 + 1] << " " << p1.output1[k * 3 + 2] << std::endl;
-        }
-#endif
-
         for (int k = 0; k < p1.posits.size(); k++)
         {
-            a.push_back(p1.intens[k]);
+            if(b_neg)
+            {
+                a.push_back(-p1.intens[k]);
+            }
+            else
+            {
+                a.push_back(p1.intens[k]);
+            }
             x.push_back(p1.posits[k]+begin0);
             confidence.push_back(p1.confidence[k]);
             sigmax.push_back(p1.sigmas[k]);
             gammax.push_back(p1.gammas[k]);
         }
-        
+    }
+    return true;
+}
+
+bool spectrum_pick_1d::substract_baseline()
+{
+    for(int i=0;i<ndata;i++)
+    {
+        spect[i]-=baseline[i];
+    }
+    return true;
+}
+
+//segment by segment prediction, as in peak2d
+bool spectrum_pick_1d::work2(bool b_negative)
+{
+    // substract_baseline();
+    p1.set_noise_level(noise_level);
+    int ndim = spect.size();
+
+    
+
+    /**
+     * @brief clear signal and noise boundaries
+     * then partition the spectrum into segments in function call peak_partition() (from base class)
+     * then we need to handle segment defined as [signal_boudaries[i], noise_boudaries[i]], for i=0,1,2, ...
+     */
+    signa_boudaries.clear();
+    noise_boudaries.clear();
+    peak_partition_1d(); 
+
+    /**
+     * @brief for each segment, we need to cut it into smaller segments, and then predict each segment
+     * because our ANN model can only handle dynamic range of 0.01-1.0.
+     */
+    final_segment_begin.clear();
+    final_segment_stop.clear();
+    peak_partition_step2();
+
+    
+    run_ann(); //run ANN model to predict peaks on each final segment
+
+
+    if(b_negative==true)
+    {
+        //for negative peaks, we need to flip the spectrum
+        for(int k=0;k<spect.size();k++)
+        {
+            spect[k]=-spect[k];
+        }
+        signa_boudaries.clear();
+        noise_boudaries.clear();
+        peak_partition_1d(); 
+
+        final_segment_begin.clear();
+        final_segment_stop.clear();
+        peak_partition_step2();
+
+        run_ann(true); //run ANN model to predict peaks on each final segment. Negative peaks
+
+        //flip back
+        for(int k=0;k<spect.size();k++)
+        {
+            spect[k]=-spect[k];
+        }
     }
 
-#ifdef LDW_DEBUG
-    foutd.close();
-#endif
 
     //fitler out  peaks below cutoff
     for (int k = a.size() - 1; k >= 0; k--)
     {
-        if (a[k] < noise_level * user_scale)
+        if (fabs(a[k]) < noise_level * user_scale)
         {
             a.erase(a.begin() + k);
             x.erase(x.begin() + k);
             sigmax.erase(sigmax.begin() + k);
             gammax.erase(gammax.begin() + k);
-
             confidence.erase(confidence.begin() + k);
         }
     }

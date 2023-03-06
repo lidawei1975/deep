@@ -200,6 +200,7 @@ private:
   std::vector<double> p1, p1_ppm, sigmax, gammax, p_intensity;
   std::vector<std::vector<double>> p_intensity_all_spectra; //for pseudo 2D. [peak_index][spectra_index]
   std::vector<std::string> user_comments;
+  std::vector<double> confident_level;
 
   // for error estimation
   std::vector<std::vector<double>> batch_p1, batch_sigmax, batch_gammax, batch_p_intensity;
@@ -214,8 +215,9 @@ private:
   bool assess_size();
   bool gather_result();
   bool gather_result_with_error_estimation(int);
-  bool output_json(std::string outfname);
+  bool output_json(std::string outfname,const std::vector<int> ndx,const std::vector<double> amp, bool b_individual_peaks);
   bool write_recon(std::string folder_name); 
+  bool peak_partition_1d_for_fit();
 
 public:
   std::vector<int> fit_peak_index;
@@ -226,11 +228,11 @@ public:
 
   spectrum_fit_1d();
   ~spectrum_fit_1d();
-  bool init_all_spectra(std::vector<std::string> finames);
+  bool init_all_spectra(std::vector<std::string> finames,int);
   bool init_fit(int, int, double);
   bool init_error(int, int);
   bool peak_fitting(void);
-  bool output(std::string outfname,bool,bool,std::string);
+  bool output(std::string outfname,bool b_out_json,bool b_individual_peaks, bool b_recon,std::string);
   bool peak_reading(std::string outfname);
   bool direct_set_peaks(std::vector<double> p1_, std::vector<double> p1_ppm, std::vector<double> p_intensity_, std::vector<double> sigmax_, std::vector<double> gammax_);
 };
