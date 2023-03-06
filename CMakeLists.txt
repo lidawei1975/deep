@@ -44,6 +44,10 @@ add_executable(phase_1d main_phasing_1d_v2.cpp phasing_dnn.cpp spectrum_io_1d.cp
 add_executable(fwhh_1d main_fwhh_1d.cpp spectrum_fwhh_1d.cpp spectrum_io_1d.cpp fwhh_dnn.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
 
 
+# 3d peak picking
+add_executable(deep_picker_3d main_peak_picking_3d.cpp spectrum_pick_3d.cpp spectrum_io_3d.cpp spectrum_io.cpp spectrum_pick.cpp spectrum_io_1d.cpp spectrum_pick_1d.cpp $<TARGET_OBJECTS:dnn> $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+target_link_libraries(deep_picker_3d libcerf)
+
 # fitting part, need Ceres
 
 find_package(Ceres)
@@ -59,12 +63,17 @@ if(Ceres_FOUND)
     target_link_libraries(voigt_fit libcerf)
 
 
-    add_executable(peak_fit_1d main_peak_fitting_1d.cpp spectrum_io_1d.cpp spectrum_fit_1d.cpp kiss_fft.c $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
-    target_include_directories(peak_fit_1d PRIVATE  ${CERES_INCLUDE_DIRS})
-    target_include_directories(peak_fit_1d PRIVATE  ${EIGEN3_INCLUDE_DIR})
-    target_link_libraries(peak_fit_1d ${CERES_LIBRARIES})
-    target_link_libraries(peak_fit_1d libcerf)
+    add_executable(voigt_fit_1d main_peak_fitting_1d.cpp spectrum_io_1d.cpp spectrum_fit_1d.cpp kiss_fft.c $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+    target_include_directories(voigt_fit_1d PRIVATE  ${CERES_INCLUDE_DIRS})
+    target_include_directories(voigt_fit_1d PRIVATE  ${EIGEN3_INCLUDE_DIR})
+    target_link_libraries(voigt_fit_1d ${CERES_LIBRARIES})
+    target_link_libraries(voigt_fit_1d libcerf)
 
+    add_executable(voigt_fit_3d main_peak_fitting_3d.cpp spectrum_io_3d.cpp spectrum_io.cpp spectrum_fit_3d.cpp kiss_fft.c $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+    target_include_directories(voigt_fit_3d PRIVATE  ${CERES_INCLUDE_DIRS})
+    target_include_directories(voigt_fit_3d PRIVATE  ${EIGEN3_INCLUDE_DIR})
+    target_link_libraries(voigt_fit_3d ${CERES_LIBRARIES})
+    target_link_libraries(voigt_fit_3d libcerf)
 
 endif()
 

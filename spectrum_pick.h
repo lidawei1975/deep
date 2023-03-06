@@ -3,11 +3,10 @@
 #include <deque>
 #include <string>
 
+#include "spectrum_io.h"
 
-#ifndef SPECTRUM_IO_HEAD
-  #define SPECTRUM_IO_HEAD
-  #include "spectrum_io.h"
-#endif
+#ifndef SPECTRUM_PICK_H
+#define SPECTRUM_PICK_H
 
 class spectrum_pick : public spectrum_io
 {
@@ -24,7 +23,7 @@ public:
     ~spectrum_pick();  
 
     bool simple_peak_picking(bool b_negative=false);
-    bool ann_peak_picking(int flag=0,int expand=0,int flag_t1_noise=0, bool b_negative=false);
+    bool ann_peak_picking(int flag,int expand,int flag_t1_noise, bool b_negative);
     bool linear_regression();
     bool print_peaks_picking(std::string);
     bool clear_memory();
@@ -38,3 +37,4 @@ public:
     }
 };
 
+#endif

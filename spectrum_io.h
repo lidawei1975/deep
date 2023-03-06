@@ -16,6 +16,8 @@ enum spectrum_type
 };
 #endif
 
+#ifndef SPECTRUM_IO_H
+#define SPECTRUM_IO_H
 
 namespace ldw_math_spectrum_2d
 {
@@ -129,3 +131,4 @@ public:
     
 };
 
+#endif

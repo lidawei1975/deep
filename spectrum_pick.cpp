@@ -125,7 +125,7 @@ bool spectrum_pick::simple_peak_picking(bool b_negative)
     return true;
 }
 
-bool spectrum_pick::ann_peak_picking(int flag,int expand, int flag_t1_noise, bool b_negative)  //default flag is 0, default expand is 0, default b_negative=false
+bool spectrum_pick::ann_peak_picking(int flag,int expand, int flag_t1_noise, bool b_negative)  //default flag is 0, default expand is 0, default flag_t1_noise=0, default b_negative=false
 {
     std::vector<int> p_type; //no used at this time
 
