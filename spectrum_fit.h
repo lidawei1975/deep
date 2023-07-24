@@ -156,7 +156,13 @@ private:
   const int nx, zfx, ny, zfy;
 };
 
-class gaussian_fit
+struct shared_data
+{
+  static int n_verbose; //0: minimal, 1: normal
+};
+
+
+class gaussian_fit: public shared_data
 {
 private:
   int my_index;
@@ -281,7 +287,7 @@ public:
   void set_peak_paras(double x, double y, double noise, double height, double near, double xppm, double yppm, double cutoff);
 };
 
-class spectrum_fit : public spectrum_io
+class spectrum_fit : public spectrum_io, public shared_data
 {
 private:
   std::vector<std::string> fnames;

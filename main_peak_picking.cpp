@@ -21,7 +21,7 @@ int main(int argc, char **argv)
     args3.push_back("Print help message then quit");
 
     args.push_back("-f");
-    args2.push_back("none");
+    args2.push_back("arguments_dp.txt");
     args3.push_back("Parguments file");
 
     args.push_back("-scale");

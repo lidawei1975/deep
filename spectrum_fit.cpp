@@ -1274,7 +1274,7 @@ bool gaussian_fit::one_fit_voigt_v2(std::vector<double> *xx,std::vector<double> 
     ceres::Solve(options, &problem, &summary);
     *e = sqrt(summary.final_cost / xx->size());
 
-    std::cout<<"Cost is "<<*e<<std::endl;
+    // std::cout<<"Cost is "<<*e<<std::endl;
 
 
     sigmax=fabs(sigmax);
@@ -2224,12 +2224,16 @@ bool gaussian_fit::run_single_peak()
         if (fabs(sigmax.at(0)) < 0.02 || fabs(sigmay.at(0)) < 0.02 || current_x < 0 || current_x >= xdim || current_y < 0 || current_y >= ydim)
         {
             to_remove[0] = 1; //this is a flag only
-            std::cout<<"remove failed peak because "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            if(n_verbose>0){
+                std::cout<<"remove failed peak because "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
         }
         if(fabs(a[0][0])<minimal_height)
         {
             to_remove[0] = 1; //this is a flag only
-            std::cout<<"remove too lower peak "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            if(n_verbose>0){
+                std::cout<<"remove too lower peak "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
         }
     }
     else if(peak_shape == voigt_type)//voigt
@@ -2239,14 +2243,18 @@ bool gaussian_fit::run_single_peak()
         
         if (fabs(sigmax.at(0)) + fabs(gammax.at(0)) < 0.2 || fabs(sigmay.at(0)) + fabs(gammay.at(0)) < 0.2 || current_x < 0 || current_x >= xdim || current_y < 0 || current_y >= ydim)
         {
-            std::cout<<"remove failed peak because "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            if(n_verbose>0){
+                std::cout<<"remove failed peak because "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
             to_remove[0] = 1; //this is a flag only
         }
 
         double true_height=a[0][0]*(voigt(0.0,sigmax[0],gammax[0])*voigt(0.0,sigmay[0],gammay[0]));
         if(fabs(true_height)<minimal_height)
         {
-            std::cout<<"remove too lower peak "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            if(n_verbose>0){
+                std::cout<<"remove too lower peak "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
             to_remove[0] = 1; //this is a flag only
         }
     }
@@ -2549,9 +2557,12 @@ bool gaussian_fit::test_excess_peaks_multi()
 //cluster: peak index (of all peaks in this object) of all peaks
 bool gaussian_fit::test_whether_to_remove(const int ndx,const std::deque<int> &cluster)
 {
-    std::cout<<"Testing "<<original_ndx[cluster[ndx]]<<" x="<<x[cluster[ndx]]+xstart<<" y="<<y[cluster[ndx]]+ystart;
-    std::cout<<" total # of peak is "<<cluster.size();
-    std::cout<<std::endl;
+    if(n_verbose>0)
+    {
+        std::cout<<"Testing "<<original_ndx[cluster[ndx]]<<" x="<<x[cluster[ndx]]+xstart<<" y="<<y[cluster[ndx]]+ystart;
+        std::cout<<" total # of peak is "<<cluster.size();
+        std::cout<<std::endl;
+    }
 
     //constrcut fitted spectrum
     std::vector< std::vector<double>> reconstrcuted_spectrum;
@@ -2617,7 +2628,7 @@ bool gaussian_fit::test_whether_to_remove(const int ndx,const std::deque<int> &c
     }
     // std::cout<<"After fit_multiple_peaks"<<std::endl<<std::endl<<std::flush;
 
-    if(b)
+    if(b && n_verbose>0)
     {
         std::cout<<"Remove this peak."<<std::endl;
     }
@@ -3286,7 +3297,9 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
             {
                 if (fabs(sigmax.at(i_peak)) < 0.2 || fabs(sigmay.at(i_peak)) < 0.2 || fabs(sigmax.at(i_peak)) > 60.0 || fabs(sigmay.at(i_peak)) >60.0 )
                 {
-                    std::cout << original_ndx[i_peak] << " will be removed because x=" << current_x +i0 << " y=" << current_y +j0<< " a=" << a[i_peak][0] << " simgax=" << sigmax.at(i_peak) << " sigmay=" << sigmay.at(i_peak) << " totalz=" << total_z << std::endl;
+                    if(n_verbose>0){
+                        std::cout << original_ndx[i_peak] << " will be removed because x=" << current_x +i0 << " y=" << current_y +j0<< " a=" << a[i_peak][0] << " simgax=" << sigmax.at(i_peak) << " sigmay=" << sigmay.at(i_peak) << " totalz=" << total_z << std::endl;
+                    }
                     peak_remove_flag[i_peak]=1;
                 }
 
@@ -3295,7 +3308,9 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
             {
                 if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.2 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) < 0.2 || fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) >100.0 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) >100.0)
                 {
-                    std::cout << original_ndx[i_peak] << " will be removed because " << current_x + i0 << " " << current_y + j0 << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << gammax.at(i_peak) << " " << sigmay.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
+                    if(n_verbose>0){
+                        std::cout << original_ndx[i_peak] << " will be removed because " << current_x + i0 << " " << current_y + j0 << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << gammax.at(i_peak) << " " << sigmay.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
+                    }
                     peak_remove_flag[i_peak]=1;
                 }
             }
@@ -3303,8 +3318,10 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
             if (current_x <= 0.0 || current_x >= current_xdim || current_y <= 0 || current_y >= current_ydim)
             {
                 peak_remove_flag[i_peak] = 2;
-                std::cout << original_ndx[i_peak] << " will be removed because x=" << current_x + i0 << " y=" << current_y + j0 << " a=" <<a[i_peak][0]
-                          << " , moved out of fitting area x from " << i0  << " to " << i0+ current_xdim << " and y from " << j0 << " to " << j0+ current_ydim << std::endl;
+                if(n_verbose>0){
+                    std::cout << original_ndx[i_peak] << " will be removed because x=" << current_x + i0 << " y=" << current_y + j0 << " a=" <<a[i_peak][0]
+                            << " , moved out of fitting area x from " << i0  << " to " << i0+ current_xdim << " and y from " << j0 << " to " << j0+ current_ydim << std::endl;
+                }
             }
             x[i_peak]=current_x+i0;
             y[i_peak]=current_y+j0;
@@ -3334,14 +3351,18 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                     {
                         if (  (fabs(dx*xppm_per_step)+0.1*fabs(dy*yppm_per_step)<0.002) )
                         {
-                            std::cout<<"dx is "<<dx<<" ppm per step is "<<xppm_per_step<<" dy is "<<dy<<" ppm per step is "<<yppm_per_step<<std::endl;
+                            if(n_verbose>0){
+                                std::cout<<"dx is "<<dx<<" ppm per step is "<<xppm_per_step<<" dy is "<<dy<<" ppm per step is "<<yppm_per_step<<std::endl;
+                            }
                         }
 
                         if (fabs(a[k1][0]) > fabs(a[k2][0]))
                         {
                             //a[k2] = 0.0;
                             peak_remove_flag[k2]=1;
-                            std::cout << original_ndx[k2] << " will be removed because too near " << original_ndx[k1] <<", distance is "<<sqrt(dx * dx + dy * dy) <<"<"<<cut_near<< std::endl;
+                            if(n_verbose>0){
+                                std::cout << original_ndx[k2] << " will be removed because too near " << original_ndx[k1] <<", distance is "<<sqrt(dx * dx + dy * dy) <<"<"<<cut_near<< std::endl;
+                            }
                             if(peak_remove_flag[k1]==1)
                             {
                                 peak_remove_flag[k1]=0;  //restore k1, because of effect of k2 on it.
@@ -3351,7 +3372,9 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                         {
                             //a[k1] = 0.0;
                             peak_remove_flag[k1]=1;
-                            std::cout << original_ndx[k1] << " will be removed because too near " << original_ndx[k2] <<", distance is "<<sqrt(dx * dx + dy * dy)<<"<"<<cut_near<< std::endl;
+                            if(n_verbose>0){
+                                std::cout << original_ndx[k1] << " will be removed because too near " << original_ndx[k2] <<", distance is "<<sqrt(dx * dx + dy * dy)<<"<"<<cut_near<< std::endl;
+                            }
                             if(peak_remove_flag[k2]==1)
                             {
                                 peak_remove_flag[k2]=0;  //restore k2, because of effect of k1 on it.
@@ -3385,7 +3408,9 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
             {
                 to_remove[i] = 1;
                 b_remove_operation=true;
-                std::cout << original_ndx[i] << " will be removed because moved too far away from orginal location." << std::endl;
+                if(n_verbose>0){
+                    std::cout << original_ndx[i] << " will be removed because moved too far away from orginal location." << std::endl;
+                }
             }
         }
 
@@ -3405,13 +3430,17 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                     {
                         to_remove[peak_list[k].second]=1;
                         b_remove_operation=true;
-                        std::cout << original_ndx[peak_list[k].second] << " will be removed because it failed excessive test with " << original_ndx[peak_list[k].first] << std::endl;
+                        if(n_verbose>0){
+                            std::cout << original_ndx[peak_list[k].second] << " will be removed because it failed excessive test with " << original_ndx[peak_list[k].first] << std::endl;
+                        }
                     }
                     else if(n==-1)
                     {
                         to_remove[peak_list[k].first]=1;
                         b_remove_operation=true;
-                        std::cout << original_ndx[peak_list[k].first] << " will be removed because it failed excessive test with " << original_ndx[peak_list[k].second] << std::endl;
+                        if(n_verbose>0){
+                            std::cout << original_ndx[peak_list[k].first] << " will be removed because it failed excessive test with " << original_ndx[peak_list[k].second] << std::endl;
+                        }
                     }
                 }
             }
@@ -3545,7 +3574,9 @@ bool gaussian_fit::multi_spectra_run_single_peak()
         if (fabs(sigmax.at(0)) < 0.02 || fabs(sigmay.at(0)) < 0.02 || current_x < 0 || current_x >= i1-i0 || current_y < 0 || current_y >= j1-j0)
         {
             to_remove[0] = 1; //this is a flag only
-            std::cout<<"remove failed peak because "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            if(n_verbose>0){
+                std::cout<<"remove failed peak because "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
         }
 
         bool b_tolow=true;
@@ -3561,7 +3592,9 @@ bool gaussian_fit::multi_spectra_run_single_peak()
         if(b_tolow)
         {
             to_remove[0] = 1; //this is a flag only
-            std::cout<<"remove too lower peak "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            if(n_verbose>0){
+                std::cout<<"remove too lower peak "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
         }
     }
     else if(peak_shape == voigt_type)//voigt
@@ -3569,7 +3602,9 @@ bool gaussian_fit::multi_spectra_run_single_peak()
         multiple_fit_voigt(i1-i0,j1-j0, zz, current_x, current_y, a[0], sigmax.at(0), sigmay.at(0),gammax.at(0),gammay.at(0),&e,0);
         if (fabs(sigmax.at(0)) + fabs(gammax.at(0)) < 0.2 || fabs(sigmay.at(0)) + fabs(gammay.at(0)) < 0.2 || current_x < 0 || current_x >= i1-i0 || current_y < 0 || current_y >= j1-j0)
         {
-            std::cout<<"remove failed peak because "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            if(n_verbose>0){
+                std::cout<<"remove failed peak because "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
             to_remove[0] = 1; //this is a flag only
         }
         
@@ -3585,7 +3620,9 @@ bool gaussian_fit::multi_spectra_run_single_peak()
        
         if(b_tolow)
         {
-            std::cout<<"remove too lower peak "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            if(n_verbose>0){
+                std::cout<<"remove too lower peak "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
             to_remove[0] = 1; //this is a flag only
         }
     }
@@ -3773,8 +3810,10 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
             if (current_x < 0 || current_x > current_xdim || current_y < 0 || current_y > current_ydim)
             {
                 peak_remove_flag[i_peak] = 2;
-                std::cout << original_ndx[i_peak] << " will be removed because x=" << current_x + i0 << " y=" << current_y + j0 << " a=" <<a[i_peak][0]
-                          << " , moved out of fitting area x from " << i0  << " to " << i0+ current_xdim << " and y from " << j0 << " to " << j0+ current_ydim << std::endl;
+                if(n_verbose>0){
+                    std::cout << original_ndx[i_peak] << " will be removed because x=" << current_x + i0 << " y=" << current_y + j0 << " a=" <<a[i_peak][0]
+                            << " , moved out of fitting area x from " << i0  << " to " << i0+ current_xdim << " and y from " << j0 << " to " << j0+ current_ydim << std::endl;
+                }
             }
             x[i_peak]=current_x+i0;
             y[i_peak]=current_y+j0;
@@ -3803,7 +3842,9 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                         {
                             //a[k2] = 0.0;
                             peak_remove_flag[k2]=1;
-                            std::cout << original_ndx[k2] << " will be removed because too near " << original_ndx[k1] <<", distance is "<<sqrt(dx * dx + dy * dy) <<"<"<<cut_near<< std::endl;
+                            if(n_verbose>0){
+                                std::cout << original_ndx[k2] << " will be removed because too near " << original_ndx[k1] <<", distance is "<<sqrt(dx * dx + dy * dy) <<"<"<<cut_near<< std::endl;
+                            }
                             if(peak_remove_flag[k1]==1)
                             {
                                 peak_remove_flag[k1]=0;  //restore k1, because of effect of k2 on it.
@@ -3813,7 +3854,9 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                         {
                             //a[k1] = 0.0;
                             peak_remove_flag[k1]=1;
-                            std::cout << original_ndx[k1] << " will be removed because too near " << original_ndx[k2] <<", distance is "<<sqrt(dx * dx + dy * dy)<<"<"<<cut_near<< std::endl;
+                            if(n_verbose>0){
+                                std::cout << original_ndx[k1] << " will be removed because too near " << original_ndx[k2] <<", distance is "<<sqrt(dx * dx + dy * dy)<<"<"<<cut_near<< std::endl;
+                            }
                             if(peak_remove_flag[k2]==1)
                             {
                                 peak_remove_flag[k2]=0;  //restore k2, because of effect of k1 on it.
@@ -3874,9 +3917,13 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
         {
             flag_break = true;
         }
-        std::cout<<"\r"<<"Iteration "<<loop+1<<"   "<<std::flush;
+        if(n_verbose>0){
+            std::cout<<"\r"<<"Iteration "<<loop+1<<"   "<<std::flush;
+        }
     } //loop
-    std::cout<<std::endl;
+    if(n_verbose>0){
+        std::cout<<std::endl;
+    }
 
     nround = loop;
 
@@ -4465,15 +4512,17 @@ bool spectrum_fit::fit_gather_original()
 
 
     //print out all removed peaks here for user information.
-    std::cout<<std::endl<<std::endl;
-    std::cout<<"List of peak removed in fitting."<<std::endl;
-    std::cout<<"--------------------------------"<<std::endl;
-    for(int i=0;i<removed_peaks.size();i++)
-    {
-        std::cout<<removed_peaks[i]<<" "<<user_comments[removed_peaks[i]]<<std::endl;
+    if(n_verbose>0){
+        std::cout<<std::endl<<std::endl;
+        std::cout<<"List of peak removed in fitting."<<std::endl;
+        std::cout<<"--------------------------------"<<std::endl;
+        for(int i=0;i<removed_peaks.size();i++)
+        {
+            std::cout<<removed_peaks[i]<<" "<<user_comments[removed_peaks[i]]<<std::endl;
+        }
+        std::cout<<"--------------------------------"<<std::endl;
+        std::cout<<std::endl<<std::endl;
     }
-    std::cout<<"--------------------------------"<<std::endl;
-    std::cout<<std::endl<<std::endl;
 
     std::vector<std::string> temp_comments;
     for (int i = 0; i < peak_index.size(); i++)

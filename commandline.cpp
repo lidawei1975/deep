@@ -15,14 +15,19 @@ bool CCommandline::pharse_core(int argc, char ** argv)
         bool b=false;
         for (j = 0; j < narg; j++)
         {
+            /**
+             * @brief arguments is the list of arguments, e.g. -in, -out, -v, etc.
+             * Each argument always starts with a dash, e.g. -in
+             * 
+             */
             if (arguments.at(j).compare(argv[i]) == 0) 
             {
                 parameters.at(j) = ""; 
-                if(i+1>=argc || argv[i + 1][0] == '-')
+                if(i+1>=argc || is_key(argv[i + 1])==true)
                 {
                     parameters.at(j) = "yes";
                 }
-                while (i + 1 < argc && argv[i + 1][0] != '-') 
+                while (i + 1 < argc && is_key(argv[i + 1])==false)
                 {
                     parameters.at(j).append(argv[i + 1]);
                     parameters.at(j).append(" ");
@@ -40,6 +45,34 @@ bool CCommandline::pharse_core(int argc, char ** argv)
         }
     }
     return true;
+}
+
+/**
+ * @brief check if the input is a key such as "-in","-h", etc.
+ * "-0.3" is not a key, it is a parameter.
+ * "--" is not a key, it is a parameter.
+ * @param in 
+ * @return true 
+ * @return false 
+ */
+bool CCommandline::is_key(std::string in)
+{
+    /**
+     * @brief minimal legnth for a key is 2, e.g. -in, -out, -v, etc.
+     * 
+     */
+    if(in.length()<2)
+    {
+        return false;
+    }
+    /**
+     * @brief starts with a "-" AND the next character is from a to z or A to Z, then it is a key
+     */
+    if(in.at(0)=='-' && (in.at(1)>='a' && in.at(1)<='z' || in.at(1)>='A' && in.at(1)<='Z'))
+    {
+        return true;
+    }
+    return false;
 }
 
 

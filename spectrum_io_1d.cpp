@@ -110,7 +110,15 @@ bool spectrum_io_1d::save_experimental_spectrum(std::string outfname)
     return true;
 }
 
-bool spectrum_io_1d::read_spectrum(std::string infname)
+/**
+ * @brief read 1D spectrum
+ * 
+ * @param infname input file name
+ * @param b_negative true: allow negative peaks, false: only positive peaks. Default is true
+ * @return true 
+ */
+
+bool spectrum_io_1d::read_spectrum(std::string infname, bool b_negative)
 {
     bool b_read = 0;
 
@@ -147,11 +155,14 @@ bool spectrum_io_1d::read_spectrum(std::string infname)
 
     est_noise_level();
 
-    // std::cout<<"Set negative data points to zero."<<std::endl;
-    // for(int i=0;i<spe.size();i++)
-    // {
-    //     spe[i]=std::max(spe[i],0.0f);
-    // }
+    if(b_negative==false)
+    {
+        std::cout<<"Set negative data points to zero."<<std::endl;
+        for(int i=0;i<spect.size();i++)
+        {
+            spect[i]=std::max(spect[i],0.0f);
+        }
+    }
 
     return b_read;
 }

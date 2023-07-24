@@ -42,14 +42,16 @@ protected:
     float noise_level;  //spectrum noise level, 1.4826*medium(abs(spect))
     std::vector<double> noise_level_columns; //noise level of each column
     std::vector<double> noise_level_rows; //noise level of each row
+
+    double SW1,SW2,frq1,frq2,ref1,ref2; //ppm information
+    double SW3,frq3,ref3; //ppm information in case of 3D
     
     void noise();   //estimate noise level
 
 private:
     bool b_pipe;
     float header[512];  //nmrpipe format 
-    double SW1,SW2,frq1,frq2,ref1,ref2; //ppm information
-    double SW3,frq3,ref3; //ppm information in case of 3D
+
     
 
     //save original spectrum after we do invers , zero filling and fft

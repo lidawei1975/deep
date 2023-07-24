@@ -21,6 +21,9 @@ using ceres::Solve;
 #include "spectrum_io_1d.h"
 #include "spectrum_fit_1d.h"
 
+int shared_data::n_verbose=1; //default is 1
+bool shared_data::b_doesy=false; //default is false
+
 
 int main(int argc, char **argv)
 {
@@ -35,6 +38,10 @@ int main(int argc, char **argv)
     args.push_back("-h");
     args2.push_back("no");
     args3.push_back("print help message then quit");
+
+    args.push_back("-v");
+    args2.push_back("1");
+    args3.push_back("verbose level (0: minimal, 1: normal)");
 
     args.push_back("-f");
     args2.push_back("arguments_vf1d.txt");
@@ -67,6 +74,14 @@ int main(int argc, char **argv)
     args.push_back("-peak_in");
     args2.push_back("peaks.tab");
     args3.push_back("Read peaks list from this file");
+
+    args.push_back("-negative");
+    args2.push_back("no");
+    args3.push_back("Allow negative peaks");
+
+    args.push_back("-doesy");
+    args2.push_back("no");
+    args3.push_back("doesy experiments for pseudo 2D spectra");
 
     args.push_back("-out");
     args2.push_back("fitted.tab");
@@ -112,11 +127,16 @@ int main(int argc, char **argv)
     bool b_individual_peaks=false;
     bool b_recon=false;
     int n_stride=1;
+    bool b_negative=false;
 
     maxround=atoi(cmdline.query("-maxround").c_str());
     b_out_json=cmdline.query("-out_json")=="yes" || cmdline.query("-out_json")=="y";
     b_recon=cmdline.query("-recon")=="yes" || cmdline.query("-recon")=="y";
     b_individual_peaks=cmdline.query("-individual")=="yes" || cmdline.query("-individual")=="y";
+    b_negative=cmdline.query("-negative")=="yes" || cmdline.query("-negative")=="y";
+
+    shared_data::n_verbose=atoi(cmdline.query("-v").c_str()); //set verbose level
+    shared_data::b_doesy=cmdline.query("-doesy")=="yes" || cmdline.query("-doesy")=="y"; //set doesy flag
 
 
     double noise_level=stod(cmdline.query("-noise_level"));
@@ -169,13 +189,21 @@ int main(int argc, char **argv)
             x.init_error(zf,n_err);
         }
 
-        if(x.init_all_spectra(file_names,n_stride)) //read spectra.
+        if(x.init_all_spectra(file_names,n_stride,b_negative)) //read spectra.
         {
             if(x.peak_reading(peakfname))
             {
                 x.peak_fitting(); //fitting
             }
+            else
+            {
+                std::cout<<"Error: Failed to read input peaks."<<std::endl;
+            }
             x.output(outfname,b_out_json,b_individual_peaks,b_recon,cmdline.query("-folder")); //output
+        }
+        else
+        {
+            std::cout<<"Error: Failed to read input spectra."<<std::endl;
         }
     }
 

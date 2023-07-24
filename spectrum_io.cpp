@@ -818,9 +818,15 @@ bool spectrum_io::read_pipe(std::string infname)
         }
     }
 
+    SW1=sws_direct;
+    SW2=sws_indirect; //copy to member variables
 
-    std::cout << "Spectrum width are " << sws_direct << " Hz and " << sws_indirect << " Hz" << std::endl;
-    std::cout << "Fields are " << frqs_direct << " mHz and " << frqs_indirect << " mHz" << std::endl;
+    frq1=frqs_direct;
+    frq2=frqs_indirect; //copy to member variables
+
+
+    std::cout << "Spectrum width are " << SW1 << " Hz and " << SW2 << " Hz" << std::endl;
+    std::cout << "Fields are " << frq1 << " mHz and " << frq2 << " mHz" << std::endl;
     std::cout << "Direct dimension size is " << xdim << " indirect dimension is " << ydim << std::endl;
     std::cout << "  Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " and last is " << stop1 << std::endl;
     std::cout << "Indirect dimension offset is " << begin2 << ", ppm per step is " << step2 << " and last is " << stop2 << std::endl;

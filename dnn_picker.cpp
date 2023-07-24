@@ -1376,6 +1376,11 @@ bool peak2d::init_spectrum(int xdim_, int ydim_, float noise, float scale, float
     return true;
 }
 
+/**
+ * @brief this step partition the spectrum into segments, and do 1D peak picking on each segment, both by column and by row.
+ * 
+ * @return true 
+ */
 bool peak2d::predict_step1()
 {
     int n=xdim*ydim;
@@ -1415,20 +1420,24 @@ bool peak2d::predict_step1()
         }
         for(int j=1;j<ydim;j++)
         {
+            //at the beginning of a signal, extend by 10
             if(spectrum_column[i*ydim+j-1]<=boundary_cutoff && spectrum_column[i*ydim+j]>boundary_cutoff)
             {
                 signa_boudaries.push_back(std::max(j-10,0));
             }
+            //at the end of a signal (beginning of noise region), extend by 10
             else if(spectrum_column[i*ydim+j-1]>boundary_cutoff && spectrum_column[i*ydim+j]<=boundary_cutoff)
             {
                 noise_boudaries.push_back(std::min(j+10,ydim));
             }
         }
+        //The last region is a noise region
         if(noise_boudaries.size()<signa_boudaries.size())
         {
             noise_boudaries.push_back(ydim);
         }
 
+        //merge signal and noise regions if they are too close (<20)
         bool b=true;
         while(b)
         {
@@ -1449,9 +1458,10 @@ bool peak2d::predict_step1()
             int stop=noise_boudaries[j];
             int begin0=begin;
 
-            if (stop - begin < 5)
+            if (stop - begin < 5) //too small to have a peak
                 continue;
 
+            //run a simple peak picking algorithm
             std::vector<float> spe(spectrum_column.begin()+i*ydim,spectrum_column.begin()+(i+1)*ydim);
             std::vector<int> peak_positions, min_positions;
             std::vector<float> peak_amplitudes;
@@ -1481,7 +1491,8 @@ bool peak2d::predict_step1()
                 min_positions.push_back(p);
             }
             min_positions.push_back(stop);
-        
+
+            //partition the peaks into segments, each segment can't have peaks whose amplitudes are too different (0.2)
             std::vector<int> bs=ldw_math_dnn::get_best_partition(peak_amplitudes,0.2);
             bs.push_back(peak_amplitudes.size());
 
@@ -1497,7 +1508,7 @@ bool peak2d::predict_step1()
             }
         }
 
-
+        //now run the prediction for each segment, using DNN
         for (int j = 0; j < final_segment_begin.size(); j++)
         {
             int begin = final_segment_begin[j];
@@ -1518,14 +1529,15 @@ bool peak2d::predict_step1()
             t.resize(n,0.0f);
             std::copy(spectrum_column.begin() + i * ydim + begin, spectrum_column.begin() + i * ydim + stop, t.begin()+left_patch);
 
-            p1.predict(t);
-            p1.predict_step2();
+            p1.predict(t); //run the prediction
+            p1.predict_step2(); //non-maximum suppression part
             
             for (int k = 0; k < p1.posits.size(); k++)
             {
 #ifdef LDW_DEBUG
                 fout1 << i<<" " <<p1.posits[k]+begin0<< " "<< p1.confidence[k] << std::endl;
 #endif
+                //r_column[2d peak coor expressed as 1d index] = ndx of peak, the ndx can be used to get the peak's other properties from following vectors
                 r_column[i * ydim + begin0 + p1.posits[k]] = counter;
                 c_column.push_back(p1.centes[k]);
                 a_column.push_back(p1.intens[k]);
@@ -1664,6 +1676,7 @@ bool peak2d::predict_step1()
 #ifdef LDW_DEBUG
                 fout2 << p1.posits[k]+begin0 << " " << i << " " << p1.confidence[k] << std::endl;
 #endif
+                //r_row[2d peak coor expressed as 1d index] = ndx of peak, the ndx can be used to get the peak's other properties from following vectors
                 r_row[i * xdim + p1.posits[k] + begin0] = counter;
                 c_row.push_back(p1.centes[k]);
                 a_row.push_back(p1.intens[k]);
@@ -1687,13 +1700,22 @@ bool peak2d::predict_step1()
     return true;
 }
 
-//find lines!!
+/**
+ * @brief connected dots (peaks) into lines
+ * 
+ * @return true 
+ * @return false 
+ */
 bool peak2d::predict_step2()
 {
+    /**
+     * @brief row_line_x(y) is the x(y) coor of the line (from row by row)
+     * column_line_index and row_line_index are index to a,s,g_column and a,s,g_row to get peak paramters!!
+     * 
+     */
     find_lines(xdim,ydim,r_column,column_line_x,column_line_y,column_line_index,column_line_segment);
     find_lines(ydim,xdim,r_row,row_line_y,row_line_x,row_line_index,row_line_segment);
 
-    //column_line_index and row_line_index are index to a,s,g_column and a,s,g_row to get peak paramters!!
 
     //r_column and r_row is not needed any longer after here. save memory!!
     r_column.clear();
@@ -1735,9 +1757,14 @@ bool peak2d::predict_step2()
     rl_column_p.resize(xdim*ydim,-1);
     rl_row_p.resize(xdim*ydim,-1);
 
-    // values in rl_row and rl_column are line index
-    // values in rl_row_p and rl_column_p are 1D peak index, that can be used to get inten (through a_column,a_row), sigma, gamma.  
 
+    /**
+     * @brief column_line_segment = {3,8,13} means first line has 3 peaks, second line has 5 peaks, third line has 5 peaks
+     * 
+     * values in rl_row and rl_column are line index
+     * values in rl_row_p and rl_column_p are 1D peak index, that can be used to get inten (through a_column,a_row), sigma, gamma.  
+     * 
+     */
     for(int i=0;i<column_line_segment.size();i++)
     {
         int b,s;
@@ -1746,7 +1773,7 @@ bool peak2d::predict_step2()
         s=column_line_segment[i];
         for(int j=b;j<s;j++)
         {
-            rl_column[column_line_x[j]*ydim+column_line_y[j]]=i;
+            rl_column[column_line_x[j]*ydim+column_line_y[j]]=i; 
             rl_column_p[column_line_x[j]*ydim+column_line_y[j]]=column_line_index[j];
         }
     }
@@ -1766,8 +1793,76 @@ bool peak2d::predict_step2()
     return true;
 }
 
+/**
+ * @brief This function try to find a set of peaks that are not close (>cutoff) to each other, and have the highest total distances
+ * 
+ * v1: maximal clique algorithm to find all maximal cliques, then select the largest one. If two have same size, select the one with largest total distance
+ * This version is slow (NP hard problem)
+ * 
+ * v2: greedy algorithm to find the (one) maximal clique starting from one peak. Then select the largest one with largest total distance
+ * In other word, we do NOT need to find all maximal cliques, just one is enough. 
+ * v2 algorithm is much faster than v1, and give the same result, which scale as N^2, instead of NP hard.
+ * 
+ * @param tx peaks' x coor
+ * @param ty peaks' y coor
+ * @param cutoff distance cutoff
+ * @return std::vector<int> a subset of peaks: index to tx and ty
+ */
+
 std::vector<int>  peak2d::select_max_nonoverlap_set(std::vector<int> tx,std::vector<int> ty,int cutoff)
 {
+    //V2 algorithm
+    int nsize=tx.size();
+
+
+    //loop over all peaks, find the maximal clique starting from it
+    int max_clique_total_distance=-1; //in case of single peak, the max clique size is 1, and its total distance is 0 , which > -1
+    std::vector<int> max_clique;
+    max_clique.clear(); //initialization. size is 0
+    for(int i=0;i<nsize;i++)
+    {
+        std::vector<int> current_max_clique;
+        current_max_clique.push_back(i);
+        for(int j=0;j<nsize;j++)
+        {
+            bool b_good=true;
+            for(int k=0;k<current_max_clique.size();k++)
+            {
+                int d=abs(tx[current_max_clique[k]]-tx[j])+abs(ty[current_max_clique[k]]-ty[j]);
+                if(d<cutoff) 
+                {
+                    b_good=false;
+                    break;
+                }
+            }
+            if(b_good) 
+            {
+                current_max_clique.push_back(j);
+            }
+        }
+        if(current_max_clique.size()>=max_clique.size())
+        {
+            int total_distance=0; 
+            //get total distance within the clique
+            for(int j=0;j<current_max_clique.size();j++)
+            {
+                for(int j2=j+1;j2<current_max_clique.size();j2++)
+                {
+                    total_distance+=abs(tx[current_max_clique[j]]-tx[current_max_clique[j2]])+abs(ty[current_max_clique[j]]-ty[current_max_clique[j2]]);
+                }
+            }
+            if(total_distance>max_clique_total_distance)
+            {
+                max_clique_total_distance=total_distance;
+                max_clique=current_max_clique;
+            }
+        }
+    }
+
+    return max_clique;
+    
+    //V1 algorithm
+    /*
     std::vector<int> ndxs;
     int n=tx.size();
     std::vector< std::vector<int> > neighbor;
@@ -1835,10 +1930,35 @@ std::vector<int>  peak2d::select_max_nonoverlap_set(std::vector<int> tx,std::vec
     {
         ndxs.push_back(int(tx.size()/2.0+0.1));
     }
+
+    //some debug code
+    
+    //print out max_clique and ndxs
+    std::cout<<"max_clique: ";
+    for(int i=0;i<max_clique.size();i++)
+    {
+        std::cout<<max_clique[i]<<" ";
+    }
+    std::cout<<std::endl;
+    std::cout<<"ndxs: ";
+    for(int i=0;i<ndxs.size();i++)
+    {
+        std::cout<<ndxs[i]<<" ";
+    }
+    std::cout<<std::endl;
+
+
     return ndxs;
+    */
+    
 }
 
-
+/**
+ * @brief 
+ * 
+ * @return true 
+ * @return false 
+ */
 bool peak2d::predict_step3()
 {
     //to do: define cutoff according to predicted peak width
@@ -1849,6 +1969,12 @@ bool peak2d::predict_step3()
     std::vector<int> tx;
     std::vector<int> ty;
     std::vector<double> w;
+
+    /**
+     * @brief row_line_segment = {3,8,13} means first line has 3 peaks, second line has 5 peaks, third line has 5 peaks
+     * values in rl_row and rl_column are line index
+     * values in rl_row_p and rl_column_p are 1D peak index, that can be used to get inten (through a_column,a_row), sigma, gamma.  
+    */ 
 
     for(int i=0;i<row_line_segment.size();i++)
     {
@@ -1861,11 +1987,15 @@ bool peak2d::predict_step3()
         int c=-1;
         for (int j = b; j < s; j++)
         {
+             //(x,y) is one point in row_line
             int x = row_line_x[j];
-            int y = row_line_y[j];            //one point in row_line
-            if (rl_column[x * ydim + y] >= 0) //is also a point in column_line
+            int y = row_line_y[j];        
+            // check whether this point is also a point in column_line   
+            if (rl_column[x * ydim + y] >= 0) 
             {
-                if(tx.size()>0 && rl_column[x * ydim + y]!=c)
+                //rl_column[x * ydim + y]!=c means we have a new column_line,
+                //so we need to select the best peak from tx and ty and add it to cx and cy
+                if(tx.size()>0 && rl_column[x * ydim + y]!=c) 
                 {
                     std::vector<int> ndxs=select_max_nonoverlap_set(tx,ty,ncutoff);
                     for(int n=0;n<ndxs.size();n++)
@@ -1876,9 +2006,9 @@ bool peak2d::predict_step3()
                     tx.clear();
                     ty.clear();
                 }
-                tx.push_back(x);
+                tx.push_back(x); //tx,ty are vector of intersection points of row_line and column_line
                 ty.push_back(y);
-                c=rl_column[x * ydim + y];
+                c=rl_column[x * ydim + y]; //c is the index of column_line
             }
         }
         if (tx.size() > 0)
@@ -2194,6 +2324,7 @@ bool peak2d::predict_step3()
     }
     else
     {
+        //skip special peak check.
         setup_peaks_from_p();
     }
     return true;
@@ -3055,17 +3186,28 @@ bool peak2d::check_special_case(const int ndx,const double fx,const double fy,
     return true;
 }
 
-
+/**
+ * @brief This function is used to find the lines from the peak
+ * 
+ * @param xd  input x dimension size
+ * @param yd  input y dimension size
+ * @param r   size is xd*yd, r[i]>=0 means the pixel belongs to the peak. -1 means the pixel is not in the peak
+ * @param x0  output peak pos x
+ * @param y0  output peak pos y
+ * @param ndx0 output peak index as saved in r (0,1,2,...)
+ * @param s0 output line length s0={3,7,10} means 0-3 is the first line, 3-7 is the second line, 7-10 is the third line
+ * @return true 
+ */
 bool peak2d::find_lines(int xd, int yd, std::vector<int> r, std::vector<int> &x0, std::vector<int> &y0, std::vector<int> &ndx0, std::vector<int> &s0)
 {
 
     int min_line_length;
     int limit;
 
-    if(model_selection==1 ) //peak is wide
+    if(model_selection==1 ) 
     {
-        min_line_length=5;
-        limit=4;
+        min_line_length=5; //minimal line length is 5
+        limit=4; //peak is wide. 1D peak can change position as large as 4 from one col to the next col
     }
     else if(model_selection==2 || model_selection==3)
     {

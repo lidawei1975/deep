@@ -201,7 +201,99 @@ bool mycostfunction_lorentz1d::Evaluate(double const *const *xx, double *residua
     return true;
 };
 
+
+/**
+ * @brief for pseudo 2D voigt fitting, analytical derivative
+ * Peak amplitude is defined as A = A0*exp(-t*t*D) where A0 and D are fitting parameters
+ * while t=[0,1,2,3,...,n-1] is the time delay
+ */
 // voigt_1d
+mycostfunction_voigt1d_doesy::~mycostfunction_voigt1d_doesy(){};
+mycostfunction_voigt1d_doesy::mycostfunction_voigt1d_doesy(int t_,int n_datapoint_, double *z_)
+{
+    t = t_; //t is an integer. t=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14...
+    n_datapoint = n_datapoint_;
+    z = z_;
+};
+
+void mycostfunction_voigt1d_doesy::voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const
+{
+    double v, l;
+    double z_r = x0 / (sqrt(2) * sigma);
+    double z_i = gamma / (sqrt(2) * sigma);
+    double sigma2 = sigma * sigma;
+    double sigma3 = sigma * sigma2;
+
+    re_im_w_of_z(z_r, z_i, &v, &l);
+    *vv = v / sqrt(2 * M_PI * sigma2);
+
+    double t1 = z_i * l - z_r * v;
+    double t2 = z_r * l + z_i * v;
+
+    *r_x0 = t1 / (sigma2 * M_SQRT_PI);
+    *r_gamma = (t2 - M_1_SQRT_PI) / (sigma2 * M_SQRT_PI);
+    *r_sigma = -v / M_SQRT_2PI / sigma2 - t1 * x0 / sigma3 / M_SQRT_PI - (t2 - M_1_SQRT_PI) * gamma / sigma3 / M_SQRT_PI;
+
+    return;
+};
+
+void mycostfunction_voigt1d_doesy::voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const
+{
+    double v, l;
+    double z_r = x0 / (sqrt(2) * sigma);
+    double z_i = gamma / (sqrt(2) * sigma);
+    double sigma2 = sigma * sigma;
+
+    re_im_w_of_z(z_r, z_i, &v, &l);
+    *vv = v / sqrt(2 * M_PI * sigma2);
+    return;
+};
+
+bool mycostfunction_voigt1d_doesy::Evaluate(double const *const *xx, double *residual, double **jaco) const
+{
+    double a0 = xx[0][0]; //This is the amplitude at t=0
+    
+    double diff_sqrt = xx[4][0]; //This is SQRT of the diffusion coefficient. We fit the SQRT of the diffusion coefficient to avoid diffusion coefficient
+    double diff = diff_sqrt*diff_sqrt; //This is the diffusion coefficient. 
+    double a_scale=exp(-t*t*diff); //This is the amplitude scale factor at t=t
+    double a = a0*a_scale; //This is the amplitude at t=t
+    double x0 = xx[1][0]; //This is the center position
+    double sigmax = fabs(xx[2][0]);
+    double gammax = fabs(xx[3][0]);
+
+    double vvx, r_x, r_sigmax, r_gammax;
+
+    voigt_helper(x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
+
+    if (jaco != NULL) // both residual errors and jaco are required.
+    {
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            voigt_helper(i - x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
+            residual[i] = a * vvx - z[i];
+            jaco[0][i] = vvx * a_scale;         //  dz/da=vvx and da/da0 = a_scale 
+            jaco[1][i] = -a * r_x;              // derivative with respect to x0
+            jaco[2][i] = a * r_sigmax;          // derivative with respect to sigmax
+            jaco[3][i] = a * r_gammax;          // derivative with respect to gammax
+            jaco[4][i] = -vvx * a0 * a_scale * t * t * 2.0 * diff_sqrt;   // dz/da=vvx, da/dD = -a0*t*t*exp(-t*t*D), dD/dsqrtD =2*sqrtD
+        }
+    }
+    else // only require residual errors
+    {
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            voigt_helper(i - x0, sigmax, gammax, &vvx);
+            residual[i] = a * vvx - z[i];
+        }
+    }
+    return true;
+};
+
+
+/**
+ * @brief voigt_1d cost funciton. Single peak fitting
+ * 
+ */
 mycostfunction_voigt1d::~mycostfunction_voigt1d(){};
 mycostfunction_voigt1d::mycostfunction_voigt1d(int n, double *z_)
 {
@@ -241,17 +333,6 @@ void mycostfunction_voigt1d::voigt_helper(const double x0, const double sigma, c
     *vv = v / sqrt(2 * M_PI * sigma2);
     return;
 };
-
-bool mycostfunction_voigt1d::get_residual(const double a, const double x0, const double sigma, const double gamma, double *residual)
-{
-    double vvx;
-    for (int i = 0; i < n_datapoint; i++)
-    {
-        voigt_helper(i - x0, sigma, gamma, &vvx);
-        residual[i] = a * vvx - z[i];
-    }
-    return true;
-}
 
 bool mycostfunction_voigt1d::Evaluate(double const *const *xx, double *residual, double **jaco) const
 {
@@ -327,17 +408,6 @@ void mycostfunction_nvoigt1d::voigt_helper(const double x0, const double sigma, 
     *vv = v / sqrt(2 * M_PI * sigma2);
     return;
 };
-
-// bool mycostfunction_nvoigt1d::get_residual(const double a, const double x0, const double sigma, const double gamma, double *residual)
-// {
-//     double vvx;
-//     for (int i = 0; i < n_datapoint; i++)
-//     {
-//         voigt_helper(i - x0, sigma, gamma, &vvx);
-//         residual[i] = a * vvx - z[i];
-//     }
-//     return true;
-// }
 
 bool mycostfunction_nvoigt1d::Evaluate(double const *const *xx, double *residual, double **jaco) const
 {
@@ -520,13 +590,14 @@ bool gaussian_fit_1d::gaussian_fit_init(std::vector<std::vector<float>> &d, std:
     return true;
 };
 
-void gaussian_fit_1d::set_up(fit_type t_, int r_, double near, double scale_, double noise_)
+void gaussian_fit_1d::set_up(fit_type t_, int r_, double near, double scale_, double noise_, bool b_)
 {
     type = t_;
     rmax = r_;
     too_near_cutoff = near;
     minimal_height = scale_ * noise_;
     noise_level = noise_;
+    b_negative=b_;
 };
 
 bool gaussian_fit_1d::save_postion_informations(int begin_, int stop_, int left_patch_, int right_patch_, int n)
@@ -808,6 +879,31 @@ bool gaussian_fit_1d::run_with_error_estimation(int zf1, int n_error_round)
             }
         }
 
+        /**
+         * @brief If b_negavie is false. We don't allow negative data point.
+         * 
+         */
+        if (b_negative == false)
+        {
+            for (int j = 0; j < xdim; j++)
+            {
+                if (surface[j] < 0.0)
+                {
+                    surface[j] = 0.0;
+                }
+            }
+            for(int k=0;k<nspect;k++)
+            {
+                for (int j = 0; j < xdim; j++)
+                {
+                    if (surfaces[k][j] < 0.0)
+                    {
+                        surfaces[k][j] = 0.0;
+                    }
+                }
+            }
+        }
+
         x = good_x;
         a = good_a;
         sigmax = good_sigmax;
@@ -856,11 +952,33 @@ bool gaussian_fit_1d::run_peak_fitting(bool flag_first)
     minimal_height /= spectrum_scale;
     noise_level /= spectrum_scale;
 
+
     for (int i = 0; i < npeak; i++)
     {
         for (int k = 0; k < nspect; k++)
         {
             a[i][k] /= spectrum_scale;
+        }
+    }
+
+    /**
+     * @brief Set diffusion coefficient for each peak.
+     * This varible is only useful for doesy experiment. But it is filled for all cases for simplicity.
+     */
+    diffusion_coefficient.resize(npeak, 0.01);
+
+    /**
+     * @brief init a[i][1,2,3,...,nspect-1] from a[i][0] and diffusion_coefficient if b_doesy is true.
+     * 
+     */
+    if(b_doesy==true)
+    {
+        for(int i=0;i<npeak;i++)
+        {
+            for(int k=1;k<nspect;k++)
+            {
+                a[i][k] = a[i][0] * exp(-diffusion_coefficient[i] * k * k);
+            }
         }
     }
 
@@ -943,6 +1061,7 @@ bool gaussian_fit_1d::run_peak_fitting(bool flag_first)
                 x_range_right.erase(x_range_right.begin() + i);
                 x_range_left.erase(x_range_left.begin() + i);
                 to_remove.erase(to_remove.begin() + i);
+                diffusion_coefficient.erase(diffusion_coefficient.begin() + i); //not sure this is needed. won't hurt
             }
         }
 
@@ -961,6 +1080,7 @@ bool gaussian_fit_1d::run_peak_fitting(bool flag_first)
                 x_range_right.erase(x_range_right.begin() + i);
                 x_range_left.erase(x_range_left.begin() + i);
                 to_remove.erase(to_remove.begin() + i);
+                diffusion_coefficient.erase(diffusion_coefficient.begin() + i); //not sure this is needed. won't hurt
             }
         }
     }
@@ -1109,9 +1229,21 @@ bool gaussian_fit_1d::run_single_peak_multi_spectra()
     {
         multi_fit_lorentz(xdim, zz, x[0], a[0], gammax[0], err[0]);
     }
-    else if (type == voigt_type) // voigt
+    else if (type == voigt_type && b_doesy==false) // voigt for pseudo 2d
     {
         multi_fit_voigt(xdim, zz, x[0], a[0], sigmax[0], gammax[0], err[0], 0, 0);
+    }
+    else if (type == voigt_type && b_doesy==true) // voigt for doesy
+    {
+        multi_fit_voigt_doesy(xdim, zz, x[0], a[0][0], diffusion_coefficient[0], sigmax[0], gammax[0], err[0], 0, 1);
+        /**
+         * @brief fill a[0][1,2,3,...,nspec-1] using diffusion coefficient and a[0][0]
+         * 
+         */
+        for(int k=1;k<nspect;k++)
+        {
+            a[0][k]=a[0][0]*exp(-diffusion_coefficient[0]*k*k);
+        }
     }
     nround = 1;
 
@@ -1228,14 +1360,20 @@ bool gaussian_fit_1d::run_multi_peaks()
 
             if (fabs(sigmax.at(i)) + fabs(gammax.at(i)) < 0.2 || fabs(sigmax.at(i)) + fabs(gammax.at(i)) > 50)
             {
-                std::cout << original_ndx[i] << " will be removed because too wide or narrow x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+                if(n_verbose>0)
+                {
+                    std::cout << original_ndx[i] << " will be removed because too wide or narrow x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+                }
                 peak_remove_flag[i] = 1;
                 b_some_peak_removed = 1;
             }
 
             if (x.at(i) < 0 || x.at(i) >= i1 - i0)
             {
-                std::cout << original_ndx[i] << " will be removed because moved out of area  x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+                if(n_verbose>0)
+                {
+                    std::cout << original_ndx[i] << " will be removed because moved out of area  x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+                }
                 peak_remove_flag[i] = 1;
                 b_some_peak_removed = 1;
             }
@@ -1250,7 +1388,10 @@ bool gaussian_fit_1d::run_multi_peaks()
             
             if(fabs(temp_peak_height)<minimal_height)
             {
-                std::cout << original_ndx[i] << " will be removed because low intensity x=" << x.at(i) + i0 << " height=" << temp_peak_height << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+                if(n_verbose>0)
+                {
+                    std::cout << original_ndx[i] << " will be removed because low intensity x=" << x.at(i) + i0 << " height=" << temp_peak_height << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+                }
                 peak_remove_flag[i] = 1;
                 b_some_peak_removed = 1;
             }
@@ -1293,7 +1434,10 @@ bool gaussian_fit_1d::run_multi_peaks()
 
             if (min_of_trace / fabs(original_spectral_height[i]) < 1 / 3.0 || max_of_trace / fabs(original_spectral_height[i]) > 3.0)
             {
-                std::cout << original_ndx[i] << " will be removed because moved too far away." << std::endl;
+                if(n_verbose>0)
+                {
+                    std::cout << original_ndx[i] << " will be removed because moved too far away." << std::endl;
+                }
                 peak_remove_flag[i] = 1;
                 b_some_peak_removed = 1;
             }
@@ -1319,7 +1463,10 @@ bool gaussian_fit_1d::run_multi_peaks()
                     double cut_near = wx * too_near_cutoff;
                     if (fabs(dx) < cut_near || fabs(dx) < 1.6) // too close peaks
                     {
-                        std::cout << "too_near_cutoff is " << too_near_cutoff << std::endl;
+                        if(n_verbose>0)
+                        {
+                            std::cout << "too_near_cutoff is " << too_near_cutoff << std::endl;
+                        }
 
                         double height1 = fabs(a[k1][0]);
                         double height2 = fabs(a[k2][0]);
@@ -1334,7 +1481,10 @@ bool gaussian_fit_1d::run_multi_peaks()
                         {
                             // a[k2] = 0.0;
                             peak_remove_flag[k2] = 1;
-                            std::cout << original_ndx[k2] << " will be removed because too near " << original_ndx[k1] << ", distance is " << fabs(dx) << "<" << cut_near << std::endl;
+                            if(n_verbose>0)
+                            {
+                                std::cout << original_ndx[k2] << " will be removed because too near " << original_ndx[k1] << ", distance is " << fabs(dx) << "<" << cut_near << std::endl;
+                            }
                             if (peak_remove_flag[k1] == 1)
                             {
                                 peak_remove_flag[k1] = 0; // restore k1, because of effect of k2 on it.
@@ -1344,7 +1494,10 @@ bool gaussian_fit_1d::run_multi_peaks()
                         {
                             // a[k1] = 0.0;
                             peak_remove_flag[k1] = 1;
-                            std::cout << original_ndx[k1] << " will be removed because too near " << original_ndx[k2] << ", distance is " << fabs(dx) << "<" << cut_near << std::endl;
+                            if(n_verbose>0)
+                            {
+                                std::cout << original_ndx[k1] << " will be removed because too near " << original_ndx[k2] << ", distance is " << fabs(dx) << "<" << cut_near << std::endl;
+                            }
                             if (peak_remove_flag[k2] == 1)
                             {
                                 peak_remove_flag[k2] = 0; // restore k2, because of effect of k1 on it.
@@ -1437,10 +1590,15 @@ bool gaussian_fit_1d::run_multi_peaks()
         {
             flag_break = true;
         }
-        std::cout << "\r"
-                  << "Iteration " << loop + 1 << " " << loop2 << std::flush;
+        if(n_verbose>0)
+        {
+            std::cout << "\r" << "Iteration " << loop + 1 << " " << loop2 << std::flush;
+        }
     } // loop
-    std::cout << std::endl;
+    if(n_verbose>0)
+    {
+        std::cout << std::endl;
+    }
 
     nround = loop;
 
@@ -1491,6 +1649,10 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
         peaks_total.clear();
         peaks_total.resize(nspect, std::vector<double>(xdim, 0.0));
 
+        /**
+         * Note: For doesy experiment, a[i][1,2,3 ...] is not fitted directly but calculated from a[i][0] and diffusion coefficient[i]
+         * But they are still good for spectral deconvolution here. 
+         */
         for(int k=0;k<nspect;k++)
         {
             for (unsigned int i = 0; i < x.size(); i++)
@@ -1556,9 +1718,21 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
             {
                 multi_fit_gaussian(i1 - i0, zzz, x[i], a[i], sigmax[i], err[i]);
             }
-            else if (type == voigt_type)
+            else if (type == voigt_type && b_doesy==false)
             {
                multi_fit_voigt(i1 - i0, zzz, x[i], a[i], sigmax[i], gammax[i], err[i], loop, 100);
+            }
+            else if (type == voigt_type && b_doesy==true)
+            {
+                multi_fit_voigt_doesy(i1 - i0, zzz, x[i], a[i][0], diffusion_coefficient[i], sigmax[i], gammax[i], err[i], loop, 100);
+               /**
+                 * @brief fill a[0][1,2,3,...,nspec-1] using diffusion coefficient and a[0][0]
+                 * 
+                 */
+                for(int k=1;k<nspect;k++)
+                {
+                    a[i][k]=a[i][0]*exp(-diffusion_coefficient[i]*k*k);
+                }
             }
             else if (type == lorentz_type)
             {
@@ -1567,45 +1741,15 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
             x[i] += i0;
         } // end of parallel for(int i = 0; i < x.size(); i++)
 
-
-        // if (flag_break)
-        // {
-        //     break;
-        // }
-
-        // test convergence. If so, we can break out of loop early
-        // bool bcon = false;
-        // for (int i = x_old.size() - 1; i >= std::max(int(x_old.size()) - 2, 0); i--)
-        // {
-        //     if (x.size() != x_old[i].size())
-        //     {
-        //         continue;
-        //     }
-
-        //     bool b = true;
-        //     for (int j = 0; j < x.size(); j++)
-        //     {
-        //         if (fabs(x[j] - x_old[i][j]) > 0.001)
-        //         {
-        //             b = false;
-        //             break;
-        //         }
-        //     }
-        //     if (b == true)
-        //     {
-        //         bcon = true;
-        //         break;
-        //     }
-        // }
-
-        // if (bcon == true || a.size() == 0)
-        // {
-        //     flag_break = true;
-        // }
-        std::cout << "\r"
-                  << "Iteration " << loop + 1 << std::flush;
+        if(n_verbose>0)
+        {
+            std::cout << "\r"  << "Iteration " << loop + 1 << std::flush;
+        }
     } // loop
-    std::cout << std::endl;
+    if(n_verbose>0)
+    {
+        std::cout << std::endl;
+    }
 
     nround = loop;
 
@@ -1759,7 +1903,102 @@ bool gaussian_fit_1d::one_fit_voigt(int xdim, std::vector<double> *zz, double &x
     return true;
 };
 
+/**
+ * @brief voigt fitting for doesy type pseudo-2D fitting, where amplitude scale as exp(-D*t^2)
+ * and t is usually = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14, ...}
+ * @param xdim size of the spectrum
+ * @param zz  pseudo-2D spectrum zz[spectral_index][spatial_index]
+ * @param x0 peak position
+ * @param a peak amplitude at current spectral index
+ * @param sigmax 
+ * @param gammax 
+ * @param e fitting residual
+ * @param n loop number
+ * @param n2 loop number after big change. n and n2 decide when to try different initial values again.
+ * @return true 
+ * @return false 
+ */
+bool gaussian_fit_1d::multi_fit_voigt_doesy(const int xdim,std::vector<std::vector<double>> zz, double &x0, double &a0, double &d, double &sigmax, double &gammax, double &e, int n, int n2)
+{
+    double scale = 0.0;
+    for(int j=0;j<zz.size();j++)
+    {
+        for (int i = 0; i < zz[j].size(); i++)
+        {
+            if (zz[j][i] > scale)
+            {
+                scale = zz[j][i];
+            }
+        }
+    }
+    scale *= 0.1;
+    for(int j=0;j<zz.size();j++)
+    {
+        for (int i = 0; i < zz[j].size(); i++)
+        {
+            zz[j][i] /= scale;
+        }
+    }
+    a0 /= scale;
 
+    
+    if (n <= 3 || n2 <= 0)
+    {
+        double fwhh = 0.5346 * gammax * 2 + std::sqrt(0.2166 * 4 * gammax * gammax + sigmax * sigmax * 8 * 0.6931);
+        double min_e = 1e20;
+        double x0_in, sigmax_in, gammax_in, ee;
+        double a0_in;
+        double d_in;
+
+        double gammas[4] = {10, 1.0, 1e-5, 1e-10};
+        gammas[0] = fwhh / 4.0;
+
+        x0_in = x0;
+        a0_in = a0;
+        d_in = d;
+
+        for (int i = 0; i < 4; i++)
+        {
+            gammax_in = gammas[i];
+            sigmax_in = sqrt(((fwhh - 1.0692 * gammax_in) * (fwhh - 1.0692 * gammax_in) - 0.2166 * 4 * gammax_in * gammax_in) / (8 * 0.6931));
+            multi_fit_voigt_core_doesy(xdim, zz, x0_in, a0_in, d_in, sigmax_in, gammax_in, ee);
+            if (ee < min_e)
+            {
+                min_e = ee;
+                a0 = a0_in;
+                x0 = x0_in;
+                sigmax = sigmax_in;
+                gammax = gammax_in;
+                d = d_in;
+                e = ee;
+            }
+        }
+    }
+    else
+    {
+        multi_fit_voigt_core_doesy(xdim, zz, x0, a0, d, sigmax, gammax, e);
+    }
+
+    a0 *= scale; 
+
+    return true;
+};
+
+/**
+ * @brief voigt fitting for pseduo-2D
+ * 
+ * @param xdim size of the spectrum
+ * @param zz  pseudo-2D spectrum zz[spectral_index][spatial_index]
+ * @param x0 peak position
+ * @param a peak amplitude at current spectral index
+ * @param sigmax 
+ * @param gammax 
+ * @param e fitting residual
+ * @param n loop number
+ * @param n2 loop number after big change. n and n2 decide when to try different initial values again.
+ * @return true 
+ * @return false 
+ */
 bool gaussian_fit_1d::multi_fit_voigt(int xdim, std::vector<std::vector<double>> zz, double &x0, std::vector<double> &a, double &sigmax, double &gammax, double &e, int n, int n2)
 {
     double scale = 0.0;
@@ -1826,6 +2065,7 @@ bool gaussian_fit_1d::multi_fit_voigt(int xdim, std::vector<std::vector<double>>
     return true;
 };
 
+
 bool gaussian_fit_1d::one_fit_voigt_core(int xdim, std::vector<double> *zz, double &x0, double &a, double &sigmax, double &gammax, double &e)
 {
     ceres::Solver::Summary summary;
@@ -1845,6 +2085,12 @@ bool gaussian_fit_1d::one_fit_voigt_core(int xdim, std::vector<double> *zz, doub
     return true;
 };
 
+/**
+ * @brief true voigt fitting for 1D. This is the core function, which will be called by multi_fit_voigt
+ * see multi_fit_voigt for the meaning of parameters
+ * @return true 
+ * @return false 
+ */
 bool gaussian_fit_1d::multi_fit_voigt_core(int xdim, std::vector<std::vector<double>> &zz, double &x0, std::vector<double> &a, double &sigmax, double &gammax, double &e)
 {
     ceres::Solver::Summary summary;
@@ -1871,6 +2117,37 @@ bool gaussian_fit_1d::multi_fit_voigt_core(int xdim, std::vector<std::vector<dou
     return true;
 };
 
+/**
+ * @brief true voigt fitting for doesy type pseudo 2D. This is the core function, which will be called by multi_fit_voigt_doesy
+ * see multi_fit_voigt_doesy for the meaning of parameters
+ * @return true 
+ * @return false 
+ */
+bool gaussian_fit_1d::multi_fit_voigt_core_doesy(const int xdim,std::vector<std::vector<double>> &zz, double &x0, double &a, double &d,double &sigmax, double &gammax, double &e)
+{
+    ceres::Solver::Summary summary;
+    ceres::Problem problem;
+
+    double d_sqrt=sqrt(fabs(d));
+
+    for(int k=0;k<zz.size();k++)
+    {
+        mycostfunction_voigt1d_doesy *cost_function = new mycostfunction_voigt1d_doesy(k,xdim, zz[k].data());
+        cost_function->set_n_residuals(zz[k].size());
+        for (int m = 0; m < 5; m++)
+            cost_function->parameter_block_sizes()->push_back(1);
+        problem.AddResidualBlock(cost_function, NULL, &a, &x0, &sigmax, &gammax,&d_sqrt); // d_sqrt is used to make sure d is positive
+    }
+
+    ceres::Solve(options, &problem, &summary);
+    e = sqrt(summary.final_cost / zz[0].size());
+
+    sigmax = fabs(sigmax);
+    gammax = fabs(gammax);
+    d = d_sqrt*d_sqrt;
+
+    return true;
+};
 
 
 bool gaussian_fit_1d::gaussain_convolution(double a, double x, double sigmax, std::vector<double> *kernel, int &i0, int &i1, double scale)
@@ -2012,11 +2289,13 @@ spectrum_fit_1d::spectrum_fit_1d()
 };
 spectrum_fit_1d::~spectrum_fit_1d(){};
 
-bool spectrum_fit_1d::init_all_spectra(std::vector<std::string> fnames_,int n_stride)
+bool spectrum_fit_1d::init_all_spectra(std::vector<std::string> fnames_,int n_stride,bool b_negative_)
 {
+    b_negative = b_negative_;
+
     fnames = fnames_;
     int i = fnames.size() - 1;
-    if (spectrum_io_1d::read_spectrum(fnames[i]))
+    if (spectrum_io_1d::read_spectrum(fnames[i],b_negative))
     {
         stride_spectrum(n_stride);
         spects.push_back(spect);
@@ -2024,7 +2303,7 @@ bool spectrum_fit_1d::init_all_spectra(std::vector<std::string> fnames_,int n_st
 
     for (int i = fnames.size() - 2; i >= 0; i--)
     {
-        if (spectrum_io_1d::read_spectrum(fnames[i]))
+        if (spectrum_io_1d::read_spectrum(fnames[i],b_negative))
         {
             stride_spectrum(n_stride);
             step1*=n_stride; //only need to do this once. So we undo here.
@@ -2163,9 +2442,9 @@ bool spectrum_fit_1d::peak_fitting()
 
         if (part_p1.size() == 0)
             continue;
-        std::cout << "Fitting region " << j << " , from " << begin << " to " << stop << " has " << part_p1.size() << " peaks before fitting" << std::endl;
+        std::cout << "Working on fitting region " << j << " of "<< signa_boudaries.size() <<" ( from " << begin << " to " << stop << ", " << part_p1.size() << " peaks before fitting)." << std::endl;
         gaussian_fit_1d f1;
-        f1.set_up(peak_shape, rmax, to_near_cutoff, user_scale, noise_level);
+        f1.set_up(peak_shape, rmax, to_near_cutoff, user_scale, noise_level,b_negative);
         f1.gaussian_fit_init(part_spects, part_p1, part_sigmax, part_gammax, part_p_intensity_all_spectra, part_peak_index);
         f1.save_postion_informations(begin, stop, left_patch, right_patch, n);
         if (error_nround > 0)
@@ -2176,8 +2455,8 @@ bool spectrum_fit_1d::peak_fitting()
         {
             f1.run_peak_fitting(true);
         }
-        std::cout << "Total " << f1.x.size() << " peaks after fitting." << std::endl
-                  << std::endl;
+        std::cout << "Finished fitting region " << j << " of "<< signa_boudaries.size() <<" ( from " << begin << " to " << stop << ", " << f1.x.size() << " peaks after fitting)." << std::endl;
+
         if (f1.a.size() > 0)
         {
             fits.emplace_back(f1);
@@ -2605,7 +2884,13 @@ bool spectrum_fit_1d::assess_size()
     return b;
 }
 
-// below: peak reading
+/**
+ * @brief read in peaks
+ * 
+ * @param infname filename of peak list
+ * @return true 
+ * @return false 
+ */
 bool spectrum_fit_1d::peak_reading(std::string infname)
 {
     bool b_read;
@@ -2636,10 +2921,13 @@ bool spectrum_fit_1d::peak_reading(std::string infname)
     // set gamma if it is not readed in.
     gammax.resize(p1.size(), 1e-20);
 
-    // remove out of range peaks
+    /**
+     * @brief remove out of range peaks and negative peaks (only if b_negative is flase)
+     * 
+     */
     for (int i = p_intensity.size() - 1; i >= 0; i--)
     {
-        if (p1[i] < 1 || p1[i] > ndata - 2)
+        if ((p1[i] < 1 || p1[i] > ndata - 2) || (b_negative == false && p_intensity[i] < 0.0))
         {
             p1.erase(p1.begin() + i);
             p1_ppm.erase(p1_ppm.begin() + i);
@@ -2649,7 +2937,14 @@ bool spectrum_fit_1d::peak_reading(std::string infname)
             user_comments.erase(user_comments.begin() + i);
         }
     }
-    std::cout << "Remove out of bound peaks done." << std::endl;
+    if(b_negative==true)
+    {
+        std::cout << "Remove out of bound peaks done." << std::endl;
+    }
+    else
+    {
+        std::cout << "Remove out of bound peaks and negative peaks done." << std::endl;
+    }
 
     // fill p_intensity_all_spectra using spectra data if needed.
     for (int i = 0; i < p1.size(); i++)
