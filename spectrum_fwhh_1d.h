@@ -9,8 +9,8 @@
 class spectrum_fwhh_1d: public spectrum_io_1d
 {
 private:
-    std::vector<int> pos;
-    std::vector<float> wids;
+    std::vector<int> fwhh_1d_pos;
+    std::vector<float> fwhh_1d_wids;
    
 public:
 

@@ -249,7 +249,11 @@ bool spectrum_io::init(std::string infname, int noise_flag)
         }
         std::cout<<"Done reading"<<std::endl;
 
-        if(noise_flag==1) noise();    //estimate noise level 
+        if(noise_flag==1) 
+        {
+            // estimate_noise_level_mad();    //estimate noise level using MAD
+            estimate_noise_level(); //estimate noise level using region by region standard deviation
+        }
     }
     return b_read;
 }
@@ -1046,7 +1050,7 @@ bool spectrum_io::read_sparky(std::string infname)
 };
 
 
-void spectrum_io::noise()
+void spectrum_io::estimate_noise_level_mad()
 {
     std::cout<<"In noise estimation, xdim*ydim is "<<xdim*ydim<<std::endl;
 
@@ -1140,3 +1144,89 @@ void spectrum_io::noise()
 
 };
 
+void spectrum_io::estimate_noise_level()
+{
+    std::cout<<"In noise estimation, xdim*ydim is "<<xdim*ydim<<std::endl;
+
+    int n_segment_x = xdim / 32;
+    int n_segment_y = ydim / 32;
+
+    std::vector<float> variances; //variance of each segment
+    std::vector<float> maximal_values; //maximal value of each segment
+
+    /**
+     * loop through each segment, and calculate variance
+    */
+    for(int i=0;i<n_segment_x;i++)
+    {
+        for(int j=0;j<n_segment_y;j++)
+        {
+            std::vector<float> t;
+            for(int m=0;m<32;m++)
+            {
+                for(int n=0;n<32;n++)
+                {
+                    t.push_back(spect[(j*32+m)*xdim+i*32+n]);
+                }
+            }
+        
+            /**
+             * calculate variance of this segment. Substract the mean value of this segment first
+             * also calculate the max value of this segment
+             */
+            float max_of_t = 0.0f;
+            float mean_of_t = 0.0f;
+            for (int k = 0; k < t.size(); k++)
+            {
+                mean_of_t += t[k];
+                if (fabs(t[k]) > max_of_t)
+                {
+                    max_of_t = fabs(t[k]);
+                }
+            }
+            mean_of_t /= t.size();
+
+            float variance_of_t = 0.0f;
+            for (int k = 0; k < t.size(); k++)
+            {
+                variance_of_t += (t[k] - mean_of_t) * (t[k] - mean_of_t);
+            }
+            variance_of_t /= t.size();
+            variances.push_back(variance_of_t);
+            maximal_values.push_back(max_of_t);
+        }
+    }
+    
+
+    /**
+     * sort the variance, and get the median value
+     */
+    std::vector<float> variances_sorted = variances;
+    sort(variances_sorted.begin(), variances_sorted.end());
+    noise_level = sqrt(variances_sorted[variances_sorted.size() / 2]);
+    std::cout<<"Noise level is "<<noise_level<<" using variance estimation."<<std::endl;
+
+    /**
+     * loop through maximal_values, remove the ones that are larger than 10.0*noise_level
+     * remove the corresponding variance as well
+     */
+    for(int i=maximal_values.size()-1;i>=0;i--)
+    {
+        if(maximal_values[i]>10.0*noise_level)
+        {
+            maximal_values.erase(maximal_values.begin()+i);
+            variances.erase(variances.begin()+i);
+        }
+    }
+
+    /**
+     * sort the variance, and get the median value
+     */
+    variances_sorted = variances;
+    sort(variances_sorted.begin(), variances_sorted.end());
+    noise_level = sqrt(variances_sorted[variances_sorted.size() / 2]);
+
+    std::cout<<"Final noise level is estiamted to be "<<noise_level<<std::endl;
+    
+    return;
+}

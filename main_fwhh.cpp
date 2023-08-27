@@ -9,15 +9,11 @@
 
 #include "json/json.h"
 #include "commandline.h"
-#include "spectrum_fwhh_1d.h"
+#include "spectrum_fwhh.h"
 
 int main(int argc, char **argv)
 {
  
-    struct timeval time;
-    gettimeofday(&time,NULL);
-    double time_1= (double)time.tv_sec + (double)time.tv_usec * .000001;
-
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;
 
@@ -26,7 +22,7 @@ int main(int argc, char **argv)
     args3.push_back("print help message then quit");
 
     args.push_back("-f");
-    args2.push_back("arguments_fwhh_1d.txt");
+    args2.push_back("arguments_fwhh.txt");
     args3.push_back("Arguments file");
 
     args.push_back("-in");
@@ -44,9 +40,12 @@ int main(int argc, char **argv)
     cmdline.print();
     if (cmdline.query("-h") != "yes")
     {
-        spectrum_fwhh_1d fwhh;
-        fwhh.read_spectrum(cmdline.query("-in"));
-        std::cout<<"Estimated median peak width: "<<fwhh.get_median_peak_width()<<std::endl;
+        spectrum_fwhh fwhh;
+        fwhh.init(cmdline.query("-in"),1); // read spectrum and estimate noise level (defined in base class spectrum_io)
+        float median_width_direct, median_width_indirect;
+        fwhh.get_median_peak_width(median_width_direct, median_width_indirect);
+        std::cout<<"Estimated median peak width: "<<median_width_direct<<" along direct dimension and ";
+        std::cout<<median_width_indirect<<" along indirect dimension"<<std::endl;
         fwhh.print_result(cmdline.query("-out"));
     }
 

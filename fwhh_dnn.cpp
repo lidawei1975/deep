@@ -360,152 +360,6 @@ float fwhh_dnn_data[]={
 
 
 
-base1d::base1d() {};
-base1d::~base1d() {};
-
-bool base1d::mat_mul(std::vector<float> &in1, std::vector<float> &in2, std::vector<float> &out, int m, int n, int k)
-{
-    //in1 is m by n
-    //in2 in n by k
-    //out will be m by k
-    //matrix is saved row by row
-    if(in1.size()!=m*n || in2.size()!=n*k)
-    {
-        return false;
-    }
-
-    for(int m0=0;m0<m;m0++)
-    {
-        for(int k0=0;k0<k;k0++)
-        {
-            float t=0.0;
-            for(int n0=0;n0<n;n0++)
-            {
-                t+=in1[m0*n+n0]*in2[n0*k+k0];
-            }
-            out[m0*k+k0]=t;
-        }
-    }
-    return true;
-};
-
-bool base1d::print()
-{
-    for (int i = 0; i < kernel.size(); i++)
-    {
-        std::cout<< kernel[i]<<" ";
-    }
-    std::cout<<std::endl;
-    for (int i = 0; i < bias.size(); i++)
-    {
-        std::cout<< bias[i]<<" ";
-    }
-    std::cout<<std::endl;
-    return true;
-};
-
-
-
-dense::dense() {
-    a=linear;
-};
-dense::~dense() {};
-
-    void dense::set_size(int n, int k) 
-    {
-        ninput=n;
-        nfilter=k;
-    };
-
-bool dense::set_activation_function(enum activation_function a_)
-{
-    a=a_;
-    return true;
-}
-
-
-int dense::read(float *p)
-{
-    kernel.resize(ninput*nfilter); //3*8*6 
-    bias.resize(nfilter); //size is 6  
-    for (int i = 0; i < kernel.size(); i++)
-    {
-        kernel[i]=p[i];
-    }
-    for (int i = 0; i < bias.size(); i++)
-    {
-        bias[i]=p[i+kernel.size()];
-    } 
-    return kernel.size()+bias.size();
-}
-
-bool dense::predict(int nlen, std::vector<float> &input, std::vector<float> &output)
-{
-
-    output.clear();
-    output.resize(nlen*nfilter);
-
-
-    mat_mul(input,kernel,output,nlen,ninput,nfilter);
-
-    // std::cout<<"in dense::predict, out is"<<std::endl;
-    // for(int i=0;i<kernel.size();i++) std::cout<<kernel[i]<<" ";
-    // std::cout<<std::endl;
-
-
-    //apply bias
-    for(int i=0;i<nfilter;i++)
-    {
-        for(int j=0;j<nlen;j++)
-        {
-            output[j*nfilter+i]+=bias[i];
-        }
-    }
-
-    //relo activation
-    if(a==relo)
-    {
-        for(int j=0;j<nlen*nfilter;j++)
-        {
-            output[j]=std::max(output[j],0.0f);    
-        }
-    }
-    else if(a==softmax) //softmax
-    {
-        for(int i=0;i<nlen;i++)
-        {
-            float sum=0.0f;
-            for(int j=0;j<nfilter;j++)
-            {
-                float t=exp(output[i*nfilter+j]);
-                output[i*nfilter+j]=t;
-                sum+=t;
-            }
-            for(int j=0;j<nfilter;j++)
-            {
-                output[i*nfilter+j]/=sum;
-            }
-        }
-    }
-    else if(a==selu)
-    {
-        for(int j=0;j<nlen*nfilter;j++)
-        {
-            if(output[j]>0.0f)
-            {
-                output[j]=1.05070098f*output[j];
-            }
-            else
-            {
-                output[j]=1.05070098f*1.67326324f*(exp(output[j])-1.0f);
-            }
-        }
-    }
-    //do thing if it is linear activation
-
-    return true;
-};
-
 /*
   model = tf.keras.models.Sequential([
   tf.keras.layers.Dense(20, activation='selu'),
@@ -523,11 +377,11 @@ fwhh_estimator::fwhh_estimator() {
     d3.set_size(30, 20);
     d4.set_size(20, 10);
     d5.set_size(10, 1);
-    d1.set_activation_function(selu);
-    d2.set_activation_function(selu);
-    d3.set_activation_function(selu);
-    d4.set_activation_function(selu);
-    d5.set_activation_function(linear);
+    d1.set_act(activation_function::selu);
+    d2.set_act(activation_function::selu);
+    d3.set_act(activation_function::selu);
+    d4.set_act(activation_function::selu);
+    d5.set_act(activation_function::linear);
 
     int n=0;
     n+=d1.read(fwhh_dnn_data+n);

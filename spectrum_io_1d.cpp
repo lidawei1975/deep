@@ -84,7 +84,10 @@ bool spectrum_io_1d::direct_set_spectrum(std::vector<float> &spe_)
     begin1 = 1.0;
     step1 = 1.0; // arbitary
 
-    est_noise_level();
+    if (noise_level < 1e-20)
+    {
+        est_noise_level();
+    }
     return true;
 }
 
@@ -153,7 +156,10 @@ bool spectrum_io_1d::read_spectrum(std::string infname, bool b_negative)
     std::cout << "Spectrum size is " << ndata << std::endl;
     std::cout << "From " << begin1 << " to " << stop1 << " and step is " << step1 << std::endl;
 
-    est_noise_level();
+    if (noise_level < 1e-20)
+    {
+        est_noise_level();
+    }
 
     if(b_negative==false)
     {
@@ -435,9 +441,9 @@ bool spectrum_io_1d::read_spectrum_json_format1(Json::Value &root)
     return true;
 };
 
-
-bool spectrum_io_1d::est_noise_level_general()
+bool spectrum_io_1d::est_noise_level()
 {
+
     std::vector<double> variances;
     std::vector<double> sums;
     int n_segment = ndata / 32;
@@ -473,10 +479,11 @@ bool spectrum_io_1d::est_noise_level_general()
     nth_element(variances.begin(), variances.begin() + n, variances.end());
     noise_level = sqrt(variances[n]);
     std::cout << "Noise level is estiamted to be " << noise_level << ", using a geneal purpose method." << std::endl;
+
     return true;
 }
 
-bool spectrum_io_1d::est_noise_level()
+bool spectrum_io_1d::est_noise_level_mad()
 {
 
     int ndim = spect.size();
