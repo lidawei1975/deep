@@ -8,6 +8,7 @@ class CCommandline
     int error_flag;
 
     bool pharse_core(int argc, char ** argv);
+    bool is_key(std::string); // check if the input is a key such as "-in". 
 
   protected:
   public:

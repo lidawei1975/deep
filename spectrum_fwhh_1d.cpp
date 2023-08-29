@@ -56,8 +56,8 @@ float spectrum_fwhh_1d::get_median_peak_width()
     fwhh_1d::sortArr(peak_heights, ndx);
 
     
-    wids.clear();
-    pos.clear();
+    fwhh_1d_wids.clear();
+    fwhh_1d_pos.clear();
     for (int i = ndx.size() - 1; i >= std::max(0, int(ndx.size()) - 50); i--) // only look at top 50 peaks
     {
         int peak_loc = peak_locations[ndx[i]];
@@ -97,11 +97,11 @@ float spectrum_fwhh_1d::get_median_peak_width()
 
         stride=stride/2;
         wid*=stride;
-        wids.push_back(wid);
-        pos.push_back(peak_loc);
+        fwhh_1d_wids.push_back(wid);
+        fwhh_1d_pos.push_back(peak_loc);
     }
-    //get median of wids
-    std::vector<float> wids_sorted = wids;
+    //get median of fwhh_1d_wids
+    std::vector<float> wids_sorted = fwhh_1d_wids;
     std::sort(wids_sorted.begin(), wids_sorted.end());
     float median_wid = wids_sorted[wids_sorted.size() / 2];
 
@@ -111,9 +111,9 @@ float spectrum_fwhh_1d::get_median_peak_width()
 void spectrum_fwhh_1d::print_result(std::string fname)
 {
     std::ofstream out(fname);
-    for(int i=0;i<pos.size();i++)
+    for(int i=0;i<fwhh_1d_pos.size();i++)
     {
-        out<<pos[i]<<" "<<wids[i]<<std::endl;
+        out<<fwhh_1d_pos[i]<<" "<<fwhh_1d_wids[i]<<std::endl;
     }
     out.close();
 };

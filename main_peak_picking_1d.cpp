@@ -85,7 +85,7 @@ int main(int argc, char **argv)
         class spectrum_pick_1d x;
         x.init(user,user2,noise_level);
         x.init_mod(model_selection);
-        if(x.read_spectrum(infname)) //read
+        if(x.read_spectrum(infname,b_negative)) //read
         {
             x.stride_spectrum(n_stride);
             x.work2(b_negative); //picking 

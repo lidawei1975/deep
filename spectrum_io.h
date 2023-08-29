@@ -40,18 +40,25 @@ protected:
     //sepctrum range
     double begin1,step1,stop1;  //direct dimension
     double begin2,step2,stop2;  //indirect dimension
-    float * spect;  //freq data
+    /**
+     * @brief spectrum data, after zero filling and fft
+     * Row major, xdim*ydim size, access as spect[j*xdim+i]
+    */
+    float * spect;  
     float noise_level;  //spectrum noise level, 1.4826*medium(abs(spect))
     std::vector<double> noise_level_columns; //noise level of each column
     std::vector<double> noise_level_rows; //noise level of each row
+
+    double SW1,SW2,frq1,frq2,ref1,ref2; //ppm information
+    double SW3,frq3,ref3; //ppm information in case of 3D
     
-    void noise();   //estimate noise level
+    void estimate_noise_level_mad();   //estimate noise level, using MAD method 1.4826*medium(abs(spect))
+    void estimate_noise_level(); //estimate noise level, using region by region standard deviation
 
 private:
     bool b_pipe;
     float header[512];  //nmrpipe format 
-    double SW1,SW2,frq1,frq2,ref1,ref2; //ppm information
-    double SW3,frq3,ref3; //ppm information in case of 3D
+
     
 
     //save original spectrum after we do invers , zero filling and fft

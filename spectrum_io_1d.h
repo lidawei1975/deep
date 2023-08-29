@@ -42,11 +42,12 @@ protected:
 public:
     spectrum_io_1d();
     ~spectrum_io_1d();
-    bool est_noise_level(); //for phased, baseline corrected spectrum only
-    bool est_noise_level_general(); //general purpose noise estimation
+    bool est_noise_level_mad(); //for phased, baseline corrected spectrum only
+
+    bool est_noise_level(); //general purpose noise estimation
  
     bool init(double,double,double);
-    bool read_spectrum(std::string);
+    bool read_spectrum(std::string,bool b_negative=true);
     bool direct_set_spectrum(std::vector<float> &);
     bool stride_spectrum(int);
     bool release_spectrum(); //to save memory after peaks picking.

@@ -10,6 +10,7 @@
 #include "commandline.h"
 #include "spectrum_fit.h"
 
+int shared_data::n_verbose=1;
 
 int main(int argc, char **argv)
 {
@@ -22,6 +23,10 @@ int main(int argc, char **argv)
     args.push_back("-h");
     args2.push_back("no");
     args3.push_back("print help message then quit");
+
+    args.push_back("-v");
+    args2.push_back("1");
+    args3.push_back("verbose level (0: minimal, 1:normal)");
     
     args.push_back("-f");
     args2.push_back("none");
@@ -119,6 +124,8 @@ int main(int argc, char **argv)
     wx=atof(cmdline.query("-wx").c_str());
     wy=atof(cmdline.query("-wy").c_str());
     too_near_cutoff=0.1;
+
+    shared_data::n_verbose=atoi(cmdline.query("-v").c_str());
 
    
     int i_method=2;

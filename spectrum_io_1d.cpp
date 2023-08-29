@@ -84,7 +84,10 @@ bool spectrum_io_1d::direct_set_spectrum(std::vector<float> &spe_)
     begin1 = 1.0;
     step1 = 1.0; // arbitary
 
-    est_noise_level();
+    if (noise_level < 1e-20)
+    {
+        est_noise_level();
+    }
     return true;
 }
 
@@ -110,7 +113,15 @@ bool spectrum_io_1d::save_experimental_spectrum(std::string outfname)
     return true;
 }
 
-bool spectrum_io_1d::read_spectrum(std::string infname)
+/**
+ * @brief read 1D spectrum
+ * 
+ * @param infname input file name
+ * @param b_negative true: allow negative peaks, false: only positive peaks. Default is true
+ * @return true 
+ */
+
+bool spectrum_io_1d::read_spectrum(std::string infname, bool b_negative)
 {
     bool b_read = 0;
 
@@ -145,13 +156,19 @@ bool spectrum_io_1d::read_spectrum(std::string infname)
     std::cout << "Spectrum size is " << ndata << std::endl;
     std::cout << "From " << begin1 << " to " << stop1 << " and step is " << step1 << std::endl;
 
-    est_noise_level();
+    if (noise_level < 1e-20)
+    {
+        est_noise_level();
+    }
 
-    // std::cout<<"Set negative data points to zero."<<std::endl;
-    // for(int i=0;i<spe.size();i++)
-    // {
-    //     spe[i]=std::max(spe[i],0.0f);
-    // }
+    if(b_negative==false)
+    {
+        std::cout<<"Set negative data points to zero."<<std::endl;
+        for(int i=0;i<spect.size();i++)
+        {
+            spect[i]=std::max(spect[i],0.0f);
+        }
+    }
 
     return b_read;
 }
@@ -424,9 +441,9 @@ bool spectrum_io_1d::read_spectrum_json_format1(Json::Value &root)
     return true;
 };
 
-
-bool spectrum_io_1d::est_noise_level_general()
+bool spectrum_io_1d::est_noise_level()
 {
+
     std::vector<double> variances;
     std::vector<double> sums;
     int n_segment = ndata / 32;
@@ -462,10 +479,11 @@ bool spectrum_io_1d::est_noise_level_general()
     nth_element(variances.begin(), variances.begin() + n, variances.end());
     noise_level = sqrt(variances[n]);
     std::cout << "Noise level is estiamted to be " << noise_level << ", using a geneal purpose method." << std::endl;
+
     return true;
 }
 
-bool spectrum_io_1d::est_noise_level()
+bool spectrum_io_1d::est_noise_level_mad()
 {
 
     int ndim = spect.size();

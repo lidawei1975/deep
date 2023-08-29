@@ -26,7 +26,10 @@ enum fit_type
 
 
 
-// for 1D voigt fitting, analytical derivative
+/**
+ * @brief for 1D voigt fitting, analytical derivative
+ * fit multiple peaks simultaneously
+ */
 class mycostfunction_nvoigt1d : public ceres::CostFunction
 {
 
@@ -42,12 +45,14 @@ public:
   ~mycostfunction_nvoigt1d();
   mycostfunction_nvoigt1d(int, int, double *);
   bool Evaluate(double const *const *, double *, double **) const;
-  // bool get_residual(const double a, const double x0, const double sigma, const double gamma, double *residual);
   inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
   inline void set_n_residuals(int n) { set_num_residuals(n); };
 };
 
-// for 1D voigt fitting, analytical derivative
+/**
+ * @brief for 1D voigt fitting, analytical derivative
+ * fit one peak
+ */
 class mycostfunction_voigt1d : public ceres::CostFunction
 {
 
@@ -62,7 +67,30 @@ public:
   ~mycostfunction_voigt1d();
   mycostfunction_voigt1d(int, double *);
   bool Evaluate(double const *const *, double *, double **) const;
-  bool get_residual(const double a, const double x0, const double sigma, const double gamma, double *residual);
+  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
+  inline void set_n_residuals(int n) { set_num_residuals(n); };
+};
+
+/**
+ * @brief for pseudo 2D voigt fitting, analytical derivative
+ * Peak amplitude is defined as A = A0*exp(-t*t*D) where A0 and D are fitting parameters
+ * while t=[0,1,2,3,...,n-1] is the time delay
+ */
+class mycostfunction_voigt1d_doesy : public ceres::CostFunction
+{
+
+private:
+  int t;           // time delay. t=0,1,2,3,...,n-1
+  int n_datapoint; // size of z(x)
+  double *z;       // x -> coor, z-> spectra data
+
+  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
+  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
+
+public:
+  ~mycostfunction_voigt1d_doesy();
+  mycostfunction_voigt1d_doesy(int, int, double *);
+  bool Evaluate(double const *const *, double *, double **) const;
   inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
   inline void set_n_residuals(int n) { set_num_residuals(n); };
 };
@@ -99,10 +127,18 @@ public:
   inline void set_n_residuals(int n) { set_num_residuals(n); };
 };
 
-class gaussian_fit_1d
+struct shared_data
+{
+  static int n_verbose; //0: minimal output, 1: normal output
+  static bool b_doesy;  // true: doesy fitting, false: normal fitting
+};
+
+class gaussian_fit_1d: public shared_data
 {
 private:
   int n_patch;
+
+  bool b_negative;
 
   double spectrum_scale;
   int rmax;                               // max round in fitting
@@ -127,6 +163,9 @@ private:
   bool multi_fit_lorentz(int xdim, std::vector<std::vector<double>> &zz, double &x0, std::vector<double>  &a, double &gammax, double &e);
   bool multi_fit_voigt(int xdim, std::vector<std::vector<double>> zz, double &x0, std::vector<double> &a, double &sigmax, double &gammax, double &e, int n, int n2);
   bool multi_fit_voigt_core(int xdim, std::vector<std::vector<double>> &zz, double &x0, std::vector<double> &a, double &sigmax, double &gammax, double &e);
+
+  bool multi_fit_voigt_doesy(const int xdim,std::vector<std::vector<double>> zz, double &x0, double &a, double &d, double &sigmax, double &gammax, double &e, int n, int n2);
+  bool multi_fit_voigt_core_doesy(const int xdim,std::vector<std::vector<double>> &zz, double &x0, double &a, double &d, double &sigmax, double &gammax, double &e);
 
   bool gaussain_convolution(double a, double x, double sigmax, std::vector<double> *kernel, int &i0, int &i1, double scale);
   bool gaussain_convolution_with_limit(int ndx, double a, double x, double sigmax, std::vector<double> *kernel, int &i0, int &i1, double scale);
@@ -156,6 +195,7 @@ public:
   std::vector<std::vector<double>> num_sum;         // numerical integral of each peak num_sum[peak_index][spectra_index]
   std::vector<double> surface;                      // 1D spectrum
   std::vector<std::vector<double>> surfaces;        // all 1D spectra
+  std::vector<double> diffusion_coefficient;        // diffusion coefficient. used in doesy fitting only
   int xdim;                                         // size of spectrum part
   std::vector<std::array<int, 2>> valid_fit_region; // limit fitting region of overlappin gpeaks.
   std::vector<int> x_range_left, x_range_right;
@@ -179,16 +219,18 @@ public:
   bool run_peak_fitting(bool flag_first = true);
   bool run_with_error_estimation(int zf1, int n_error_round);
   int get_nround();
-  void set_up(fit_type, int, double, double, double);
+  void set_up(fit_type, int, double, double, double,bool);
 };
 
-class spectrum_fit_1d : public spectrum_io_1d
+class spectrum_fit_1d : public spectrum_io_1d, public shared_data
 {
 private:
 
   std::vector<std::string> fnames; // file names of all input spectra
   std::vector<std::vector<float>> spects; // all input spectra
   int nspect; // number of input spectra
+
+  bool b_negative;
 
   int n_patch;
   int zf, error_nround;
@@ -228,11 +270,11 @@ public:
 
   spectrum_fit_1d();
   ~spectrum_fit_1d();
-  bool init_all_spectra(std::vector<std::string> finames,int);
+  bool init_all_spectra(std::vector<std::string> finames,int,bool);
   bool init_fit(int, int, double);
   bool init_error(int, int);
   bool peak_fitting(void);
   bool output(std::string outfname,bool b_out_json,bool b_individual_peaks, bool b_recon,std::string);
-  bool peak_reading(std::string outfname);
+  bool peak_reading(std::string outfname); //default is allow negative peaks.
   bool direct_set_peaks(std::vector<double> p1_, std::vector<double> p1_ppm, std::vector<double> p_intensity_, std::vector<double> sigmax_, std::vector<double> gammax_);
 };

@@ -2,10 +2,9 @@ cmake_minimum_required(VERSION 2.8)
 
 project(deep_picker)
 
-set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG")
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-
 
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
@@ -38,11 +37,13 @@ target_link_libraries(deep_picker_1d libcerf)
 
 
 # 1d phase correction
-add_executable(phase_1d main_phasing_1d_v2.cpp phasing_dnn.cpp spectrum_io_1d.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+add_executable(phase_1d main_phasing_1d.cpp dnn_base.cpp spectrum_fwhh_1d.cpp fwhh_dnn.cpp dnn_base.cpp spectrum_io_1d.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
 
 # 1d fwhh estimation
-add_executable(fwhh_1d main_fwhh_1d.cpp spectrum_fwhh_1d.cpp spectrum_io_1d.cpp fwhh_dnn.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+add_executable(fwhh_1d main_fwhh_1d.cpp spectrum_fwhh_1d.cpp spectrum_io_1d.cpp fwhh_dnn.cpp dnn_base.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
 
+# 2d fwhh estimation
+add_executable(fwhh_2d main_fwhh.cpp spectrum_fwhh.cpp spectrum_io.cpp fwhh_dnn.cpp dnn_base.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
 
 # 3d peak picking
 add_executable(deep_picker_3d main_peak_picking_3d.cpp spectrum_pick_3d.cpp spectrum_io_3d.cpp spectrum_io.cpp spectrum_pick.cpp spectrum_io_1d.cpp spectrum_pick_1d.cpp $<TARGET_OBJECTS:dnn> $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
