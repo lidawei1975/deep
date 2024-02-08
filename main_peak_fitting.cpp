@@ -10,12 +10,13 @@
 #include "commandline.h"
 #include "spectrum_fit.h"
 
-int shared_data::n_verbose=1;
+int shared_data_2d::n_verbose=1;
+
+#include "DeepConfig.h"
 
 int main(int argc, char **argv)
-{
-    
-    std::cout<<"Last update: Oct. 2021"<<std::endl;
+{ 
+    std::cout<<"DEEP Picker package Version "<<deep_picker_VERSION_MAJOR<<"."<<deep_picker_VERSION_MINOR<<std::endl;
 
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;
@@ -125,7 +126,7 @@ int main(int argc, char **argv)
     wy=atof(cmdline.query("-wy").c_str());
     too_near_cutoff=0.1;
 
-    shared_data::n_verbose=atoi(cmdline.query("-v").c_str());
+    shared_data_2d::n_verbose=atoi(cmdline.query("-v").c_str());
 
    
     int i_method=2;
@@ -160,7 +161,7 @@ int main(int argc, char **argv)
             file_names.push_back(p);
         }
         
-        x.initflags_fit(maxround,removal_cutoff,too_near_cutoff,i_method,0);
+        x.initflags_fit(maxround,removal_cutoff,too_near_cutoff,i_method);
         x.set_scale(user,user2);
 
         if (x.init_all_spectra(file_names))
@@ -182,7 +183,6 @@ int main(int argc, char **argv)
             }
             x.print_peaks(outfname,cmdline.query("-recon")=="yes",cmdline.query("-folder"));
             std::cout<<"Finish print peaks."<<std::endl;
-            // x.clear_memory();
         }
         else
         {

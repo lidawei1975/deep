@@ -22,6 +22,9 @@
 #include "dnn_picker.h"
 #include "spectrum_pick.h"
 
+/**
+ * Pseudo-voigt function implementation
+*/
 extern "C"  
 {
     double voigt(double x, double sigma, double gamma);
@@ -33,15 +36,37 @@ spectrum_pick::spectrum_pick()
     infname="input.ft2";
     user_scale=5.5;  //used defined noise level scale factor
     user_scale2=3.0; 
-    model_selection=1; //default peak width 6-20 (model 1) or 4-12 (model 2)
+    //default peak width 6-20 (model 1) or 4-12 (model 2)
+    model_selection=2; 
+
+    interpolation_step_direct = 1.0;
+    interpolation_step_indirect = 1.0;
 };
 
 spectrum_pick::~spectrum_pick()
 {
 };
 
+/**
+ * Voigt function
+ * @param x x dimension coordinate
+ * @param sigmax Gaussian width in x dimension
+ * @param gammax Lorentzian width in x dimension
+ * @param y y dimension coordinate
+ * @param sigmay Gaussian width in y dimension
+ * @param gammay Lorentzian width in y dimension
+ * @param a peak intensity
+ * 
+ * Below are result:
+ * @param kernel the result of convolution
+ * @param i0,i1,j0,j1 the boundary of convolution kernel in the origianl spectrum
+ * 
+ * @return true
+ * 
+*/
+
 bool spectrum_pick::voigt_convolution(double a, double x, double y, double sigmax, double sigmay, double gammax, double gammay,
-std::vector<double> &kernel,int &i0,int &i1, int &j0, int &j1)
+std::vector<double> &kernel,int &i0,int &i1, int &j0, int &j1) const
 {
     float wx=(1.0692*gammax+sqrt(0.8664*gammax*gammax+5.5452*sigmax*sigmax))*1.5f;
     float wy=(1.0692*gammay+sqrt(0.8664*gammay*gammay+5.5452*sigmay*sigmay))*1.5f;
@@ -119,85 +144,190 @@ bool spectrum_pick::simple_peak_picking(bool b_negative)
     p_confidencex.resize(p1.size(),1.0);
     p_confidencey.resize(p1.size(),1.0);
 
-
+    /**
+     * defined in base class spectrum_io
+     * Get ppm from point, using header information
+    */
     get_ppm_from_point();
 
     return true;
 }
 
-bool spectrum_pick::ann_peak_picking(int flag,int expand, int flag_t1_noise, bool b_negative)  //default flag is 0, default expand is 0, default b_negative=false
+/**
+ * @brief adjust ppp of spectrum to a given value, using cubic spline interpolation
+ * This function will change member variable spect,step1,xdim,step2,ydim
+ * begin1,stop1,begin2,stop2 will not be changed
+ * At this time, doesn't change imaginary data
+ */
+bool spectrum_pick::adjust_ppp_of_spectrum(double target_ppp)
+{
+    /**
+     * First, get fwhh of spectrum
+    */
+    float ppp_direct,ppp_indirect;
+    get_median_peak_width(ppp_direct,ppp_indirect); //defined in base class spectrum_fwhh
+
+    /**
+     * Second, get the step size of interpolation.
+     * Because the spect is saved in row major, access as spect[j*xdim+i]
+     * We will do along the direct dimension (x) first to be more efficient
+    */
+    double current_interpolation_step_direct=ppp_direct/target_ppp;
+    std::cout<<"Interpolation step size is "<<current_interpolation_step_direct<<" in direct dimension."<<std::endl;
+
+    /**
+     * Now we need to interpolate the spectrum
+     * xdim_new is the new size of the spectrum along direct (x) dimension
+     */
+    int xdim_new = int(std::round(xdim / current_interpolation_step_direct));
+
+    /**
+     * Intermediate spectrum after interpolation along direct dimension
+     * Also raw major, access as spect_intermediate[j*xdim_new+i]
+    */
+    std::vector<float> spect_intermediate; 
+
+    for(int i=0;i<ydim;i++)
+    {
+        /**
+         * Define a cubic spline interpolation object for this row
+         * WE need to convert the pointer to a vector
+        */
+        std::vector<float> row_data(spect+i*xdim,spect+(i+1)*xdim);
+        cublic_spline cs;
+        cs.calculate_coefficients(row_data); //defined in cubic_spline.h
+
+        /**
+         * Now we can interpolate the spectrum
+        */
+        for (int k = 0; k < xdim_new; k++)
+        {
+            spect_intermediate.push_back(cs.calculate_value(k * current_interpolation_step_direct));
+        }
+    }
+
+    /**
+     * Now we need to interpolate the spectrum along indirect dimension (y)
+     * y_dim_new is the new size of the spectrum along indirect (y) dimension
+     */
+    double current_interpolation_step_indirect=ppp_indirect/target_ppp;
+    std::cout<<"Interpolation step size is "<<current_interpolation_step_indirect<<" in indirect dimension."<<std::endl;
+    int ydim_new = int(std::round(ydim / current_interpolation_step_indirect));
+
+    /**
+     * delete spect and re-allocate memory
+    */
+    delete[] spect;
+    spect=new float[xdim_new*ydim_new];
+
+
+
+    for(int i=0;i<xdim_new;i++)
+    {
+        /**
+         * Define a cubic spline interpolation object for this column
+         * WE need to convert the pointer to a vector
+        */
+        std::vector<float> col_data;
+        for(int j=0;j<ydim;j++)
+        {
+            col_data.push_back(spect_intermediate[j*xdim_new+i]);
+        }
+        cublic_spline cs;
+        cs.calculate_coefficients(col_data); //defined in cubic_spline.h
+
+        /**
+         * Now we can interpolate the spectrum
+        */
+        for (int k = 0; k < ydim_new; k++)
+        {
+            spect[k*xdim_new+i]=cs.calculate_value(k * current_interpolation_step_indirect);
+        }
+    }
+
+    /**
+     * We have upated spect. Now update xdim,ydim,step1,step2
+     * unit of step1(step2) is ppm, not points
+    */
+    xdim=xdim_new;
+    ydim=ydim_new;
+    step1=current_interpolation_step_direct*step1;
+    step2=current_interpolation_step_indirect*step2;
+
+    /**
+     * re-estimate fwhh of spectrum and print out the result
+    */
+    get_median_peak_width(ppp_direct,ppp_indirect); //defined in base class spectrum_fwhh
+    std::cout<<"After interpolation, median peak width is "<<ppp_direct<<" in direct dimension, "<<ppp_indirect<<" in indirect dimension."<<std::endl;
+    /**
+     * print spectrum size and new step1,step2 to inform user
+    */
+    std::cout<<"After interpolation, spectrum size is "<<xdim<<" "<<ydim<<std::endl;
+    std::cout<<"After interpolation, step1,step2 is "<<step1<<" "<<step2<<std::endl;
+
+    /**
+     * Keep track of total interpolation step size
+    */
+    interpolation_step_direct *= current_interpolation_step_direct;
+    interpolation_step_indirect *= current_interpolation_step_indirect;
+
+    return true;
+}
+
+
+/**
+ * The main working function for peak picking
+ * flag: 0: run special case using line angle, 1: not run. 2: inertia based method
+ * flag_t1_noise: 0: not run, 1: run (column by column noise estimation)
+ * b_negative: true: also pick negative peaks (false: not pick negative peaks
+*/
+bool spectrum_pick::ann_peak_picking(int flag, int flag_t1_noise, bool b_negative)  
 {
     std::vector<int> p_type; //no used at this time
 
     class peak2d p(flag); //flag==0:  run special case, 1: not run. 2: inertia based method
     p.init_ann(model_selection); //read in ann parameters. 1: protein para set, 2: meta para set.
-    class peak2d pp(flag); //flag==0:  run special case, 1: not run. 2: inertia based method
-    pp.init_ann(model_selection); //read in ann parameters. 1: protein para set, 2: meta para set.
-   
+    
 
     std::vector<float> sp;
-    if(expand==1) //need revision to address b_negative mode!!!!
+
+    sp.assign(spect, spect + xdim * ydim);
+    for (int i = 0; i < sp.size(); i++)
     {
-        //spect[j * xdim + i]  i: xdim, j: ydim; row by row format
-        std::vector<double> final_data;
-        ldw_math_spectrum_2d::spline_expand(xdim,ydim,spect,final_data);
-        //At this time, final data is (2*xdim-1)*(2*ydim-1), column by column format
-
-        sp.resize(final_data.size(),0.0f);
-        for(int m=0;m<final_data.size();m++)
-        {
-            sp[m]=final_data[m];
-        }
-
-        p.init_spectrum(xdim*2-1,ydim*2-1,noise_level,user_scale,user_scale2,sp,0);
-        p.predict();
-        //get p1,p2,p_intensity,sigma,gamma from ANN here
-        p.extract_result(p1,p2,p_intensity,sigmax,sigmay,gammax,gammay,p_type,p_confidencex,p_confidencey);
-        for(int m=0;m<p1.size();m++)
-        {
-            p1[m]*=0.5;
-            p2[m]*=0.5;   
-            sigmax[m]*=0.5;
-            sigmay[m]*=0.5;
-            gammax[m]*=0.5;
-            gammay[m]*=0.5;
-        }
+        if (sp[i] < 0.0)
+            sp[i] = 0.0;
     }
-    else
+    p.init_spectrum(xdim, ydim, noise_level, user_scale, user_scale2, sp, 1);
+    p.predict();
+    // get p1,p2,p_intensity,sigma,gamma from ANN here
+
+    p.extract_result(p1, p2, p_intensity, sigmax, sigmay, gammax, gammay, p_type, p_confidencex, p_confidencey);
+
+    /**
+     * if b_negative is true, run the same thing for negative peaks by changing the sign of the spectrum first.
+     * And change the sign of the intensity to negative at the end.
+    */
+    if (b_negative == true)
     {
-        sp.assign(spect,spect+xdim*ydim);
-        for(int i=0;i<sp.size();i++)
+        sp.clear();
+        sp.assign(spect, spect + xdim * ydim);
+        for (int i = 0; i < sp.size(); i++)
         {
-            if(sp[i]<0.0)
-                sp[i]=0.0;
+            if (sp[i] < 0.0)
+                sp[i] = -sp[i];
+            else
+                sp[i] = 0.0;
         }
-        p.init_spectrum(xdim,ydim,noise_level,user_scale,user_scale2,sp,1);
-        p.predict();
-        //get p1,p2,p_intensity,sigma,gamma from ANN here
-
-        p.extract_result(p1,p2,p_intensity,sigmax,sigmay,gammax,gammay,p_type,p_confidencex,p_confidencey);
-
-        if(b_negative==true)
+        class peak2d pp(flag); //flag==0:  run special case, 1: not run. 2: inertia based method
+        pp.init_ann(model_selection); //read in ann parameters. 1: protein para set, 2: meta para set.
+        pp.init_spectrum(xdim, ydim, noise_level, user_scale, user_scale2, sp, 1);
+        pp.predict();
+        // get p1,p2,p_intensity,sigma,gamma from ANN here
+        int n = p_intensity.size();
+        pp.extract_result(p1, p2, p_intensity, sigmax, sigmay, gammax, gammay, p_type, p_confidencex, p_confidencey);
+        for (int m = n; m < p_intensity.size(); m++)
         {
-           
-            sp.clear();
-            sp.assign(spect,spect+xdim*ydim);
-            for(int i=0;i<sp.size();i++)
-            {
-                if(sp[i]<0.0)
-                    sp[i]=-sp[i];
-                else
-                    sp[i]=0.0;
-            }
-            pp.init_spectrum(xdim,ydim,noise_level,user_scale,user_scale2,sp,1);
-            pp.predict();
-            //get p1,p2,p_intensity,sigma,gamma from ANN here
-            int n=p_intensity.size();
-            pp.extract_result(p1,p2,p_intensity,sigmax,sigmay,gammax,gammay,p_type,p_confidencex,p_confidencey);
-            for(int m=n;m<p_intensity.size();m++)
-            {
-                p_intensity[m]=-p_intensity[m];    
-            }
+            p_intensity[m] = -p_intensity[m];
         }
     }
 
@@ -284,79 +414,6 @@ bool spectrum_pick::ann_peak_picking(int flag,int expand, int flag_t1_noise, boo
     return true;
 };
 
-bool spectrum_pick::clear_memory()
-{
-    if(spect!=NULL)
-    {
-        delete [] spect;
-    }
-    return true;
-}
-
-bool spectrum_pick::linear_regression()
-{
-    std::vector<int> peak_map(xdim*ydim,-1);
-   
-    int npeak=p1.size();
-    for(int i=0;i<p1.size();i++)
-    {
-        int xx=(int)(p1.at(i)+0.5);
-        int yy=(int)(p2.at(i)+0.5);
-        peak_map[xx*ydim+yy]=i;
-    }
-
-    Eigen::MatrixXf A = Eigen::MatrixXf::Zero(npeak,npeak);
-    Eigen::VectorXf b = Eigen::VectorXf::Zero(npeak);
-
-    int i0,i1,j0,j1;
-    std::vector<double> analytical_spectra;
-    for (unsigned int i = 0; i < p1.size(); i++)
-    {
-        voigt_convolution(p_intensity[i], p1[i], p2[i], sigmax[i], sigmay[i], gammax[i], gammay[i], analytical_spectra, i0, i1, j0, j1);
-        for (int ii = i0; ii < i1; ii++)
-        {
-            for (int jj = j0; jj < j1; jj++)
-            {
-                if(peak_map[ii*ydim+jj]>=0)
-                {
-                    A(i,peak_map[ii*ydim+jj])=analytical_spectra[(ii - i0) * (j1 - j0) + jj - j0];
-                }
-            }
-        }
-    }
-
-    for(int i=0;i<xdim;i++)
-    {
-        for(int j=0;j<ydim;j++)
-        {
-            if(peak_map[i*ydim+j]>=0)
-            {
-                b(peak_map[i*ydim+j])=spect[i+j*xdim];
-            }   
-        }
-    }
-
-    Eigen::VectorXf c=A.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(b);
-
-    for(int i=0;i<npeak;i++)
-    {
-        std::cout<<i<<" "<<p1[i]<<" "<<p2[i]<<" "<<c(i)<<"  "<<p_intensity[i]<<" "<<p_intensity[i]*c(i)<<std::endl;
-        if(c(i)<0)
-        {
-            p_intensity[i]=0.0;    
-        }
-        else
-        {
-            p_intensity[i]*=c(i);
-        }
-    }
-
-    
-
-
-    return true;
-}
-
 bool spectrum_pick::print_peaks_picking(std::string outfname)
 {
     if (user_comments.size() == 0) //from picking, not reading
@@ -382,6 +439,18 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
     std::string slist(".list");
     std::string sjson(".json");
 
+    /**
+     * Get peak positional (pixel) in original spectrum
+     * to be printed in all the output files
+    */
+    std::vector<double> p1_original_spectrum,p2_original_spectrum;
+    for(int i=0;i<p1.size();i++)
+    {
+        p1_original_spectrum.push_back(p1[i]*interpolation_step_direct);
+        p2_original_spectrum.push_back(p2[i]*interpolation_step_indirect);
+    }
+
+
     for(int m=0;m<file_names.size();m++)
     {
         if(std::equal(stab.rbegin(), stab.rend(), file_names[m].rbegin()))
@@ -398,8 +467,13 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
                 double s1,s2;
                 s1=1.0692*gammax[i]+sqrt(0.8664*gammax[i]*gammax[i]+5.5452*sigmax[i]*sigmax[i]);
                 s2=1.0692*gammay[i]+sqrt(0.8664*gammay[i]*gammay[i]+5.5452*sigmay[i]*sigmay[i]);
-                fprintf(fp,"%5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %s %4.2f <--\n",ii+1,p1[i]+1,p2[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
-                            int(p1[i]-3),int(p1[i]+3),int(p2[i]-3),int(p2[i]+3),p_intensity[i],user_comments[i].c_str(),std::min(p_confidencex[i],p_confidencey[i]));        
+                /**
+                 * We need to scale s1 and s2 back to be consistent with original spectrum (before interpolcation)
+                */
+                s1 *= interpolation_step_direct;
+                s2 *= interpolation_step_indirect;
+                fprintf(fp,"%5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %s %4.2f <--\n",ii+1,p1_original_spectrum[i]+1,p2_original_spectrum[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
+                            int(p1_original_spectrum[i]-3),int(p1_original_spectrum[i]+3),int(p2_original_spectrum[i]-3),int(p2_original_spectrum[i]+3),p_intensity[i],user_comments[i].c_str(),std::min(p_confidencex[i],p_confidencey[i]));        
             }
             fclose(fp);
         }

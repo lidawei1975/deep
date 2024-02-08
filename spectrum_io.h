@@ -3,19 +3,8 @@
 #include <deque>
 #include <string>
 
-#include "spline.h"
-
-
-#ifndef SPECTRUM_TYPE
-#define SPECTRUM_TYPE
-enum spectrum_type 
-{
-    null_spectrum,
-    hsqc_spectrum,
-    tocsy_spectrum
-};
-#endif
-
+#ifndef SPECT_IO_H
+#define SPECT_IO_H
 
 namespace ldw_math_spectrum_2d
 {
@@ -32,7 +21,6 @@ public:
     double begin3,stop3,step3;  //3rd (indirect) dimension, in case of 3D
 
 protected:
-    enum spectrum_type spectrum_type; //0: unknonw, 1: hsqc, 2:tocsy
     //spectrum dimension
     int xdim,ydim;
     //sepctrum range
@@ -136,3 +124,4 @@ public:
     
 };
 
+#endif

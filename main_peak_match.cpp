@@ -10,6 +10,8 @@
 
 #include "commandline.h"
 
+#include "DeepConfig.h"
+
 bool is_assignment(std::string ass)
 {
     if (ass.find("?") == 0 || ass.find("Peak") == 0 || ass.find("peak") == 0 || ass.find("None") == 0 || ass.find("none") == 0 || ass.find("X") || ass.find("x") == 0)
@@ -347,7 +349,8 @@ bool peak_reading_sparky(std::string fname,    std::vector<std::array<double,2>>
 
 
 int main(int argc, char **argv)
-{
+{ 
+    std::cout<<"DEEP Picker package Version "<<deep_picker_VERSION_MAJOR<<"."<<deep_picker_VERSION_MINOR<<std::endl;
     
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;

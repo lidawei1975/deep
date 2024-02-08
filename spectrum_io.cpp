@@ -110,57 +110,6 @@ namespace ldw_math_spectrum_2d
         } 
     };
 
-
-    bool spline_expand(int xdim, int ydim, float *spect,std::vector<double> &final_data)
-    {
-        std::vector<double> x_input,y_input,x_output,y_output;
-        
-        for(int j = 0; j < ydim-1; j++)
-        {
-            y_input.push_back(j);
-            y_output.push_back(j+0.5);
-        }
-        y_input.push_back(ydim-1);
-
-        for(int i = 0; i < xdim-1; i++)
-        {
-            x_input.push_back(i);
-            x_output.push_back(i+0.5);
-        }
-        x_input.push_back(xdim-1);
-
-        std::vector<double> intermediate_data;
-        for(int j=0;j<ydim;j++)
-        {
-            std::vector<double> tdata(xdim),t;
-            for(int i=0;i<xdim;i++) tdata[i]=spect[j*xdim+i]; 
-            tk::spline st(x_input,tdata);
-            for(int m=0;m<xdim-1;m++)
-            {
-                t.push_back(tdata[m]);
-                t.push_back(st(x_output[m]));
-            }
-            t.push_back(tdata[xdim-1]);
-            intermediate_data.insert(intermediate_data.end(),t.begin(),t.end()); 
-        }
-        //At this time, intermediate_data is (2*xdim-1)*ydim, row by row format
-
-        for(int i=0;i<xdim*2-1;i++)
-        {
-            std::vector<double> tdata(ydim),t;
-            for(int j=0;j<ydim;j++) tdata[j]=intermediate_data[j*(2*xdim-1)+i];
-            tk::spline st(y_input,tdata);
-            for(int m=0;m<ydim-1;m++)
-            {
-                t.push_back(tdata[m]);
-                t.push_back(st(y_output[m]));
-            }
-            t.push_back(tdata[ydim-1]);
-            final_data.insert(final_data.end(),t.begin(),t.end()); 
-        }
-
-        return true;
-    };
 };
 
 spectrum_io::spectrum_io()
@@ -239,14 +188,6 @@ bool spectrum_io::init(std::string infname, int noise_flag)
 
     if(b_read)
     {
-        if(fabs(begin2-stop2)>5*fabs(begin1-stop1) || begin2>20.0)
-        {
-            spectrum_type=hsqc_spectrum;//hsqc
-        }
-        else
-        {
-            spectrum_type=tocsy_spectrum;//tocsy
-        }
         std::cout<<"Done reading"<<std::endl;
 
         if(noise_flag==1) 

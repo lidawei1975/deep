@@ -1607,7 +1607,8 @@ bool gaussian_fit::voigt_convolution_within_region(const int ndx,const double a,
 
 
 bool gaussian_fit::init(int x00,int y00,int xdim_, int ydim_, std::vector< std::vector<double> >surface_, std::vector<double> x_, std::vector<double> y_, 
-                    std::vector< std::vector<double> > aa, std::vector<double> sx, std::vector<double> sy, std::vector<double> gx, std::vector<double> gy, std::vector<int> ns, std::vector<int> move_)
+                    std::vector< std::vector<double> > aa, std::vector<double> sx, std::vector<double> sy, std::vector<double> gx, std::vector<double> gy, std::vector<int> ns, std::vector<int> move_,
+                    double mw_x,double mw_y)
 {
     //at beginning, x and y are all integers!
     xstart=x00;
@@ -1626,6 +1627,9 @@ bool gaussian_fit::init(int x00,int y00,int xdim_, int ydim_, std::vector< std::
     a=aa;
     original_ndx=ns;
     cannot_move=move_;
+
+    median_width_x=mw_x;
+    median_width_y=mw_y;
 
     //std::cout<<"In this region, npeak is "<<x.size()<<std::endl;
     for(int i=x.size()-1;i>=0;i--)
@@ -3999,7 +4003,6 @@ spectrum_fit::spectrum_fit()
     wy=0.0; 
 
     nspect=0; //number of spectra
-    spectrum_type=null_spectrum; //general type
     maxround=20;
 
     median_width_x=0.0; //we don't know median peak width
@@ -4047,22 +4050,8 @@ bool spectrum_fit::init_all_spectra(std::vector<std::string> fnames_)
 };
 
 
-bool spectrum_fit::clear_memory()
-{
-    nspect=0;
 
-    //no need to free spect because spects[0] === spect
-    for(int i=0;i<spects.size();i++)
-    {
-        if(spects[i]!=NULL)
-        {
-            delete [] spects[i];
-        }
-    }
-    return true;
-}
-
-bool spectrum_fit::initflags_fit(int n,double r,double c,int im, int zf_)
+bool spectrum_fit::initflags_fit(int n,double r,double c,int im)
 {
     if(im==1) peak_shape=gaussian_type;
     else if(im==2) peak_shape=voigt_type;
@@ -4072,7 +4061,6 @@ bool spectrum_fit::initflags_fit(int n,double r,double c,int im, int zf_)
     removal_cutoff=r;
     too_near_cutoff=c;
     maxround=n;
-    zf=zf_;
     return true;
 }
 
@@ -4341,47 +4329,10 @@ bool spectrum_fit::prepare_fit()
             gaussian_fit myfit;
 
             myfit.set_everything(peak_shape,maxround,counter);
-
-            if(zf==0)
-            {
-                // std::cout<<"c="<<counter<<" sizes are "<<sx.size()<<" "<<gx.size()<<std::endl;
-                myfit.peak_assignments=&user_comments;
-                myfit.init(min1, min2, max1 - min1 , max2 - min2 , spect_parts, xx, yy, aas, sx, sy,gx,gy,ori_index,region_peak_cannot_move_flag);
-                myfit.set_peak_paras(wx*1.5,wy*1.5,noise_level,noise_level*user_scale2,too_near_cutoff,step1,step2,removal_cutoff); 
-            }
-            else if(zf==1)
-            {
-                int d1=max1-min1;
-                int d2=max2-min2;
-                for(int m=0;m<xx.size();m++)
-                {
-                    xx[m]=xx[m]*2.0+1.0;
-                    yy[m]=yy[m]*2.0+1.0;
-                    sx[m]*=4.0; //becasue sx is actually 2*sigma*sigma
-                    sy[m]*=4.0;
-                }
-                //interp2 of spect_parts[m]
-                for(int m=0;m<spect_parts.size();m++)
-                {
-                    std::vector<double> final_data;
-                    std::vector<float> input_data(d1*d2); 
-                    //spect_parts[m] is column by column
-                    //input_data need to be row by row
-                    for(int n1=0;n1<d1;n1++)
-                    {
-                        for (int n2 = 0; n2 < d2; n2++)
-                        {
-                            input_data[n2*d1+n1] = spect_parts[m][n1*d2+n2];
-                        }
-                    }
-                    
-                    ldw_math_spectrum_2d::spline_expand(d1,d2,input_data.data(),final_data);
-                    spect_parts[m]=final_data;
-                }
-                myfit.peak_assignments=&user_comments;
-                myfit.init(min1, min2, d1*2-1 , d2*2-1 , spect_parts, xx, yy, aas, sx, sy,gx,gy,ori_index,region_peak_cannot_move_flag);
-                myfit.set_peak_paras(wx*3,wy*3,noise_level,noise_level*user_scale2,too_near_cutoff*2.0,step1,step2,removal_cutoff); 
-            }
+            // std::cout<<"c="<<counter<<" sizes are "<<sx.size()<<" "<<gx.size()<<std::endl;
+            myfit.peak_assignments=&user_comments;
+            myfit.init(min1, min2, max1 - min1 , max2 - min2 , spect_parts, xx, yy, aas, sx, sy,gx,gy,ori_index,region_peak_cannot_move_flag,median_width_x,median_width_y);
+            myfit.set_peak_paras(wx*1.5,wy*1.5,noise_level,noise_level*user_scale2,too_near_cutoff,step1,step2,removal_cutoff); 
             fits.emplace_back(myfit);
             counter++;
         }

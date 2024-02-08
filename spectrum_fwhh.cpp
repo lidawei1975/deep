@@ -61,10 +61,12 @@ bool spectrum_fwhh::get_median_peak_width(float &median_width_direct, float &med
 
     std::cout << "Minimal peak intensity is set to " << min_intensity << std::endl;
 
+    std::vector<int> fwhh_p1, fwhh_p2;
+    std::vector<float> fwhh_p_intensity;
 
-    p1.clear(); //xdim peak position, direct dimension
-    p2.clear(); //ydim peak position, indirect dimension
-    p_intensity.clear(); //peak intensity
+    fwhh_p1.clear(); //xdim peak position, direct dimension
+    fwhh_p2.clear(); //ydim peak position, indirect dimension
+    fwhh_p_intensity.clear(); //peak intensity
 
     /**
      * spect[i + j * xdim] means the intensity at (i,j) in the 2D spectrum
@@ -89,15 +91,15 @@ bool spectrum_fwhh::get_median_peak_width(float &median_width_direct, float &med
                     ndiag++;
                 if (ndiag >= 4)
                 {
-                    p1.push_back(i); // index is from 0  direct dimension
-                    p2.push_back(j);
-                    p_intensity.push_back(spect[i + j * xdim]);
+                    fwhh_p1.push_back(i); // index is from 0  direct dimension
+                    fwhh_p2.push_back(j);
+                    fwhh_p_intensity.push_back(spect[i + j * xdim]);
                 }
             }
         }
     }
 
-    std::cout << "Picked " << p1.size() << " peaks for peak width estimation." << std::endl;
+    std::cout << "Picked " << fwhh_p1.size() << " peaks for peak width estimation." << std::endl;
 
 
     /**
@@ -106,7 +108,7 @@ bool spectrum_fwhh::get_median_peak_width(float &median_width_direct, float &med
     */
 
     std::vector<int> ndx;
-    fwhh::sortArr(p_intensity, ndx);
+    fwhh::sortArr(fwhh_p_intensity, ndx);
 
     fwhh_wids_direct.clear();
     fwhh_pos_direct.clear();
@@ -117,8 +119,8 @@ bool spectrum_fwhh::get_median_peak_width(float &median_width_direct, float &med
     */
     for (int i = ndx.size() - 1; i >= std::max(0, int(ndx.size()) - 50); i--) 
     {
-        int peak_loc_direct = p1[ndx[i]];
-        int peak_loc_indirect = p2[ndx[i]];
+        int peak_loc_direct = fwhh_p1[ndx[i]];
+        int peak_loc_indirect = fwhh_p2[ndx[i]];
 
 
         /**
@@ -186,8 +188,8 @@ bool spectrum_fwhh::get_median_peak_width(float &median_width_direct, float &med
     fwhh_pos_indirect.clear();
     for (int i = ndx.size() - 1; i >= std::max(0, int(ndx.size()) - 50); i--)
     {
-        int peak_loc_direct = p1[ndx[i]];
-        int peak_loc_indirect = p2[ndx[i]];
+        int peak_loc_direct = fwhh_p1[ndx[i]];
+        int peak_loc_indirect = fwhh_p2[ndx[i]];
 
         float wid = 20.0f;
         int stride = 1;

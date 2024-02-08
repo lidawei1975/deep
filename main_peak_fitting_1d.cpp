@@ -21,12 +21,14 @@ using ceres::Solve;
 #include "spectrum_io_1d.h"
 #include "spectrum_fit_1d.h"
 
-int shared_data::n_verbose=1; //default is 1
-bool shared_data::b_doesy=false; //default is false
 
+
+
+#include "DeepConfig.h"
 
 int main(int argc, char **argv)
-{
+{ 
+    std::cout<<"DEEP Picker package Version "<<deep_picker_VERSION_MAJOR<<"."<<deep_picker_VERSION_MINOR<<std::endl;
  
     struct timeval time;
     gettimeofday(&time,NULL);
@@ -41,7 +43,7 @@ int main(int argc, char **argv)
 
     args.push_back("-v");
     args2.push_back("1");
-    args3.push_back("verbose level (0: minimal, 1: normal)");
+    args3.push_back("verbose level (0: minimal, 1: normal, 2: details)");
 
     args.push_back("-f");
     args2.push_back("arguments_vf1d.txt");
@@ -135,8 +137,8 @@ int main(int argc, char **argv)
     b_individual_peaks=cmdline.query("-individual")=="yes" || cmdline.query("-individual")=="y";
     b_negative=cmdline.query("-negative")=="yes" || cmdline.query("-negative")=="y";
 
-    shared_data::n_verbose=atoi(cmdline.query("-v").c_str()); //set verbose level
-    shared_data::b_doesy=cmdline.query("-doesy")=="yes" || cmdline.query("-doesy")=="y"; //set doesy flag
+    shared_data_1d::n_verbose=atoi(cmdline.query("-v").c_str()); //set verbose level. Defined in spectrum_fit_1d.cpp
+    shared_data_1d::b_doesy=cmdline.query("-doesy")=="yes" || cmdline.query("-doesy")=="y"; //set doesy flag
 
 
     double noise_level=stod(cmdline.query("-noise_level"));

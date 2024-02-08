@@ -1,0 +1,2 @@
+#define deep_picker_VERSION_MAJOR @deep_picker_VERSION_MAJOR@
+#define deep_picker_VERSION_MINOR @deep_picker_VERSION_MINOR@
