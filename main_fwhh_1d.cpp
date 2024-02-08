@@ -11,8 +11,11 @@
 #include "commandline.h"
 #include "spectrum_fwhh_1d.h"
 
+#include "DeepConfig.h"
+
 int main(int argc, char **argv)
-{
+{ 
+    std::cout<<"DEEP Picker package Version "<<deep_picker_VERSION_MAJOR<<"."<<deep_picker_VERSION_MINOR<<std::endl;
  
     struct timeval time;
     gettimeofday(&time,NULL);

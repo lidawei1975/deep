@@ -10,9 +10,13 @@
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>
 
-#include "spline.h"
+/**
+ * cubic spline interpolation
+ */
+#include "cubic_spline.h"
 
 #include "clique.h"
+#include "dnn_base.h"
 #include "dnn_picker.h"
 
 
@@ -316,102 +320,6 @@ namespace ldw_math_dnn
 
     };
 
-/*
-  int find_medoid_from_peaks(std::vector<double> x,std::vector<double> y)
-    {
-        int npeak=x.size();
-        std::vector<double> d(npeak*npeak,0.0);
-
-        for(int i=0;i<npeak;i++)
-        {
-            for(int j=i+1;j<npeak;j++)
-            {
-                double t=fabs(x[i]-x[j])+fabs(y[i]-y[j]);
-                d[i*npeak+j]=t;
-                d[j*npeak+i]=t;
-            }
-        }
-
-        double min_d=10000.0;
-        int ndx=-1;
-        for(int i=0;i<npeak;i++)
-        {
-            double current_d=0.0;
-            for(int j=0;j<npeak;j++)
-            {
-                current_d+=d[i*npeak+j];
-            }
-            if(current_d<min_d)
-            {
-                min_d=current_d;
-                ndx=i;
-            }
-        }
-        return ndx;
-    };
-
-    int find_best_from_peaks_old(std::vector<double> x1,std::vector<double> y1,std::vector<double> x2,std::vector<double> y2)
-    {
-        int npeak=x1.size();
-        
-        double max_d=0.0;
-        int ndx=-1;
-        for(int i=0;i<npeak;i++)
-        {
-            double t=(x1[i]-x2[i])*(x1[i]-x2[i])+(y1[i]-y2[i])*(y1[i]-y2[i]);
-            if(t>max_d)
-            {
-                max_d=t;
-                ndx=i;
-            }
-        }
-        return ndx;
-    }
-
-    bool cut_one_peak_using_amplitude(std::vector<double> &s, int &anchor)
-    {
-        int ndata=s.size();
-
-        int center;
-        double max_v=0.0;
-        for(int i=anchor-2;i<=anchor+2;i++)
-        {
-            if(s[i]>max_v)
-            {
-                max_v=s[i];
-                center=i;
-            }
-        } 
-
-        int left_cut=0;
-        for(int i=center-1;i>=0;i--)
-        {
-            if(s[i]>s[i+1])
-            {   
-                left_cut=i+1;
-                break;
-            }
-        }
-
-        int right_cut=ndata;
-        for(int i=center+1;i<ndata;i++)
-        {
-            if(s[i]>s[i-1])
-            {
-                right_cut=i;
-                break;
-            }
-        }
-
-        s.erase(s.begin(),s.begin()+left_cut);
-        anchor-=left_cut;
-        right_cut-=left_cut;
-        s.erase(s.begin()+right_cut,s.end());
-
-        return true;
-    };
-*/
-
     bool get_perpendicular_line(double x,double y, double x0, double y0, std::vector<double> &line_x, std::vector<double> &line_y)
     {
         line_x.clear();
@@ -448,10 +356,20 @@ namespace ldw_math_dnn
         {
             std::vector<double> t;
             std::vector<double> tdata(data.begin() + (i - min_x) * ny, data.begin() + (i - min_x + 1) * ny);
-            tk::spline st(y_input, tdata);
+
+            cublic_spline cs;
+
+            /**
+             * In this step, we suppose coordiate is 0,1,2, ..., tdata.size()-1
+             * but real coordinate is y_input [min_y, min_y+1, ..., max_y]
+            */
+            cs.calculate_coefficients(tdata);
             for (int m = 0; m < y.size(); m++)
             {
-                t.push_back(st(y[m]));
+                /**
+                 * we need get interp value at y[m], suppose y[m] is in [min_y, max_y] and min_y means 0 in cs object
+                */
+                t.push_back(cs.calculate_value(y[m]-min_y));
             }
             spe_at_y_bycol.push_back(t);
         }
@@ -467,276 +385,18 @@ namespace ldw_math_dnn
 
         for(int i=0;i<y.size();i++)
         {
-            tk::spline st(x_input,spe_at_y_byrow[i]);       
-            line_v.push_back(st(x[i]));
+            cublic_spline cs;
+            /**
+             * In this step, we suppose coordiate is 0,1,2, ..., tdata.size()-1
+             * but real coordinate is x_input [min_x, min_x+1, ..., max_x]
+            */
+            cs.calculate_coefficients(spe_at_y_byrow[i]);
+            line_v.push_back(cs.calculate_value(x[i]-min_x));
         }
 
         return true;
     };
 };
-
-
-//funtions start here
-
-pool1d::pool1d() {};
-pool1d::~pool1d() {};
-
-bool pool1d::predict(int nlen, std::vector<float> &input, std::vector<float> &output)
-{
-    output.clear();
-    output.resize(nlen*nfilter);
-
-    int nshift = (npool - 1) / 2;
-    for (int j1 = 0; j1 < nlen; j1++)
-    {
-        for (int j2 = 0; j2 < nfilter; j2++)
-        {
-            std::vector<float> temp;
-            temp.clear();
-            for (int jj = std::max(0,j1 - nshift); jj < std::min(j1 + nshift+1,nlen); jj++)
-            {
-                temp.push_back(input[jj * nfilter + j2]);
-            }
-            output[j1 * nfilter + j2] = *std::max_element(temp.begin(),temp.end());
-        }
-    }
-    return true;
-};
-
-
-
-base1d::base1d() {};
-base1d::~base1d() {};
-
-bool base1d::mat_mul(std::vector<float> &in1, std::vector<float> &in2, std::vector<float> &out, int m, int n, int k)
-{
-    //in1 is m by n
-    //in2 in n by k
-    //out will be m by k
-    //matrix is saved row by row
-    if(in1.size()!=m*n || in2.size()!=n*k)
-    {
-        return false;
-    }
-
-    for(int m0=0;m0<m;m0++)
-    {
-        for(int k0=0;k0<k;k0++)
-        {
-            float t=0.0;
-            for(int n0=0;n0<n;n0++)
-            {
-                t+=in1[m0*n+n0]*in2[n0*k+k0];
-            }
-            out[m0*k+k0]=t;
-        }
-    }
-    return true;
-};
-
-bool base1d::print()
-{
-    for (int i = 0; i < kernel.size(); i++)
-    {
-        std::cout<< kernel[i]<<" ";
-    }
-    std::cout<<std::endl;
-    for (int i = 0; i < bias.size(); i++)
-    {
-        std::cout<< bias[i]<<" ";
-    }
-    std::cout<<std::endl;
-    return true;
-};
-
-
-
-dense::dense() {};
-dense::~dense() {};
-
-bool dense::read(std::string fname)
-{
-    std::ifstream s(fname);
-    // float t;
-
-    kernel.resize(ninput*nfilter); 
-    bias.resize(nfilter); 
-    
-    for (int i = 0; i < kernel.size(); i++)
-    {
-        s >> kernel[i];
-    }
-
-    for (int i = 0; i < bias.size(); i++)
-    {
-        s >> bias[i];
-    }
-    return true;
-};
-
-int dense::read(float *p)
-{
-    kernel.resize(ninput*nfilter); //3*8*6 
-    bias.resize(nfilter); //size is 6  
-    for (int i = 0; i < kernel.size(); i++)
-    {
-        kernel[i]=p[i];
-    }
-    for (int i = 0; i < bias.size(); i++)
-    {
-        bias[i]=p[i+kernel.size()];
-    } 
-    return kernel.size()+bias.size();
-}
-
-bool dense::predict(int nlen, std::vector<float> &input, std::vector<float> &output)
-{
-
-    output.clear();
-    output.resize(nlen*nfilter);
-
-
-    mat_mul(input,kernel,output,nlen,ninput,nfilter);
-
-    // std::cout<<"in dense::predict, out is"<<std::endl;
-    // for(int i=0;i<kernel.size();i++) std::cout<<kernel[i]<<" ";
-    // std::cout<<std::endl;
-
-
-    //apply bias
-    for(int i=0;i<nfilter;i++)
-    {
-        for(int j=0;j<nlen;j++)
-        {
-            output[j*nfilter+i]+=bias[i];
-        }
-    }
-
-    //relo activation
-    if(a==relo)
-    {
-        for(int j=0;j<nlen*nfilter;j++)
-        {
-            output[j]=std::max(output[j],0.0f);    
-        }
-    }
-    else if(a==softmax) //softmax
-    {
-        for(int i=0;i<nlen;i++)
-        {
-            float sum=0.0f;
-            for(int j=0;j<nfilter;j++)
-            {
-                float t=exp(output[i*nfilter+j]);
-                output[i*nfilter+j]=t;
-                sum+=t;
-            }
-            for(int j=0;j<nfilter;j++)
-            {
-                output[i*nfilter+j]/=sum;
-            }
-        }
-    }
-    //do thing if it is linear activation
-
-    return true;
-};
-
-
-
-
-
-conv1d::conv1d() {};
-conv1d::~conv1d() {};
-
-
-bool conv1d::read(std::string fname)
-{
-    std::ifstream s(fname);
-
-    kernel.resize(nkernel*ninput*nfilter); //3*8*6 
-    bias.resize(nfilter); //size is 6
-    
-    for (int i = 0; i < kernel.size(); i++)
-    {
-        s >> kernel[i];
-    }
-    for (int i = 0; i < bias.size(); i++)
-    {
-        s >> bias[i];
-    }
-    return true;
-};
-
-
-int conv1d::read(float *p)
-{
-    kernel.resize(nkernel*ninput*nfilter); //3*8*6 
-    bias.resize(nfilter); //size is 6  
-    for (int i = 0; i < kernel.size(); i++)
-    {
-        kernel[i]=p[i];
-    }
-    for (int i = 0; i < bias.size(); i++)
-    {
-        bias[i]=p[i+kernel.size()];
-    } 
-    return kernel.size()+bias.size();
-}
-
-
-bool conv1d::predict(int nlen, std::vector<float> &input, std::vector<float> &output)
-{
-    //nlen: 300
-    //nkernel: 3
-    //ninput: 8
-    //nfilter: 6
-
-    //input: 300*8
-    //output: 300*6 
-
-    int nblock=ninput*nfilter;    
-    
-    output.clear();
-    output.resize(nlen*nfilter);
-
-    //apply kernel
-    for(int i=0;i<nkernel;i++)
-    {
-        std::vector<float> t1(kernel.begin()+nblock*i,kernel.begin()+nblock*(i+1));
-        std::vector<float> out(nlen*nfilter,0.0);
-        mat_mul(input,t1,out,nlen,ninput,nfilter);
-
-        int nshift=(nkernel-1)/2-i;
-
-        for(int j1=std::max(0,nshift);j1<std::min(nlen,nlen+nshift);j1++)
-        {
-            // if(j1-nshift<0) continue;
-            // if(j1-nshift>=nlen) continue;
-            for(int j2=0;j2<nfilter;j2++)
-            {
-                output[j1*nfilter+j2]+=out[(j1-nshift)*nfilter+j2];
-            }
-        }
-    }
-
-    //apply bias
-    for(int i=0;i<nfilter;i++)
-    {
-        for(int j=0;j<nlen;j++)
-        {
-            output[j*nfilter+i]+=bias[i];
-        }
-    }
-
-    //relo activation
-    for(int j=0;j<nlen*nfilter;j++)
-    {
-        output[j]=std::max(output[j],0.0f);    
-    }
-    return true;
-};
-
 
 
 peak1d::peak1d() {
@@ -929,6 +589,19 @@ bool peak1d::predict(std::vector<float> input_)
                 min_flag[i+1]=1;
                 min_flag[i+2]=1;
             }
+        }
+    }
+
+    /**
+     * Patch of patch. reset min_flag for data point that is a peak
+     */
+    for(int i=3;i<input.size()-3;i++)
+    {
+        if(input[i]>input[i-1] && input[i]>input[i-2] && input[i]>input[i+2] && input[i]>input[i+1] )
+        {
+            min_flag[i]=0;
+            min_flag[i-1]=0;
+            min_flag[i+1]=0;
         }
     }
    

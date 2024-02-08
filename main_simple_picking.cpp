@@ -9,9 +9,11 @@
 #include "spectrum_simple_picking.h"
 
 
+#include "DeepConfig.h"
+
 int main(int argc, char **argv)
-{
-    std::cout<<"Last update: Dec. 2021"<<std::endl;
+{ 
+    std::cout<<"DEEP Picker package Version "<<deep_picker_VERSION_MAJOR<<"."<<deep_picker_VERSION_MINOR<<std::endl;
  
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;

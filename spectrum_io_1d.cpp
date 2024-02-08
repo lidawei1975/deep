@@ -5,9 +5,15 @@
 
 #include "json/json.h"
 #include "commandline.h"
-#include "dnn_picker.h"
 
 #include "spectrum_io_1d.h"
+
+
+/**
+ * These are shared varibles between db_match_1d and pattern_match_1d and spectrum_pick_1d
+*/
+int shared_data_1d::n_verbose=0; 
+bool shared_data_1d::b_doesy=false;
 
 namespace ldw_math_spectrum_1d
 {
@@ -48,6 +54,18 @@ namespace ldw_math_spectrum_1d
         // std::cout<<"file_name_ext is "<<file_name_ext<<std::endl;
 
         return b;
+    };
+
+    bool trim(std::string &str)
+    {
+        if (str.empty())
+        {
+            return false;
+        }
+
+        str.erase(0, str.find_first_not_of(" "));
+        str.erase(str.find_last_not_of(" ") + 1);
+        return true;
     }
 }
 
@@ -75,23 +93,11 @@ bool spectrum_io_1d::init(double user_, double user2_, double noise_)
     return true;
 };
 
-bool spectrum_io_1d::direct_set_spectrum(std::vector<float> &spe_)
-{
-    spect = spe_;
 
-    ndata = spect.size();
-    stop1 = ndata;
-    begin1 = 1.0;
-    step1 = 1.0; // arbitary
-
-    if (noise_level < 1e-20)
-    {
-        est_noise_level();
-    }
-    return true;
-}
-
-bool spectrum_io_1d::save_experimental_spectrum(std::string outfname)
+/**
+ * @brief write spectrum in josn format as an array, with two or three columns: ppm and intensity (and image)
+*/
+bool spectrum_io_1d::write_spectrum_json(std::string outfname)
 {
     std::ofstream outfile;
     outfile.open(outfname);
@@ -107,9 +113,68 @@ bool spectrum_io_1d::save_experimental_spectrum(std::string outfname)
     {
         data[j][0] = begin1 + j * step1;
         data[j][1] = spect[j];
+        /**
+         * @brief if spe_image has same size as spect, save it as well
+        */
+        if(spe_image.size()==ndata)
+        {
+            data[j][2] = spe_image[j];
+        }
     }
     root["spectrum"] = data;
     outfile << root;
+    return true;
+}
+
+
+/**
+ * @brief read frq domain spectrum from three vectors (buffers) in pipe format
+ * Similar to read_spectrum_ft, but get the header and spectrum from three vectors instead of a file
+*/
+bool spectrum_io_1d::direct_set_spectrum_from_nmrpipe(const std::vector<float> &_header, const std::vector<float> &real, const std::vector<float> &imag)
+{
+
+    /**
+     * copy _header (vector) to header (float *512)
+    */
+    for (int i = 0; i < 512; i++)
+    {
+        header[i] = _header[i];
+    }
+    b_header = true;
+
+    if (header[10 - 1] != 1.0f)
+    {
+        std::cout << "Wrong file format, dimension (header[9]) is " << header[9] << std::endl;
+        return false;
+    }
+
+    ndata = int(header[220 - 1]) * int(header[100 - 1]); // one of them is 1, the other one is true dimension
+
+    SW1 = double(header[101 - 1]);
+    frq1 = double(header[120 - 1]);
+    ref1 = double(header[102 - 1]);
+
+    stop1 = ref1 / frq1;
+    begin1 = stop1 + SW1 / frq1;
+    step1 = (stop1 - begin1) / (ndata); // direct dimension
+    begin1 += step1;                    // here we have to + step because we want to be consistent with nmrpipe program
+                                        // I have no idea why nmrpipe is different than topspin
+
+    spect=real;
+    spe_image=imag;
+    
+    if(n_verbose>0)
+    {
+        std::cout << "Spectrum size is " << ndata << std::endl;
+        std::cout << "From " << begin1 << " to " << stop1 << " and step is " << step1 << std::endl;
+    }
+
+    if (noise_level < 1e-20)
+    {
+        est_noise_level();
+    }
+
     return true;
 }
 
@@ -118,6 +183,7 @@ bool spectrum_io_1d::save_experimental_spectrum(std::string outfname)
  * 
  * @param infname input file name
  * @param b_negative true: allow negative peaks, false: only positive peaks. Default is true
+ * noise_level is estimated if it is zero
  * @return true 
  */
 
@@ -127,10 +193,11 @@ bool spectrum_io_1d::read_spectrum(std::string infname, bool b_negative)
 
     input_spectrum_fname = infname; // save for later use
 
-    std::string sldw(".ldw");
-    std::string stxt(".txt");
-    std::string sft1(".ft1");
-    std::string sjson(".json");
+    std::string sldw(".ldw"); // my own format
+    std::string stxt(".txt"); // topspin format. saved by totxt command
+    std::string sft1(".ft1"); // nmrPipe format
+    std::string sjson(".json"); // json format
+    std::string scsv(".csv"); // csv format, used by Mnova software
 
     if (std::equal(stxt.rbegin(), stxt.rend(), infname.rbegin()))
     {
@@ -148,13 +215,20 @@ bool spectrum_io_1d::read_spectrum(std::string infname, bool b_negative)
     {
         b_read = read_spectrum_json(infname);
     }
+    else if (std::equal(scsv.rbegin(), scsv.rend(), infname.rbegin()))
+    {
+        b_read = read_spectrum_csv(infname);
+    }
     else
     {
         b_read = false;
     }
 
-    std::cout << "Spectrum size is " << ndata << std::endl;
-    std::cout << "From " << begin1 << " to " << stop1 << " and step is " << step1 << std::endl;
+    if(n_verbose>0)
+    {
+        std::cout << "Spectrum size is " << ndata << std::endl;
+        std::cout << "From " << begin1 << " to " << stop1 << " and step is " << step1 << std::endl;
+    }
 
     if (noise_level < 1e-20)
     {
@@ -172,7 +246,132 @@ bool spectrum_io_1d::read_spectrum(std::string infname, bool b_negative)
 
     return b_read;
 }
+/**
+ * @brief read spectrum in csv format by Mnova software
+*/
+bool spectrum_io_1d::read_spectrum_csv(std::string fname)
+{
+    std::ifstream fin(fname);
+    if (!fin)
+        return false;
 
+    std::string line;
+    std::vector<std::string> line_split;
+    std::stringstream ss;
+    std::vector<float> ppm;
+    std::vector<float> amplitude;
+
+    while (std::getline(fin, line))
+    {   
+        /**
+         * Remove leading or trailing spaces
+         * Return false if the line is empty
+        */
+        if(ldw_math_spectrum_1d::trim(line)==false)
+        {
+            continue;
+        }
+        /**
+         * Skip comment lines, start with #
+        */
+        if (line[0] == '#')
+        {
+            continue;
+        }
+
+        /**
+         * Split line by space(s)
+        */
+        line_split.clear();
+        ss.clear();
+        ss.str(line);
+        std::string temp;
+        while (ss >> temp)
+        {
+            line_split.push_back(temp);
+        }
+
+        /**
+         * The first column is ppm, the second column is amplitude. Ignore the rest
+        */
+        if(line_split.size()>=2)
+        {
+            ppm.push_back(std::stof(line_split[0]));
+            amplitude.push_back(std::stof(line_split[1]));
+        }
+    }
+
+    ndata = amplitude.size();
+    begin1 = ppm[0];
+    stop1 = ppm[ndata - 1];
+    step1 = (stop1 - begin1) / (ndata - 1);
+
+    spect = amplitude;
+
+    return true;
+
+}
+/**
+ * @brief read spectrum in json format by Gissmo project
+*/
+bool spectrum_io_1d::read_spectrum_json(std::string infname)
+{
+
+    Json::Value root;
+    std::ifstream fin(infname);
+    if (!fin)
+        return false;
+
+    fin >> root;
+
+    Json::Value data1, data2;
+    data1 = root[0]; // ppm
+    data2 = root[1]; // amplitude
+
+    std::vector<float> ppm;
+
+    for (int i = 0; i < data2.size(); i += 1)
+    {
+        if(data2[i].isDouble()==true)
+        {
+            spect.push_back(data2[i].asDouble());
+        }
+        else if(data2[i].isString()==true)
+        {
+            spect.push_back(std::stof(data2[i].asString()));
+        }
+        else
+        {
+            std::cout<<"Error: spectrum_io_1d::read_spectrum_json, data2[i] is not double or string."<<std::endl;
+            return false;
+        }
+
+        if(data1[i].isDouble()==true)
+        {
+            ppm.push_back(data1[i].asDouble());
+        }
+        else if(data1[i].isString()==true)
+        {
+            ppm.push_back(std::stof(data1[i].asString()));
+        }
+        else
+        {
+            std::cout<<"Error: spectrum_io_1d::read_spectrum_json, data1[i] is not double or string."<<std::endl;
+            return false;
+        }
+    }
+    // std::reverse(spe.begin(),spe.end());
+
+    ndata = spect.size();
+    begin1 = ppm[0];
+    stop1 = ppm[ndata - 1];
+    step1 = (stop1 - begin1) / (ndata - 1);
+    return true;
+};
+
+/**
+ * @brief read 1D spectrum from nmrPipe ft1 file. Will try to read imaginary part as well
+*/
 bool spectrum_io_1d::read_spectrum_ft(std::string infname)
 {
     FILE *fp;
@@ -229,11 +428,11 @@ bool spectrum_io_1d::read_spectrum_ft(std::string infname)
     temp = fread(spe_image.data(), sizeof(float), ndata, fp);
     if (temp == ndata)
     {
-        std::cout << "Read nmrPipe 1D imaginary part successully." << std::endl;
+        if(n_verbose>0) std::cout << "Read nmrPipe 1D imaginary part successully." << std::endl;
     }
     else
     {
-        std::cout << "Read nmrPipe 1D  imaginary part failed." << std::endl;
+        if(n_verbose>0) std::cout << "Read nmrPipe 1D  imaginary part failed." << std::endl;
         spe_image.clear();
     }
 
@@ -244,12 +443,49 @@ bool spectrum_io_1d::read_spectrum_ft(std::string infname)
     return true;
 };
 
-bool spectrum_io_1d::write_spectrum(std::string infname)
+/**
+ * @brief write 1D spectrum to a file. Format is decided by file extension
+ * .ft1 .json or .txt
+*/
+bool spectrum_io_1d::write_spectrum(std::string fname)
+{
+    bool b_write = false;
+    std::string path_name, file_name, file_name_ext;
+    /**
+     * Get path name, file name and file extension
+    */
+    ldw_math_spectrum_1d::SplitFilename(fname, path_name, file_name, file_name_ext);
+
+    if(file_name_ext=="ft1")
+    {
+        b_write=write_spectrum_ft1(fname);
+    }
+    else if(file_name_ext=="json")
+    {
+        b_write=write_spectrum_json(fname);
+    }
+    else if(file_name_ext=="txt")
+    {
+        b_write=write_spectrum_txt(fname);
+    }
+    else
+    {
+        std::cout<<"Error: spectrum_io_1d::write_spectrum, unknown file extension "<<file_name_ext<<std::endl;
+        return false;
+    }
+    return b_write;
+}
+
+/**
+ * @brief write 1D spectrum from nmrPipe ft1 file. Write image part too if it exists
+ * This function will not work if the spectrum is not read from a ft1 file
+ * ( Please use fid_1d class to write a spectrum to ft1 file in that case )
+*/
+bool spectrum_io_1d::write_spectrum_ft1(std::string infname)
 {
     if (b_header == false)
     {
         std::cout << "Warning: PIpe format header has not been read." << std::endl;
-        return false;
     }
 
     FILE *fp;
@@ -265,27 +501,7 @@ bool spectrum_io_1d::write_spectrum(std::string infname)
     return true;
 }
 
-bool spectrum_io_1d::stride_spectrum(int n)
-{
-    if (n < 1)
-    {
-        std::cout << "Error: stride number must be larger than 1." << std::endl;
-        return false;
-    }
 
-    int nstride =  ndata / n;
-
-    std::vector<float> temp;
-    temp.resize(nstride);
-    for (int i = 0; i < nstride; i++)
-    {
-        temp[i] = spect[i * n];
-    }
-    spect = temp;
-    ndata = spect.size();
-    step1 = step1 * n;
-    return true;
-}
 
 //simple text file format, defined by myself
 bool spectrum_io_1d::read_spectrum_ldw(std::string infname)
@@ -332,6 +548,13 @@ bool spectrum_io_1d::read_spectrum_txt(std::string infname)
             continue;
         }
 
+        /**
+         * Example header:
+         * # LEFT = 12.764570236206055 ppm. RIGHT = -3.217077331696382 ppm.
+         * #
+         * # SIZE = 65536 ( = number of points)
+        */
+
         //if line starts with #, look for key words LEFT, RIGHT in one line and key words SIZE in another line
         if (line[0] == '#')
         {
@@ -364,11 +587,57 @@ bool spectrum_io_1d::read_spectrum_txt(std::string infname)
         /* *All other lines are data and they are all float
         * They should be after the two lines with key words LEFT, RIGHT and SIZE
         * One number per line
+        * 
+        * Example: (second part is for imaginary part, may not exist)
+        * -3747.75-17118.0i
+        * -3277.5+17781.5i
+        * 2807.25+17781.5i
         */
         if (b_left == true && b_right == true && b_size == true)
         {
-            float data=std::stof(line);
-            spect.push_back(data);
+            /**
+             * First, decide if this is a complex spectrum
+            */
+            if(line.find("i") != std::string::npos)
+            {
+                /**
+                 * remove the last character, which is i
+                */
+                line=line.substr(0,line.size()-1);
+                std::string line_part=line;
+
+                /**
+                 * remove first character if it is a + or -
+                */
+                if(line_part[0]=='+' || line_part[0]=='-')
+                {
+                    line_part=line_part.substr(1);
+                }
+
+                /**
+                 * seperate real and imaginary part, using the last + or - as delimiter
+                 * We use line, not line_part, because we need to keep the sign of the first number
+                */
+                std::string real_part=line.substr(0,line.find_last_of("+-"));
+                std::string imag_part=line.substr(line.find_last_of("+-"));
+                
+                /**
+                 * convert string to float, and push back to spect and spe_image
+                */
+                spect.push_back(std::stof(real_part));
+                /**
+                * Reasons unknown, but the sign of the imaginary part is reversed in Bruker's txt file
+                */
+                spe_image.push_back(-std::stof(imag_part));
+            }
+            else
+            {
+                /**
+                 * This is a real spectrum. Push back to spect only
+                */
+                float data=std::stof(line);
+                spect.push_back(data);
+            }
         }
     }
 
@@ -378,69 +647,107 @@ bool spectrum_io_1d::read_spectrum_txt(std::string infname)
         ndata = spect.size();
     }
 
+    if(spe_image.size()!=ndata)
+    {
+        std::cout<<"Error: spectrum_io_1d::read_spectrum_txt, ndata is not equal to the number of data points. Remove imaginary data."<<std::endl;
+        spe_image.clear(); //spe_image.size()==0 is used to indicate that there is no imaginary part
+    }
+
+    fin.close();
+
     step1 = (stop1 - begin1) / ndata;
+
+/**
+ * For debug
+ */
+// #ifdef DEBUG
+//     std::ofstream fout("spect.txt");
+//     for (int i = 0; i < spect.size(); i++)
+//     {
+//         fout << spect[i] << " " << spe_image[i] << std::endl;
+//     }
+//     fout.close();
+// #endif
+
     return true;
 }
 
-bool spectrum_io_1d::read_spectrum_json(std::string infname)
+/**
+ * @brief set spectrum from a vector of data, with ppm information
+ * This is the minimal requirement for a spectrum to be used for picking and fitting.
+ * It gather similar set of information as read from text file or json file. 
+ * read ft1 will get more information, such as SW1, frq1, ref1, etc.
+*/
+bool spectrum_io_1d::set_spectrum_from_data(const std::vector<float> &data, const double begin_, const double step_, const double stop_)
 {
-    Json::Value root;
-    std::ifstream fin(infname);
-    if (!fin)
-        return false;
+    /**
+     * Set spect and ndata
+    */
+    spect=data;
+    ndata=spect.size();
 
-    fin >> root;
-    read_spectrum_json_format1(root);
+    spe_image.clear(); //spe_image.size()==0 is used to indicate that there is no imaginary part
+    
+    /**
+     * Set begin1, step1, stop1 for ppm information
+    */
+    begin1=begin_;
+    step1=step_;
+    stop1=stop_;
+
     return true;
-};
+}
 
-bool spectrum_io_1d::read_spectrum_json_format1(Json::Value &root)
+/**
+ * @brief write 1D spectrum to a text file
+*/
+bool spectrum_io_1d::write_spectrum_txt(std::string outfname)
 {
-    Json::Value data1, data2;
-    data1 = root[0]; // ppm
-    data2 = root[1]; // amplitude
-
-    std::vector<float> ppm;
-
-    for (int i = 0; i < data2.size(); i += 1)
+    std::ofstream outfile;
+    outfile.open(outfname);
+    if (!outfile.is_open())
     {
-        if(data2[i].isDouble()==true)
-        {
-            spect.push_back(data2[i].asDouble());
-        }
-        else if(data2[i].isString()==true)
-        {
-            spect.push_back(std::stof(data2[i].asString()));
-        }
-        else
-        {
-            std::cout<<"Error: spectrum_io_1d::read_spectrum_json_format1, data2[i] is not double or string."<<std::endl;
-            return false;
-        }
+        std::cout << "Error: cannot open file " << outfname << std::endl;
+        return false;
+    }
 
-        if(data1[i].isDouble()==true)
+    outfile << "# LEFT = " << begin1 << " ppm. RIGHT = " << stop1 << " ppm." << std::endl;
+    outfile << "#" << std::endl;
+    outfile << "# SIZE = " << ndata << " ( = number of points)" << std::endl;
+    outfile << "#" << std::endl;
+
+    if(spe_image.size()==0)
+    {
+        for (int j = 0; j < ndata; j++)
         {
-            ppm.push_back(data1[i].asDouble());
-        }
-        else if(data1[i].isString()==true)
-        {
-            ppm.push_back(std::stof(data1[i].asString()));
-        }
-        else
-        {
-            std::cout<<"Error: spectrum_io_1d::read_spectrum_json_format1, data1[i] is not double or string."<<std::endl;
-            return false;
+            outfile << spect[j] << std::endl;
         }
     }
-    // std::reverse(spe.begin(),spe.end());
-
-    ndata = spect.size();
-    begin1 = ppm[0];
-    stop1 = ppm[ndata - 1];
-    step1 = (stop1 - begin1) / (ndata - 1);
+    else
+    {
+        for (int j = 0; j < ndata; j++)
+        {
+            /**
+             * Reasons unknown, but the sign of the imaginary part is reversed in Bruker's txt file
+            */
+            float temp_data=-spe_image[j];
+            if(temp_data>=0.0)
+            { 
+                outfile << spect[j] << "+" << temp_data << "i" << std::endl;
+            }
+            else
+            {
+                outfile << spect[j] << temp_data << "i" << std::endl;
+            }
+        }
+    }
+    outfile.close();
     return true;
-};
+}
 
+/**
+ * @brief estimate noise level using a general purpose method: segment by segment variance
+*/
 bool spectrum_io_1d::est_noise_level()
 {
 
@@ -478,11 +785,15 @@ bool spectrum_io_1d::est_noise_level()
     int n = variances.size() / 4;
     nth_element(variances.begin(), variances.begin() + n, variances.end());
     noise_level = sqrt(variances[n]);
-    std::cout << "Noise level is estiamted to be " << noise_level << ", using a geneal purpose method." << std::endl;
+    if(n_verbose>0) std::cout << "Noise level is estiamted to be " << noise_level << ", using a geneal purpose method." << std::endl;
 
     return true;
 }
 
+/**
+ * @brief estimate noise level using MAD method of the whole spectrum.
+ * Won't work if the spectrum is not phased and baseline corrected
+*/
 bool spectrum_io_1d::est_noise_level_mad()
 {
 
@@ -539,12 +850,52 @@ bool spectrum_io_1d::est_noise_level_mad()
     return true;
 };
 
+
+/**
+ * @brief fid_1d::write_nmrpipe_ft1: write some information
+ * This is mainly for web-server
+*/
+bool spectrum_io_1d::write_json(std::string fname)
+{
+    std::ofstream outfile(fname.c_str());
+    if (!outfile.is_open())
+    {
+        std::cout << "Error: cannot open file " << fname << std::endl;
+        return false;
+    }
+
+    Json::Value root;
+    root["ndata"] = ndata/2;
+    root["ndata_power_of_2"]=ndata/2; //We suppose ZF=2 in processing
+    /**
+     * ref1 is the end of the spectrum
+     * carrier_frequency is the middle of the spectrum
+     * SW is the total width of the spectrum
+     * All in Hz.
+     * If read in from a file other than ft1, all will be set to 0
+    */
+    root["carrier_frequency"]=ref1+SW1/2; 
+    root["observed_frequency"]=frq1;
+    root["spectral_width"]=SW1; //in Hz
+
+    outfile << root << std::endl;
+    outfile.close();
+
+    return true;
+}
+
+/**
+ * To save memory after peaks picking or fitting. User by 3D picker/fitter classes
+*/
 bool spectrum_io_1d::release_spectrum()
 {
     spect.clear();
     return true;
 }
 
+/**
+ * @brief get spectrum as a read-only vector
+*/
 const std::vector<float> & spectrum_io_1d::get_spectrum() const
 {
     return spect;

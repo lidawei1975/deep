@@ -11,8 +11,11 @@
 #include "commandline.h"
 #include "spectrum_fwhh.h"
 
+#include "DeepConfig.h"
+
 int main(int argc, char **argv)
-{
+{ 
+    std::cout<<"DEEP Picker package Version "<<deep_picker_VERSION_MAJOR<<"."<<deep_picker_VERSION_MINOR<<std::endl;
  
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;
@@ -44,7 +47,8 @@ int main(int argc, char **argv)
         fwhh.init(cmdline.query("-in"),1); // read spectrum and estimate noise level (defined in base class spectrum_io)
         float median_width_direct, median_width_indirect;
         fwhh.get_median_peak_width(median_width_direct, median_width_indirect);
-        std::cout<<"Estimated median peak width: "<<median_width_direct<<" along direct dimension and ";
+        std::cout<<"Estimated median peak width: "<<std::endl;
+        std::cout<<median_width_direct<<" along direct dimension"<<std::endl;
         std::cout<<median_width_indirect<<" along indirect dimension"<<std::endl;
         fwhh.print_result(cmdline.query("-out"));
     }

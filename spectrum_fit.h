@@ -156,13 +156,13 @@ private:
   const int nx, zfx, ny, zfy;
 };
 
-struct shared_data
+struct shared_data_2d
 {
   static int n_verbose; //0: minimal, 1: normal
 };
 
 
-class gaussian_fit: public shared_data
+class gaussian_fit: public shared_data_2d
 {
 private:
   int my_index;
@@ -277,7 +277,7 @@ public:
   gaussian_fit();
   ~gaussian_fit();
 
-  bool init(int, int, int, int, std::vector<std::vector<double>>, std::vector<double>, std::vector<double>, std::vector<std::vector<double>>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<int>, std::vector<int>);
+  bool init(int, int, int, int, std::vector<std::vector<double>>, std::vector<double>, std::vector<double>, std::vector<std::vector<double>>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<int>, std::vector<int>,double,double);
   bool run(int flag = 1);
   bool run_with_error_estimation(int, int, int nround = 10);
   bool assess_size();
@@ -287,12 +287,11 @@ public:
   void set_peak_paras(double x, double y, double noise, double height, double near, double xppm, double yppm, double cutoff);
 };
 
-class spectrum_fit : public spectrum_io, public shared_data
+class spectrum_fit : public spectrum_io, public shared_data_2d
 {
 private:
   std::vector<std::string> fnames;
   int maxround; // max round number
-  int zf;
   enum fit_type peak_shape;
   double too_near_cutoff;
   double wx, wy;         // max peak width (in pixel) used in peak partition and peak fitting (how many area to included in one peak fitting!)
@@ -349,12 +348,11 @@ public:
 
   bool init_all_spectra(std::vector<std::string> fnames);
 
-  bool initflags_fit(int n, double r, double c, int im, int zf_);
+  bool initflags_fit(int n, double r, double c, int im);
   bool init_error(int, int, int, int);
   bool print_peaks(std::string fnames, bool b_recon, std::string fold_name="./");
   // bool print_intensities(std::string outfname);
   bool generate_recon_and_diff_spectrum(std::string);
-  bool clear_memory();
   bool fit_gather_original();
   bool fit_gather(int);
   bool peak_reading(std::string);

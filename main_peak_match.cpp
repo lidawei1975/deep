@@ -1,6 +1,7 @@
 //#include <omp.h>
 #include <fstream>
 #include <iostream>
+#include <iomanip>      // std::setw
 #include <sstream>
 #include <cmath>
 #include <algorithm>
@@ -9,6 +10,8 @@
 #include <vector>
 
 #include "commandline.h"
+
+#include "DeepConfig.h"
 
 bool is_assignment(std::string ass)
 {
@@ -22,17 +25,14 @@ bool is_assignment(std::string ass)
     }
 };
 
-typedef std::vector<int> VD;
-typedef std::vector<VD> VVD;
-typedef std::vector<int> VI;
 
-void MinCostMatching(const VVD &cost, VI &Lmate, VI &Rmate)
+void MinCostMatching(const std::vector<std::vector<int>> &cost, std::vector<int> &Lmate, std::vector<int> &Rmate)
 {
     int n = int(cost.size());
 
     // construct dual feasible solution
-    VD u(n);
-    VD v(n);
+    std::vector<int> u(n);
+    std::vector<int> v(n);
     for (int i = 0; i < n; i++)
     {
         u[i] = cost[i][0];
@@ -47,8 +47,8 @@ void MinCostMatching(const VVD &cost, VI &Lmate, VI &Rmate)
     }
 
     // construct primal solution satisfying complementary slackness
-    Lmate = VI(n, -1);
-    Rmate = VI(n, -1);
+    Lmate = std::vector<int>(n, -1);
+    Rmate = std::vector<int>(n, -1);
     int mated = 0;
     for (int i = 0; i < n; i++)
     {
@@ -66,9 +66,9 @@ void MinCostMatching(const VVD &cost, VI &Lmate, VI &Rmate)
         }
     }
 
-    VD dist(n);
-    VI dad(n);
-    VI seen(n);
+    std::vector<int> dist(n);
+    std::vector<int> dad(n);
+    std::vector<int> seen(n);
 
     // repeat until primal solution is feasible
     while (mated < n)
@@ -149,9 +149,9 @@ void MinCostMatching(const VVD &cost, VI &Lmate, VI &Rmate)
 int test()
 {
 
-    VVD cost_int;
-    VD vd, vi;
-    VD temp;
+    std::vector<std::vector<int>> cost_int;
+    std::vector<int> vd, vi;
+    std::vector<int> temp;
 
     temp.clear();
     temp.push_back(10);
@@ -190,14 +190,14 @@ int test()
         std::cout << std::endl;
     }
 
-    std::cout<<"VD is "<<std::endl;
+    std::cout<<"std::vector<int> is "<<std::endl;
     for (int i = 0; i < vd.size(); i++)
     {
         std::cout << vd[i] << " ";
     }
     std::cout << std::endl;
 
-    std::cout<<"VI is "<<std::endl;
+    std::cout<<"std::vector<int> is "<<std::endl;
     for (int i = 0; i < vi.size(); i++)
     {
         std::cout << vi[i] << " ";
@@ -347,7 +347,8 @@ bool peak_reading_sparky(std::string fname,    std::vector<std::array<double,2>>
 
 
 int main(int argc, char **argv)
-{
+{ 
+    std::cout<<"DEEP Picker package Version "<<deep_picker_VERSION_MAJOR<<"."<<deep_picker_VERSION_MINOR<<std::endl;
     
     CCommandline cmdline;
     std::vector<std::string> args, args2, args3;
@@ -355,6 +356,10 @@ int main(int argc, char **argv)
     args.push_back("-h");
     args2.push_back("no");
     args3.push_back("print help message then quit (no)");
+
+    args.push_back("-f");
+    args2.push_back("arguments_peak_match.txt");
+    args3.push_back("command line arguments file");
     
     args.push_back("-in1");
     args2.push_back("test.tab");
@@ -481,9 +486,9 @@ int main(int argc, char **argv)
         }
 
         
-        VVD cost_int;
-        VD vd, vi;
-        VD temp;
+        std::vector<std::vector<int>> cost_int;
+        std::vector<int> vd, vi;
+        std::vector<int> temp;
 
         double scale= 1000000;
 
@@ -525,19 +530,24 @@ int main(int argc, char **argv)
 
         std::vector< std::vector<int> > used(npeak1/n);
 
-
+        std::cout<<std::endl;
         for (int i = 0; i < npeak1; i++)
         {
             if(vd[i]>=npeak2 || cost_int[i][vd[i]]>=int(d_max*scale)) 
             {
-                std::cout<<"Peak "<<i<<" "<<peak_infor1[i]<<" coors are "<<peak_pos1[i][0]<<" "<<peak_pos1[i][1]<<" cannot be transfered."<<std::endl;
+                printf("Peak %3d %10s cannot be transfered, coors are %6.2f %6.2f\n", i, peak_infor1[i].c_str(), peak_pos1[i][0], peak_pos1[i][1]);
             }
-            
-            else
+        }
+        std::cout<<std::endl;
+
+        for (int i = 0; i < npeak1; i++)
+        {
+            if(vd[i]<npeak2 && cost_int[i][vd[i]]<int(d_max*scale)) 
             {
-                std::cout << "Peak " << i <<" "<<peak_infor1[i] << " match " << vd[i] << ", coors are " << peak_pos1[i][0] << " " << peak_pos1[i][1];
-                std::cout << " and " << peak_pos2[vd[i]][0] << " " << peak_pos2[vd[i]][1];
-                std::cout << " cost is " << cost_int[i][vd[i]] << std::endl;
+                /**
+                 * Formatted output
+                */
+                printf("Peak %3d %10s match %3d, coors are %6.2f %6.2f and %6.2f %6.2f\n", i, peak_infor1[i].c_str(), vd[i], peak_pos1[i][0], peak_pos1[i][1], peak_pos2[vd[i]][0], peak_pos2[vd[i]][1]);
 
                 //trasfer assignment here from i of peaks1 to vd[i] of peaks2
 
@@ -560,12 +570,11 @@ int main(int argc, char **argv)
                 used[ii].push_back(vd[i]);
             }
         }
+        std::cout<<std::endl;
 
         for(int i=npeak1;i<npeak2;i++)
         {
-            std::cout<<"Peak "<<-1<<" match "<<vd[i]<<", coors are "<<-1<<" "<<-1;
-            std::cout<<" and "<<peak_pos2[vd[i]][0]<<" "<<peak_pos2[vd[i]][1];
-            std::cout<<" cost is "<<cost_int[i][vd[i]]<<std::endl;  
+            printf("No matching found for peak %3d, coors are %6.2f %6.2f\n", vd[i], peak_pos2[vd[i]][0], peak_pos2[vd[i]][1]);
         }
 
         std::cout << std::endl;

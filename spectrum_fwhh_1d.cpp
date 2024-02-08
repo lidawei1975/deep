@@ -38,15 +38,21 @@ float spectrum_fwhh_1d::get_median_peak_width()
     fwhh_estimator fwhh;
 
 
-    // run peaks picking on spect, exclude 50 points from each end
+    /**
+     * Run peaks picking on spect, exclude 50 points from each end
+     * To deal with possible water region distortion, also exclude +-ndata/32 points from the center
+    */
     std::vector<int> peak_locations;
     std::vector<float> peak_heights;
     for (int i = 51; i < spect.size() - 51; i++)
     {
-        if (spect[i] > spect[i - 1] && spect[i] > spect[i - 2] && spect[i] > spect[i + 1] && spect[i] > spect[i + 2])
+        if (i<ndata/2-ndata/32 || i>ndata/2+ndata/32)
         {
-            peak_locations.push_back(i);
-            peak_heights.push_back(spect[i]);
+            if (spect[i] > spect[i - 1] && spect[i] > spect[i - 2] && spect[i] > spect[i + 1] && spect[i] > spect[i + 2])
+            {
+                peak_locations.push_back(i);
+                peak_heights.push_back(spect[i]);
+            }
         }
     }
 

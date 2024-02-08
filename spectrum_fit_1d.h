@@ -4,6 +4,8 @@ extern "C"
   void re_im_w_of_z(double x, double y, double *r, double *i); // re_im_w_of_z
 };
 
+#include "spectrum_io_1d.h"
+
 #ifndef LDW_PARA
 #define LDW_PARA
 #define SMALL 1e-10
@@ -24,7 +26,15 @@ enum fit_type
 };
 #endif
 
+#include "ceres/ceres.h"
+#include "glog/logging.h"
 
+using ceres::AutoDiffCostFunction;
+using ceres::CostFunction;
+using ceres::DynamicNumericDiffCostFunction;
+using ceres::Problem;
+using ceres::Solve;
+using ceres::Solver;
 
 /**
  * @brief for 1D voigt fitting, analytical derivative
@@ -127,18 +137,16 @@ public:
   inline void set_n_residuals(int n) { set_num_residuals(n); };
 };
 
-struct shared_data
-{
-  static int n_verbose; //0: minimal output, 1: normal output
-  static bool b_doesy;  // true: doesy fitting, false: normal fitting
-};
 
-class gaussian_fit_1d: public shared_data
+
+class gaussian_fit_1d: public shared_data_1d
 {
 private:
   int n_patch;
 
   bool b_negative;
+
+  double median_width_x; // median peak width in x direction. Copied from spectrum_fit_1d
 
   double spectrum_scale;
   int rmax;                               // max round in fitting
@@ -219,10 +227,10 @@ public:
   bool run_peak_fitting(bool flag_first = true);
   bool run_with_error_estimation(int zf1, int n_error_round);
   int get_nround();
-  void set_up(fit_type, int, double, double, double,bool);
+  void set_up(fit_type, int, double, double, double,bool,double);
 };
 
-class spectrum_fit_1d : public spectrum_io_1d, public shared_data
+class spectrum_fit_1d : public spectrum_io_1d
 {
 private:
 
@@ -260,6 +268,7 @@ private:
   bool output_json(std::string outfname,const std::vector<int> ndx,const std::vector<double> amp, bool b_individual_peaks);
   bool write_recon(std::string folder_name); 
   bool peak_partition_1d_for_fit();
+  bool label_baseline_peaks();
 
 public:
   std::vector<int> fit_peak_index;
@@ -267,14 +276,17 @@ public:
   std::vector<std::vector<double>> fit_num_sum,fit_p_intensity_all_spectra; //for pseudo 2D. [peak_index][spectra_index]
   std::vector<double> fit_err;
   std::vector<int> fit_nround;
+  std::vector<int> background_peak_flag; // 0: not background peak, 1: background peak
 
   spectrum_fit_1d();
   ~spectrum_fit_1d();
   bool init_all_spectra(std::vector<std::string> finames,int,bool);
+  bool set_for_one_spectrum();
   bool init_fit(int, int, double);
   bool init_error(int, int);
-  bool peak_fitting(void);
+  bool peak_fitting();
   bool output(std::string outfname,bool b_out_json,bool b_individual_peaks, bool b_recon,std::string);
   bool peak_reading(std::string outfname); //default is allow negative peaks.
-  bool direct_set_peaks(std::vector<double> p1_, std::vector<double> p1_ppm, std::vector<double> p_intensity_, std::vector<double> sigmax_, std::vector<double> gammax_);
+  bool set_peaks(const spectrum_1d_peaks);
+  bool get_fitted_peaks(spectrum_1d_peaks &);
 };

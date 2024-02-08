@@ -5,23 +5,16 @@
 #include <random>
 #include <limits>
 
-#include "ceres/ceres.h"
-#include "glog/logging.h"
-
-using ceres::AutoDiffCostFunction;
-using ceres::CostFunction;
-using ceres::DynamicNumericDiffCostFunction;
-using ceres::Problem;
-using ceres::Solve;
-using ceres::Solver;
-
-#include "spline.h"
 
 #include "kiss_fft.h"
 #include "json/json.h"
 #include "commandline.h"
 #include "spectrum_io_1d.h"
 #include "spectrum_fit_1d.h"
+
+#define CONVOLUTION_RANGE 20.0 
+
+
 
 namespace ldw_math_1d
 {
@@ -423,6 +416,10 @@ bool mycostfunction_nvoigt1d::Evaluate(double const *const *xx, double *residual
         }
         for (int m = 0; m < np; m++)
         {
+            /**
+             * xx is a 2D array, xx[0] is for the first peak, xx[1] is for the second peak, etc.
+             * xx[0][0,1,2,3] are peak intensity, peak position, peak sigma, peak gamma of the first peak
+            */
             double a = xx[m][0];
             double x0 = xx[m][1];
             double sigmax = fabs(xx[m][2]);
@@ -431,6 +428,12 @@ bool mycostfunction_nvoigt1d::Evaluate(double const *const *xx, double *residual
             {
                 voigt_helper(i - x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
                 residual[i] += a * vvx;
+
+                /**
+                 * jacon is a 2D array. jaco[0] is for the first peak, jaco[1] is for the second peak, etc.
+                 * jaco[0]'s length is n_datapoint*n_fitting_paramter_of_peak_0
+                 * res[0] with respect to a,pos,sigma,gamma, followed by res[1] with respect to a,pos,sigma,gamma, etc.
+                */
                 jaco[m][i * 4 + 0] = vvx;          // with respect to a
                 jaco[m][i * 4 + 1] = -a * r_x;     // x0
                 jaco[m][i * 4 + 2] = a * r_sigmax; // sigmax
@@ -549,12 +552,6 @@ bool gaussian_fit_1d::gaussian_fit_init(std::vector<std::vector<float>> &d, std:
         }
     }
 
-    // for(int i=0;i<original_ndx.size();i++)
-    // {
-    //     if(original_ndx[i]==1100 || original_ndx[i]==1103)
-    //         std::cout <<"In init, "<< original_ndx[i] << " " << x.at(i) << " " << a[i] << " " << sigmax.at(i) << " " << gammax.at(i) << std::endl;
-    // }
-
     if (type == gaussian_type) // if gaussian fit, 1 convert sigma and gamma to fwhh, 2 get sigma from fwhh
     {
         float s;
@@ -590,7 +587,8 @@ bool gaussian_fit_1d::gaussian_fit_init(std::vector<std::vector<float>> &d, std:
     return true;
 };
 
-void gaussian_fit_1d::set_up(fit_type t_, int r_, double near, double scale_, double noise_, bool b_)
+void gaussian_fit_1d::set_up(fit_type t_, int r_, double near, double scale_, double noise_, bool b_,double mw_)
+
 {
     type = t_;
     rmax = r_;
@@ -598,6 +596,7 @@ void gaussian_fit_1d::set_up(fit_type t_, int r_, double near, double scale_, do
     minimal_height = scale_ * noise_;
     noise_level = noise_;
     b_negative=b_;
+    median_width_x = mw_;
 };
 
 bool gaussian_fit_1d::save_postion_informations(int begin_, int stop_, int left_patch_, int right_patch_, int n)
@@ -628,9 +627,6 @@ int gaussian_fit_1d::test_possible_removal(double x1, double a1, double s1, doub
     int p1 = int(round(x1));
     int p2 = int(round(x2));
 
-    // std::cout<<" x1="<<x1<<" x2="<<x2;
-    // std::cout<<" aa1="<<aa1<<" aa2="<<aa2;
-
     int pp1 = p1 - int(round(fwhh1 / 2));
     int pp2 = p2 + int(round(fwhh2 / 2));
 
@@ -646,9 +642,6 @@ int gaussian_fit_1d::test_possible_removal(double x1, double a1, double s1, doub
         s = s2;
         g = g2;
     }
-
-    // std::cout<<" pp1="<<pp1<<" pp2="<<pp2;
-
     std::vector<double> profile;
 
     double max_v = 0;
@@ -723,12 +716,9 @@ int gaussian_fit_1d::test_possible_removal(double x1, double a1, double s1, doub
     one_fit_voigt_core(pp2 - pp1 + 1, &profile, x, a, s, g, e);
     x += pp1;
 
-    // std::cout<<std::endl;
-
     double max_e = 0;
     for (int i = pp1; i <= pp2; i++)
     {
-        // std::cout<<profile[i - pp1]<<" "<<a * voigt(i - x, s, g)<<std::endl;
         double e = fabs(profile[i - pp1] - a * voigt(i - x, s, g));
         if (e > max_e)
         {
@@ -736,7 +726,6 @@ int gaussian_fit_1d::test_possible_removal(double x1, double a1, double s1, doub
         }
     }
 
-    // std::cout<<" e="<<max_e/max_v<<std::endl;
     if (max_e / max_v > 0.01)
     {
         return 0;
@@ -838,15 +827,15 @@ bool gaussian_fit_1d::run_with_error_estimation(int zf1, int n_error_round)
         temp_spectrum.clear();
         if (type == gaussian_type)
         {
-            gaussain_convolution(a[i][0], x[i], sigmax[i], &(temp_spectrum), i0, i1, 15.0);
+            gaussain_convolution(a[i][0], x[i], sigmax[i], &(temp_spectrum), i0, i1, CONVOLUTION_RANGE);
         }
         else if (type == voigt_type)
         {
-            voigt_convolution(a[i][0], x[i], sigmax[i], gammax[i], &(temp_spectrum), i0, i1, 15.0);
+            voigt_convolution(a[i][0], x[i], sigmax[i], gammax[i], &(temp_spectrum), i0, i1, CONVOLUTION_RANGE);
         }
         else if (type == lorentz_type)
         {
-            lorentz_convolution(a[i][0], x[i], gammax[i], &(temp_spectrum), i0, i1, 15.0);
+            lorentz_convolution(a[i][0], x[i], gammax[i], &(temp_spectrum), i0, i1, CONVOLUTION_RANGE);
         }
 
         for (int ii = i0; ii < i1; ii++)
@@ -1158,8 +1147,6 @@ bool gaussian_fit_1d::limit_fitting_region_of_each_peak()
             region[1] += 1;
 
         valid_fit_region.push_back(region);
-
-        // std::cout<<"Peak "<<original_ndx[ndx]<<" center is "<<x[ndx]<<" region is from "<<region[0]<<" to "<<region[1]<<std::endl;
     }
     return true;
 }
@@ -1286,11 +1273,11 @@ bool gaussian_fit_1d::run_multi_peaks()
             int i0, i1;
             analytical_spectra.clear();
             if (type == gaussian_type)
-                gaussain_convolution(a[i][0], x[i], sigmax[i], &(analytical_spectra), i0, i1, 15.0);
+                gaussain_convolution(a[i][0], x[i], sigmax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
             else if (type == voigt_type)
-                voigt_convolution(a[i][0], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, 15.0);
+                voigt_convolution(a[i][0], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
             else if (type == lorentz_type)
-                lorentz_convolution(a[i][0], x[i], gammax[i], &(analytical_spectra), i0, i1, 15.0);
+                lorentz_convolution(a[i][0], x[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
 
             {
                 for (int ii = i0; ii < i1; ii++)
@@ -1320,11 +1307,11 @@ bool gaussian_fit_1d::run_multi_peaks()
             analytical_spectra.clear();
 
             if (type == gaussian_type)
-                gaussain_convolution_with_limit(i, a[i][0], x[i], sigmax[i], &(analytical_spectra), i0, i1, 15.0);
+                gaussain_convolution_with_limit(i, a[i][0], x[i], sigmax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
             else if (type == voigt_type)
-                voigt_convolution_with_limit(i, a[i][0], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, 15.0);
+                voigt_convolution_with_limit(i, a[i][0], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
             else if (type == lorentz_type)
-                lorentz_convolution_with_limit(i, a[i][0], x[i], gammax[i], &(analytical_spectra), i0, i1, 15.0);
+                lorentz_convolution_with_limit(i, a[i][0], x[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
 
             for (int ii = i0; ii < i1; ii++)
             {
@@ -1358,24 +1345,26 @@ bool gaussian_fit_1d::run_multi_peaks()
                 one_fit_lorentz(i1 - i0, &zz, x[i], a[i][0], gammax[i], err[i]);
             }
 
-            if (fabs(sigmax.at(i)) + fabs(gammax.at(i)) < 0.2 || fabs(sigmax.at(i)) + fabs(gammax.at(i)) > 50)
+            if (fabs(sigmax.at(i)) + fabs(gammax.at(i)) < 0.2 || fabs(sigmax.at(i)) + fabs(gammax.at(i)) > 10.0 * median_width_x)
             {
-                if(n_verbose>0)
+                if(n_verbose>1)
                 {
                     std::cout << original_ndx[i] << " will be removed because too wide or narrow x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
                 }
                 peak_remove_flag[i] = 1;
                 b_some_peak_removed = 1;
+                continue; //no need to check other conditions
             }
 
             if (x.at(i) < 0 || x.at(i) >= i1 - i0)
             {
-                if(n_verbose>0)
+                if(n_verbose>1)
                 {
                     std::cout << original_ndx[i] << " will be removed because moved out of area  x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
                 }
                 peak_remove_flag[i] = 1;
                 b_some_peak_removed = 1;
+                continue; //no need to check other conditions
             }
 
             //peah height check. if the peak height is too small, remove it.
@@ -1388,23 +1377,27 @@ bool gaussian_fit_1d::run_multi_peaks()
             
             if(fabs(temp_peak_height)<minimal_height)
             {
-                if(n_verbose>0)
+                if(n_verbose>1)
                 {
                     std::cout << original_ndx[i] << " will be removed because low intensity x=" << x.at(i) + i0 << " height=" << temp_peak_height << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
                 }
                 peak_remove_flag[i] = 1;
                 b_some_peak_removed = 1;
+                continue; //no need to check other conditions
             }
 
-            // if(x.at(i)+i0<x_range_left[i] || x.at(i)+i0>x_range_right[i])
-            // {
-            //      std::cout << original_ndx[i] << " will be removed because moved out of range x=" << x.at(i)+i0 << " a=" << a[i] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
-            //     peak_remove_flag[i] = 1;
-            //     b_some_peak_removed=1;
-            // }
+            if(x.at(i)+i0<x_range_left[i] || x.at(i)+i0>x_range_right[i])
+            {
+                if(n_verbose>1)
+                {
+                    std::cout << original_ndx[i] << " will be removed because moved out of range x=" << x.at(i) + i0 << " height=" << temp_peak_height << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+                }
+                peak_remove_flag[i] = 1;
+                b_some_peak_removed=1;
+                continue; //no need to check other conditions
+            }
 
-            // if(original_ndx[i]==1100 || original_ndx[i]==1103)
-            //     std::cout <<"After " <<loop<<" "<< original_ndx[i] << " " << x.at(i)+i0 << " " << a[i] << " " << sigmax.at(i) << " " << gammax.at(i) << std::endl;
+            
             x[i] += i0;
 
             // track peak movement
@@ -1434,7 +1427,7 @@ bool gaussian_fit_1d::run_multi_peaks()
 
             if (min_of_trace / fabs(original_spectral_height[i]) < 1 / 3.0 || max_of_trace / fabs(original_spectral_height[i]) > 3.0)
             {
-                if(n_verbose>0)
+                if(n_verbose>1)
                 {
                     std::cout << original_ndx[i] << " will be removed because moved too far away." << std::endl;
                 }
@@ -1463,7 +1456,7 @@ bool gaussian_fit_1d::run_multi_peaks()
                     double cut_near = wx * too_near_cutoff;
                     if (fabs(dx) < cut_near || fabs(dx) < 1.6) // too close peaks
                     {
-                        if(n_verbose>0)
+                        if(n_verbose>1)
                         {
                             std::cout << "too_near_cutoff is " << too_near_cutoff << std::endl;
                         }
@@ -1481,7 +1474,7 @@ bool gaussian_fit_1d::run_multi_peaks()
                         {
                             // a[k2] = 0.0;
                             peak_remove_flag[k2] = 1;
-                            if(n_verbose>0)
+                            if(n_verbose>1)
                             {
                                 std::cout << original_ndx[k2] << " will be removed because too near " << original_ndx[k1] << ", distance is " << fabs(dx) << "<" << cut_near << std::endl;
                             }
@@ -1494,7 +1487,7 @@ bool gaussian_fit_1d::run_multi_peaks()
                         {
                             // a[k1] = 0.0;
                             peak_remove_flag[k1] = 1;
-                            if(n_verbose>0)
+                            if(n_verbose>1)
                             {
                                 std::cout << original_ndx[k1] << " will be removed because too near " << original_ndx[k2] << ", distance is " << fabs(dx) << "<" << cut_near << std::endl;
                             }
@@ -1527,7 +1520,6 @@ bool gaussian_fit_1d::run_multi_peaks()
             {
                 int ii = ndx[i];
                 int jj = ndx[i + 1];
-                // std::cout<<"Test overlap of "<<x[ii]<<" and "<<x[jj]<<std::endl;
                 int n = test_possible_removal(x[ii], a[ii][0], sigmax[ii], gammax[ii], x[jj], a[jj][0], sigmax[jj], gammax[jj]);
                 if (n == 1)
                 {
@@ -1590,12 +1582,12 @@ bool gaussian_fit_1d::run_multi_peaks()
         {
             flag_break = true;
         }
-        if(n_verbose>0)
+        if(n_verbose>1)
         {
             std::cout << "\r" << "Iteration " << loop + 1 << " " << loop2 << std::flush;
         }
     } // loop
-    if(n_verbose>0)
+    if(n_verbose>1)
     {
         std::cout << std::endl;
     }
@@ -1660,11 +1652,11 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
                 int i0, i1;
                 analytical_spectra.clear();
                 if (type == gaussian_type)
-                    gaussain_convolution(a[i][k], x[i], sigmax[i], &(analytical_spectra), i0, i1, 15.0);
+                    gaussain_convolution(a[i][k], x[i], sigmax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
                 else if (type == voigt_type)
-                    voigt_convolution(a[i][k], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, 15.0);
+                    voigt_convolution(a[i][k], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
                 else if (type == lorentz_type)
-                    lorentz_convolution(a[i][k], x[i], gammax[i], &(analytical_spectra), i0, i1, 15.0);
+                    lorentz_convolution(a[i][k], x[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
 
                 for (int ii = i0; ii < i1; ii++)
                 {
@@ -1688,11 +1680,11 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
                 analytical_spectra.clear();
 
                 if (type == gaussian_type)
-                    gaussain_convolution_with_limit(i, a[i][k], x[i], sigmax[i], &(analytical_spectra), i0, i1, 15.0);
+                    gaussain_convolution_with_limit(i, a[i][k], x[i], sigmax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
                 else if (type == voigt_type)
-                    voigt_convolution_with_limit(i, a[i][k], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, 15.0);
+                    voigt_convolution_with_limit(i, a[i][k], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
                 else if (type == lorentz_type)
-                    lorentz_convolution_with_limit(i, a[i][k], x[i], gammax[i], &(analytical_spectra), i0, i1, 15.0);
+                    lorentz_convolution_with_limit(i, a[i][k], x[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
 
                 for (int ii = i0; ii < i1; ii++)
                 {
@@ -1741,12 +1733,12 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
             x[i] += i0;
         } // end of parallel for(int i = 0; i < x.size(); i++)
 
-        if(n_verbose>0)
+        if(n_verbose>1)
         {
             std::cout << "\r"  << "Iteration " << loop + 1 << std::flush;
         }
     } // loop
-    if(n_verbose>0)
+    if(n_verbose>1)
     {
         std::cout << std::endl;
     }
@@ -2297,7 +2289,6 @@ bool spectrum_fit_1d::init_all_spectra(std::vector<std::string> fnames_,int n_st
     int i = fnames.size() - 1;
     if (spectrum_io_1d::read_spectrum(fnames[i],b_negative))
     {
-        stride_spectrum(n_stride);
         spects.push_back(spect);
     }
 
@@ -2305,8 +2296,6 @@ bool spectrum_fit_1d::init_all_spectra(std::vector<std::string> fnames_,int n_st
     {
         if (spectrum_io_1d::read_spectrum(fnames[i],b_negative))
         {
-            stride_spectrum(n_stride);
-            step1*=n_stride; //only need to do this once. So we undo here.
             spects.push_back(spect);
         }
     }
@@ -2380,8 +2369,18 @@ bool spectrum_fit_1d::peak_partition_1d_for_fit()
     return true;
 }
 
+bool spectrum_fit_1d::set_for_one_spectrum()
+{
+    spects.clear();
+    spects.push_back(spect);
+    nspect = 1;
+
+    return true;
+}
+
 bool spectrum_fit_1d::peak_fitting()
 {
+
     double wx;
 
     wx = std::max(median_width_x * 1.6, 15.0);
@@ -2395,7 +2394,6 @@ bool spectrum_fit_1d::peak_fitting()
     //  noise_boudaries.push_back(1980);
 
     for (int j = 0; j < signa_boudaries.size(); j++)
-    // for (int j = 538; j < 539; j++)
     {
         int begin = signa_boudaries[j];
         int stop = noise_boudaries[j];
@@ -2442,11 +2440,16 @@ bool spectrum_fit_1d::peak_fitting()
 
         if (part_p1.size() == 0)
             continue;
-        std::cout << "Working on fitting region " << j << " of "<< signa_boudaries.size() <<" ( from " << begin << " to " << stop << ", " << part_p1.size() << " peaks before fitting)." << std::endl;
+        if(n_verbose>0)
+        {
+            std::cout << "Working on fitting region " << j << " of "<< signa_boudaries.size() <<" ( from " << begin << " to " << stop << ", " << part_p1.size() << " peaks before fitting)." << std::endl;
+        }
+
         gaussian_fit_1d f1;
-        f1.set_up(peak_shape, rmax, to_near_cutoff, user_scale, noise_level,b_negative);
+        f1.set_up(peak_shape, rmax, to_near_cutoff, user_scale, noise_level,b_negative,median_width_x);
         f1.gaussian_fit_init(part_spects, part_p1, part_sigmax, part_gammax, part_p_intensity_all_spectra, part_peak_index);
         f1.save_postion_informations(begin, stop, left_patch, right_patch, n);
+        
         if (error_nround > 0)
         {
             f1.run_with_error_estimation(zf, error_nround);
@@ -2455,13 +2458,18 @@ bool spectrum_fit_1d::peak_fitting()
         {
             f1.run_peak_fitting(true);
         }
-        std::cout << "Finished fitting region " << j << " of "<< signa_boudaries.size() <<" ( from " << begin << " to " << stop << ", " << f1.x.size() << " peaks after fitting)." << std::endl;
+
+        if(n_verbose>0)
+        {
+            std::cout << "Finished fitting region " << j << " of "<< signa_boudaries.size() <<" ( from " << begin << " to " << stop << ", " << f1.x.size() << " peaks after fitting)." << std::endl;
+        }
 
         if (f1.a.size() > 0)
         {
             fits.emplace_back(f1);
         }
     }
+
     return true;
 };
 
@@ -2503,7 +2511,10 @@ bool spectrum_fit_1d::gather_result()
     }
 
     // point to ppm for fitted peaks
-    std::cout << "Total fitted " << fit_p1.size() << " peaks." << std::endl;
+    if(n_verbose>0)
+    {
+        std::cout << "Total fitted " << fit_p1.size() << " peaks." << std::endl;
+    }
 
     return true;
 };
@@ -2541,6 +2552,214 @@ bool spectrum_fit_1d::gather_result_with_error_estimation(int c)
     return true;
 };
 
+/**
+ * save fitting results to a varible of type spectrum_1d_peaks
+ * to be used by other programs without using output function (file IO)
+*/
+bool spectrum_fit_1d::get_fitted_peaks(spectrum_1d_peaks &peaks)
+{
+    /**
+     * Gather all fitting results from all regions
+    */
+    gather_result();
+
+    /**
+     * Get peak amplitudes (maximal intensity of the peak)
+     * This depends on peak shape (See function output for more details)
+    */
+    std::vector<double> amplitudes;
+    std::vector<double> fitted_volume;
+    if (peak_shape == gaussian_type)
+    {
+        amplitudes = fit_p_intensity;
+        for (int i = 0; i < fit_p_intensity.size(); i++)
+        {
+            fitted_volume.push_back(fit_p_intensity[i] * sqrt(fabs(fit_sigmax[i]) * 3.14159265358979));
+        }
+    }
+    else if (peak_shape == voigt_type)
+    {
+        fitted_volume = fit_p_intensity;
+        for (int i = 0; i < fit_p_intensity.size(); i++)
+        {
+            amplitudes.push_back(fit_p_intensity[i] * voigt(0.0, fit_sigmax[i], fit_gammax[i]));
+        }
+    }
+    else if (peak_shape == lorentz_type)
+    {
+        for (int i = 0; i < fit_p_intensity.size(); i++)
+        {
+            fitted_volume.push_back(fit_p_intensity[i] * fabs(fit_gammax[i]) * 0.5);
+        }
+        amplitudes = fit_p_intensity;
+    }
+
+    // get ppm from peak postion
+    std::vector<double> ppm;
+    for (unsigned int i = 0; i < fit_p1.size(); i++)
+    {
+        ppm.push_back(begin1 + step1 * (fit_p1[i]));
+    }
+
+    std::vector<int> ndx;
+    ldw_math_1d::sortArr(ppm, ndx);
+    //flip ndx so that the ppm is in descending order
+    std::reverse(ndx.begin(), ndx.end());
+
+    for(int i=0;i<ndx.size();i++)
+    {
+        peaks.x.push_back(fit_p1[ndx[i]]);
+        peaks.ppm.push_back(ppm[ndx[i]]);
+        peaks.sigmax.push_back(fit_sigmax[ndx[i]]);
+        peaks.gammax.push_back(fit_gammax[ndx[i]]);
+        peaks.a.push_back(amplitudes[ndx[i]]);
+        peaks.volume.push_back(fitted_volume[ndx[i]]);
+    }
+
+    peaks.confidence.clear(); //in case we have old data, we clear it first
+    peaks.confidence=std::vector<double>(fit_p1.size(),1.0); // no confidence information from fitting
+
+    return true;
+};
+
+/**
+ * @brief Try to identify baseline peaks and label them as un-reliable peaks
+ * Must be called after gather_result() or gather_result_with_error_estimation()
+*/
+bool spectrum_fit_1d::label_baseline_peaks()
+{
+     /**
+     * Get median experimental peak width. 
+     * unit is point
+    */
+    std::vector<double> fwhhs;
+    for(int i=0;i<fit_sigmax.size();i++)
+    {
+        fwhhs.push_back(0.5346 * fit_gammax[i] * 2 + std::sqrt(0.2166 * 4 * fit_gammax[i] * fit_gammax[i] + fit_sigmax[i] * fit_sigmax[i] * 8 * 0.6931));
+    }
+    /**
+     * Median experimental peak width, in unit of point
+    */
+    double median_exp_peak_width = ldw_math_1d::calcualte_median(fwhhs);
+
+    /**
+     * Get peak amplitudes (maximal intensity of the peak) and spectrum amplitudes (sum of all peaks) at the exact peak location
+    */
+    std::vector<double> amplitudes;
+    std::vector<double> spectrum_amplitudes;
+    
+    if (peak_shape == gaussian_type || peak_shape == lorentz_type)
+    {
+        amplitudes = fit_p_intensity;
+    }
+    else // (peak_shape == voigt_type)
+    { 
+        for (int i = 0; i < fit_p_intensity.size(); i++)
+        {
+            amplitudes.push_back(fit_p_intensity[i] * voigt(0.0, fit_sigmax[i], fit_gammax[i]));
+        }
+    }
+
+    for(int i=0;i<fit_p1.size();i++)
+    {
+        int loc=int(round(fit_p1[i]));
+        spectrum_amplitudes.push_back(spect[loc]);
+    }
+    
+
+    /**
+     * Define un-reliable peaks, which will be excluded from subsequent database matching.
+    */
+    background_peak_flag.clear();
+    background_peak_flag.resize(fit_p1.size(),0); // 1: background peak, 0: not background peak
+
+
+    /**
+     * Sort peaks by point in ascending order (ppm in descending order)
+    */
+    std::vector<int> ndx;
+    ldw_math_1d::sortArr(fit_p1, ndx);
+
+
+    /**
+     * Step 1. Define connected peaks (neighboring peaks fullfill: 1,spectrum  amplitude ratio < 1.2; 2, ppm difference < 2 * fwhh; 3. no big dip between them)
+     * We use ndx to sort peaks by ppm.
+     * Connected peaks are also defined in the order of ndx.
+     * In connected_peaks, -1 means not connected and 0 means connected to previous peak
+    */
+    std::vector<int> connected_peaks(fit_p1.size(), -1); 
+    for (int i0 = 0; i0 < ndx.size() -1 ; i0++)
+    {
+        int j0 = i0 + 1;
+
+        /**
+         * i and j are the original index of peaks
+        */
+        int i = ndx[i0];
+        int j = ndx[j0];
+
+        if ( fabs(fit_p1[j] - fit_p1[i]) < 2 * median_exp_peak_width ) 
+        {
+            double intensity_ratio = spectrum_amplitudes[i] / spectrum_amplitudes[j];
+
+            if(intensity_ratio<1.0)
+            {
+                intensity_ratio = 1.0/intensity_ratio;
+            }
+
+            if (intensity_ratio < 1.2)
+            {
+                /**
+                 * Get the lowest spect point from fit_p1[i] to fit_p1[j]
+                */
+                float lowest_spect_point = std::numeric_limits<float>::max();
+                for (int k = int(fit_p1[i]); k <= int(fit_p1[j]); k++)
+                {
+                    lowest_spect_point = std::min(lowest_spect_point, spect[k]);
+                }
+
+                /**
+                 * If lowest_spect_point is >= either of 0.9 * spectrum_amplitudes[i] or 0.9*spectrum_amplitudes[i], then we consider it as a connected peak
+                 * i and j are connected
+                */
+                if (lowest_spect_point >= 0.8 * spectrum_amplitudes[i] || lowest_spect_point >= 0.8 * spectrum_amplitudes[j])
+                {
+                    connected_peaks[j0] = 0;
+                }
+            }
+        }   
+    }
+
+   /**
+    * STep 2. If 4 or more peaks are connected, then they are all considered as non-reliable peaks.
+    * i0 and j0 are the index of peaks in ndx
+    * j is the original index of peaks
+   */
+    int n_connected = 0;
+    for (int i0 = 0; i0 < ndx.size(); i0++)
+    {
+        if (connected_peaks[i0] == 0)
+        {
+            n_connected++;
+        }
+        else
+        {
+            if (n_connected >= 4)
+            {
+                for (int j0 = i0 - n_connected; j0 < i0; j0++)
+                {
+                    int j=ndx[j0];
+                    background_peak_flag[j] = 1;
+                }
+            }
+            n_connected = 0;
+        }
+    }
+
+    return true;
+}
+
+
 bool spectrum_fit_1d::output(std::string outfname,bool b_out_json,bool b_individual_peaks,bool b_recon,std::string recon_folder_name)
 {
     std::vector<int> ndx;
@@ -2555,6 +2774,8 @@ bool spectrum_fit_1d::output(std::string outfname,bool b_out_json,bool b_individ
         {
             gather_result_with_error_estimation(c);
         }
+
+        label_baseline_peaks();
 
         std::vector<double> amplitudes, fitted_volume;
         std::vector<std::vector<double>> amplitudes_all_spectra;
@@ -2626,16 +2847,16 @@ bool spectrum_fit_1d::output(std::string outfname,bool b_out_json,bool b_individ
         }
 
         // fprintf(fp,"#x y ppm_x ppm_y intensity sigmax sigmay (gammx gammay) fitted_volume num_volume type group\n");
-        fprintf(fp, "VARS INDEX X_AXIS X_PPM XW HEIGHT DHEIGHT ASS INTEGRAL VOL SIMGAX GAMMAX CONFIDENCE NROUND\n");
-        fprintf(fp, "FORMAT %%5d %%9.4f %%8.4f %%7.3f %%+e %%+e %%s %%+e %%+e %%f %%f %%f %%4d\n");
+        fprintf(fp, "VARS INDEX X_AXIS X_PPM XW HEIGHT DHEIGHT ASS INTEGRAL VOL SIMGAX GAMMAX CONFIDENCE NROUND BACKGROUND\n");
+        fprintf(fp, "FORMAT %%5d %%9.4f %%8.4f %%7.3f %%+e %%+e %%s %%+e %%+e %%f %%f %%f %%4d %%1D\n");
         for (unsigned int ii = 0; ii < ndx.size(); ii++)
         {
             int i = ndx[ii];
             float s1 = 0.5346 * fit_gammax[i] * 2 + std::sqrt(0.2166 * 4 * fit_gammax[i] * fit_gammax[i] + fit_sigmax[i] * fit_sigmax[i] * 8 * 0.6931);
-            fprintf(fp, "%5d %9.4f %8.4f %7.3f %+e %+e %s %+e %+e %f %f %f %4d",
+            fprintf(fp, "%5d %9.4f %8.4f %7.3f %+e %+e %s %+e %+e %f %f %f %4d %1d",
                     fit_peak_index[i], fit_p1[i] + 1, fit_p1_ppm[i], s1, amplitudes[i], fit_err[i],
                     user_comments[fit_peak_index[i]].c_str(), fit_num_sum[i][0], fitted_volume[i],
-                    fit_sigmax[i], fit_gammax[i], confident_level[fit_peak_index[i]],fit_nround[i]);
+                    fit_sigmax[i], fit_gammax[i], confident_level[fit_peak_index[i]],fit_nround[i],background_peak_flag[i]);
             if (spects.size() > 1)
             {
                 for (int j = 0; j < spects.size(); j++)
@@ -2702,15 +2923,15 @@ bool spectrum_fit_1d::write_recon(std::string folder_name)
             int i0, i1;
             if (peak_shape == voigt_type)
             {
-                ldw_math_1d::voigt_convolution(intens[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spect.size(), 15.0);
+                ldw_math_1d::voigt_convolution(intens[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
             }
             else if (peak_shape == lorentz_type)
             {
-                ldw_math_1d::lorentz_convolution(intens[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spect.size(), 15.0);
+                ldw_math_1d::lorentz_convolution(intens[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
             }
             else if (peak_shape == gaussian_type)
             {
-                ldw_math_1d::gaussian_convolution(intens[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spect.size(), 15.0);
+                ldw_math_1d::gaussian_convolution(intens[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
             }
             // add data to spe_recon[i0:i1]
             for (int j = i0; j < i1; j++)
@@ -2771,15 +2992,15 @@ bool spectrum_fit_1d::output_json(std::string outfname,const std::vector<int> nd
         int i0, i1;
         if (peak_shape == voigt_type)
         {
-            ldw_math_1d::voigt_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spect.size(), 15.0);
+            ldw_math_1d::voigt_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
         }
         else if (peak_shape == lorentz_type)
         {
-            ldw_math_1d::lorentz_convolution(fit_p_intensity[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spect.size(), 15.0);
+            ldw_math_1d::lorentz_convolution(fit_p_intensity[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
         }
         else if (peak_shape == gaussian_type)
         {
-            ldw_math_1d::gaussian_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spect.size(), 15.0);
+            ldw_math_1d::gaussian_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
         }
         // add data to spe_recon[i0:i1]
         for (int j = i0; j < i1; j++)
@@ -2832,6 +3053,7 @@ bool spectrum_fit_1d::output_json(std::string outfname,const std::vector<int> nd
         peak_params[ii]["position"] = fit_p1_ppm[i]; //use ppm instead of points (fit_p1)
         peak_params[ii]["sigma"] = fit_sigmax[i]*fabs(step1); //convert from points to ppm
         peak_params[ii]["gamma"] = fit_gammax[i]*fabs(step1); //convert from points to ppm. step is negative
+        peak_params[ii]["background"] = background_peak_flag[i]; // 1: background peak, 0: not background peak
     }
     root["peak_params"] = peak_params;
 
@@ -2956,8 +3178,8 @@ bool spectrum_fit_1d::peak_reading(std::string infname)
             int n1 = int(p1[i] + 0.5) - 1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
             if (n1 < 0)
                 n1 = 0;
-            if (n1 > xdim - 1)
-                n1 = xdim - 1;
+            if (n1 > ndata - 1)
+                n1 = ndata - 1;
             temp.push_back(spects[n][n1]); // n1 is direct dimension location
         }
         p_intensity_all_spectra.push_back(temp);
@@ -3260,18 +3482,51 @@ bool spectrum_fit_1d::peak_reading_json(std::string infname)
     return true;
 };
 
-bool spectrum_fit_1d::direct_set_peaks(
-    std::vector<double> p1_,
-    std::vector<double> p1_ppm,
-    std::vector<double> p_intensity_,
-    std::vector<double> sigmax_,
-    std::vector<double> gammax_)
+bool spectrum_fit_1d::set_peaks(const spectrum_1d_peaks p)
 {
-    p1 = p1_;
-    p1_ppm = p1_ppm;
-    p_intensity = p_intensity_;
-    sigmax = sigmax_;
-    gammax = gammax_;
+    p1 = p.x;
+    p_intensity = p.a;
+    sigmax = p.sigmax;
+    gammax = p.gammax;
+
+    /**
+     * Set user_comments to "peak" for all peaks
+    */
     user_comments.resize(p1.size(), "peak");
+
+    p1_ppm=p.ppm;
+
+
+
+    /**
+     * Fill p_intensity_all_spectra 
+     * This is required even for single spectrum fitting.
+    */ 
+    for (int i = 0; i < p1.size(); i++)
+    {
+        std::vector<double> temp;
+        temp.push_back(p_intensity[i]); 
+        p_intensity_all_spectra.push_back(temp);
+    }
+
+
+    std::vector<double> sx;
+    sx.clear();
+    for (unsigned int i = 0; i < p1.size(); i++)
+    {
+        float s1 = 0.5346 * gammax[i] * 2 + std::sqrt(0.2166 * 4 * gammax[i] * gammax[i] + sigmax[i] * sigmax[i] * 8 * 0.6931);
+        sx.push_back(s1); // sx is fwhh
+    }
+    median_width_x = ldw_math_1d::calcualte_median(sx);
+    if(n_verbose>=1) std::cout << "Median peak width is estimated to be " << median_width_x << " points from picking." << std::endl;
+    if (median_width_x < 5.0)
+    {
+        median_width_x = 5.0;
+        if(n_verbose>=1) std::cout << "Set median peak width along x to 5.0" << std::endl;
+    }
+
+
     return true;
 }
+
+

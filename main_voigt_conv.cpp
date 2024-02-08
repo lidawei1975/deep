@@ -22,8 +22,12 @@ extern "C"
  * and output the peak shape to STDOUT (JSON format of an array, each element is 2 arrays: x and y)
  */
 
+#include "DeepConfig.h"
+
 int main(int argc, char **argv)
-{
+{ 
+    std::cout<<"DEEP Picker package Version "<<deep_picker_VERSION_MAJOR<<"."<<deep_picker_VERSION_MINOR<<std::endl;
+
     double center, sigma, gamma, grid_size, drop_cutoff;
     std::string line;
     //get line from STDIN
