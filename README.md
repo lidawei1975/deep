@@ -111,6 +111,8 @@ Command line arguments of nonlinear peak fitter program "voigt_fit"
 
 10. wy: same as wx but for the indirect spectral dimension.
 
+11. combine: A paramter that controlls when to combine tightly overlapping peaks into one peak. Set it to 0.04 (0.12) for high(low) quality spectrum. High quality means optimal peak shape while low quality means some line shape distortion. This is an experimental feature. To turn it off (do not remove overlapping peaks), set it to 0.0. 
+
 Addtional options:
 1. To run pseudo-3D peaks fitting, you can provide multiple input files like this: " -in test001.ft2 test002.ft2 test003.ft2" , where all peaks will have the same peak position, shape across all spectra but various peak heights. 
 
