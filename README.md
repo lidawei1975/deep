@@ -86,6 +86,8 @@ Command line arguments of DEEP picker program "deep_picker"
 
 7. auto_ppp: yes or no. If yes, the program will adjust PPP automatically using cubic spline interpolation method. Unless you have a good reason, this should always be set to yes.
 
+8. negative: yes or no. If yes, Deep Picker will also pick negative peaks. 
+
 # How to use Voigt Fitter
 Command line arguments of nonlinear peak fitter program "voigt_fit"
 
@@ -114,6 +116,9 @@ Addtional options:
 
 2. The program supports Monte Carlo type error analysis (Bootstrapping) to estimate accuracy of fitted peak parameters, caused by noise. To enable it, set "-n_err" to 5 or larger, which is the number of addtional rounds of fitting with artifical noise added. 
 
+# Deep Picker 1D and Voigt Fitter 1D
+
+These two programs (deep_picker_1d, peak_fit_1d ) are very similar to the above 2D version but are for 1D spectra. To list all command line arguments with explanation, run them with "-h" argument.
 
 # CITATION:
 If you found DEEP Picker and/or nonlinear peak fitter useful, please cite our publication(s):
