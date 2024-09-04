@@ -90,7 +90,7 @@ class mycostfunction_voigt1d_doesy : public ceres::CostFunction
 {
 
 private:
-  int t;           // time delay. t=0,1,2,3,...,n-1
+  double z_gradient_squared;           // time delay. t=0,1,2,3,...,n-1
   int n_datapoint; // size of z(x)
   double *z;       // x -> coor, z-> spectra data
 
@@ -99,7 +99,7 @@ private:
 
 public:
   ~mycostfunction_voigt1d_doesy();
-  mycostfunction_voigt1d_doesy(int, int, double *);
+  mycostfunction_voigt1d_doesy(double, int, double *);
   bool Evaluate(double const *const *, double *, double **) const;
   inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
   inline void set_n_residuals(int n) { set_num_residuals(n); };
@@ -160,6 +160,8 @@ private:
   enum fit_type type;                     // gaussian or voigt
   int nspect; // number of input spectra
 
+
+
   ceres::Solver::Options options;
 
   bool one_fit_gaussian(int, std::vector<double> *zz, double &x0, double &a, double &sigmax, double &e);
@@ -195,6 +197,7 @@ public:
   // updated in fitting at each iteration
   std::vector<int> to_remove;                       // lable to_be_remvoed peaks identifed in fitting process
   std::vector<std::vector<double>> a;               // peak intensity a[peak_index][spectra_index]
+  std::vector<double>   a_at_time_zero;             // peak intensity at time zero. used in doesy fitting only
   std::vector<double> x;                            // peak coordinates
   std::vector<double> sigmax;                       // Gaussian peak shape parameter. IMPORTANT: in Gaussian fit, this is actually 2*sigma*sigma
   std::vector<double> gammax;                       // Lorentzian peak shape parameter

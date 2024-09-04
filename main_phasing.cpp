@@ -113,7 +113,7 @@ int main(int argc, char **argv)
             /**
              * main working function
             */
-            x.auto_phase_correction();
+            x.auto_phase_correction_v2();
             std::cout<<"Auto phase correction done!"<<std::endl;
         }
 

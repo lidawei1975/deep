@@ -197,14 +197,14 @@ bool mycostfunction_lorentz1d::Evaluate(double const *const *xx, double *residua
 
 /**
  * @brief for pseudo 2D voigt fitting, analytical derivative
- * Peak amplitude is defined as A = A0*exp(-t*t*D) where A0 and D are fitting parameters
- * while t=[0,1,2,3,...,n-1] is the time delay
+ * Peak amplitude is defined as A = A0*exp(-g*g*D) where A0 and D are fitting parameters
+ * while g is squared z gradient.
  */
 // voigt_1d
 mycostfunction_voigt1d_doesy::~mycostfunction_voigt1d_doesy(){};
-mycostfunction_voigt1d_doesy::mycostfunction_voigt1d_doesy(int t_,int n_datapoint_, double *z_)
+mycostfunction_voigt1d_doesy::mycostfunction_voigt1d_doesy(double t_,int n_datapoint_, double *z_)
 {
-    t = t_; //t is an integer. t=0,1,2,3,4,5,6,7,8,9,10,11,12,13,14...
+    z_gradient_squared = t_; 
     n_datapoint = n_datapoint_;
     z = z_;
 };
@@ -248,7 +248,7 @@ bool mycostfunction_voigt1d_doesy::Evaluate(double const *const *xx, double *res
     
     double diff_sqrt = xx[4][0]; //This is SQRT of the diffusion coefficient. We fit the SQRT of the diffusion coefficient to avoid diffusion coefficient
     double diff = diff_sqrt*diff_sqrt; //This is the diffusion coefficient. 
-    double a_scale=exp(-t*t*diff); //This is the amplitude scale factor at t=t
+    double a_scale=exp(-z_gradient_squared*diff); //This is the amplitude scale factor at t=t
     double a = a0*a_scale; //This is the amplitude at t=t
     double x0 = xx[1][0]; //This is the center position
     double sigmax = fabs(xx[2][0]);
@@ -268,7 +268,7 @@ bool mycostfunction_voigt1d_doesy::Evaluate(double const *const *xx, double *res
             jaco[1][i] = -a * r_x;              // derivative with respect to x0
             jaco[2][i] = a * r_sigmax;          // derivative with respect to sigmax
             jaco[3][i] = a * r_gammax;          // derivative with respect to gammax
-            jaco[4][i] = -vvx * a0 * a_scale * t * t * 2.0 * diff_sqrt;   // dz/da=vvx, da/dD = -a0*t*t*exp(-t*t*D), dD/dsqrtD =2*sqrtD
+            jaco[4][i] = -vvx * a0 * a_scale * z_gradient_squared * 2.0 * diff_sqrt;   // dz/da=vvx, da/dD = -a0*t*t*exp(-t*t*D), dD/dsqrtD =2*sqrtD
         }
     }
     else // only require residual errors
@@ -954,20 +954,23 @@ bool gaussian_fit_1d::run_peak_fitting(bool flag_first)
      * @brief Set diffusion coefficient for each peak.
      * This varible is only useful for doesy experiment. But it is filled for all cases for simplicity.
      */
-    diffusion_coefficient.resize(npeak, 0.01);
+    diffusion_coefficient.resize(npeak, 0.0025);
 
     /**
-     * @brief init a[i][1,2,3,...,nspect-1] from a[i][0] and diffusion_coefficient if b_doesy is true.
+     * @brief init guess of a[i][1,2,3,...,nspect-1] from a[i][0] and diffusion_coefficient if b_dosy is true.
      * 
      */
-    if(b_doesy==true)
+    if(b_dosy==true)
     {
+        double z_gradient_squared_0 = z_gradients[0]*z_gradients[0];
         for(int i=0;i<npeak;i++)
         {
             for(int k=1;k<nspect;k++)
             {
-                a[i][k] = a[i][0] * exp(-diffusion_coefficient[i] * k * k);
+                double z_gradient_squared = z_gradients[k]*z_gradients[k];
+                a[i][k] = a[i][0] * exp(-diffusion_coefficient[i] * z_gradient_squared)/exp(-diffusion_coefficient[i] * z_gradient_squared_0);
             }
+            a_at_time_zero.push_back(a[i][0]/exp(-diffusion_coefficient[i] * z_gradient_squared_0));
         }
     }
 
@@ -1032,6 +1035,10 @@ bool gaussian_fit_1d::run_peak_fitting(bool flag_first)
     minimal_height *= spectrum_scale;
     noise_level *= spectrum_scale;
 
+
+    /**
+     * Only remove peaks in the first round of fitting (with error estimation)
+    */
     if (flag_first == true)
     {
         // actual remove peaks
@@ -1056,6 +1063,9 @@ bool gaussian_fit_1d::run_peak_fitting(bool flag_first)
 
         for (int i = a.size() - 1; i >= 0; i--)
         {
+            /**
+             * @brief Remove peaks at the edge of the spectrum (mostlikely this peak is a main peak in a neighboring segment)
+            */
             if (x[i] < n_patch || x[i] > surface.size() - n_patch)
             {
                 a.erase(a.begin() + i);
@@ -1216,20 +1226,21 @@ bool gaussian_fit_1d::run_single_peak_multi_spectra()
     {
         multi_fit_lorentz(xdim, zz, x[0], a[0], gammax[0], err[0]);
     }
-    else if (type == voigt_type && b_doesy==false) // voigt for pseudo 2d
+    else if (type == voigt_type && b_dosy==false) // voigt for pseudo 2d
     {
         multi_fit_voigt(xdim, zz, x[0], a[0], sigmax[0], gammax[0], err[0], 0, 0);
     }
-    else if (type == voigt_type && b_doesy==true) // voigt for doesy
+    else if (type == voigt_type && b_dosy==true) // voigt for doesy
     {
-        multi_fit_voigt_doesy(xdim, zz, x[0], a[0][0], diffusion_coefficient[0], sigmax[0], gammax[0], err[0], 0, 1);
+        multi_fit_voigt_doesy(xdim, zz, x[0], a_at_time_zero[0], diffusion_coefficient[0], sigmax[0], gammax[0], err[0], 0, 1);
         /**
          * @brief fill a[0][1,2,3,...,nspec-1] using diffusion coefficient and a[0][0]
          * 
          */
-        for(int k=1;k<nspect;k++)
+        for(int k=0;k<nspect;k++)
         {
-            a[0][k]=a[0][0]*exp(-diffusion_coefficient[0]*k*k);
+            double z_gradient_squared = z_gradients[k]*z_gradients[k];
+            a[0][k]=a_at_time_zero[0]*exp(-diffusion_coefficient[0]*z_gradient_squared);
         }
     }
     nround = 1;
@@ -1649,6 +1660,23 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
         {
             for (unsigned int i = 0; i < x.size(); i++)
             {
+                /**
+                 * If all a[i][k] are 0.0, we skip this peak.
+                 */
+                bool b_all_zero=true;
+                for(int kk=0;kk<nspect;kk++)
+                {
+                    if(a[i][kk]>std::numeric_limits<double>::epsilon() || a[i][kk]<-std::numeric_limits<double>::epsilon())
+                    {
+                        b_all_zero=false;
+                        break;
+                    }
+                }
+                if(b_all_zero)
+                {
+                    continue;
+                }
+
                 int i0, i1;
                 analytical_spectra.clear();
                 if (type == gaussian_type)
@@ -1668,8 +1696,26 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
         // save old values so that we can check for convergence!
         x_old.push_back(x);
 
+        # pragma omp parallel for
         for (int i = 0; i < x.size(); i++)
         {
+            /**
+             * If all a[i][k] are 0.0, we skip this peak.
+             */
+            bool b_all_zero = true;
+            for (int kk = 0; kk < nspect; kk++)
+            {
+                if (a[i][kk] > std::numeric_limits<double>::epsilon() || a[i][kk] < -std::numeric_limits<double>::epsilon())
+                {
+                    b_all_zero = false;
+                    break;
+                }
+            }
+            if (b_all_zero)
+            {
+                continue;
+            }
+
             int i0, i1;
             std::vector<std::vector<double>> zzz; //[spectra][x]
             for(int k=0;k<nspect;k++)
@@ -1677,18 +1723,19 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
                 std::vector<double> zz; // deconvoluted spectrum for each peak
                 double total_z = 0.0;
 
-                analytical_spectra.clear();
+                std::vector<double> analytical_spectra_peak; // analytical spectrum for each peak
+                analytical_spectra_peak.clear();
 
                 if (type == gaussian_type)
-                    gaussain_convolution_with_limit(i, a[i][k], x[i], sigmax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
+                    gaussain_convolution_with_limit(i, a[i][k], x[i], sigmax[i], &(analytical_spectra_peak), i0, i1, CONVOLUTION_RANGE);
                 else if (type == voigt_type)
-                    voigt_convolution_with_limit(i, a[i][k], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
+                    voigt_convolution_with_limit(i, a[i][k], x[i], sigmax[i], gammax[i], &(analytical_spectra_peak), i0, i1, CONVOLUTION_RANGE);
                 else if (type == lorentz_type)
-                    lorentz_convolution_with_limit(i, a[i][k], x[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
+                    lorentz_convolution_with_limit(i, a[i][k], x[i], gammax[i], &(analytical_spectra_peak), i0, i1, CONVOLUTION_RANGE);
 
                 for (int ii = i0; ii < i1; ii++)
                 {
-                    double inten1 = analytical_spectra[ii - i0];
+                    double inten1 = analytical_spectra_peak[ii - i0];
                     double inten2 = peaks_total[k][ii];
                     double scale_factor;
                     if (fabs(inten2) > 1e-100)
@@ -1710,26 +1757,75 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
             {
                 multi_fit_gaussian(i1 - i0, zzz, x[i], a[i], sigmax[i], err[i]);
             }
-            else if (type == voigt_type && b_doesy==false)
+            else if (type == voigt_type && b_dosy==false)
             {
                multi_fit_voigt(i1 - i0, zzz, x[i], a[i], sigmax[i], gammax[i], err[i], loop, 100);
             }
-            else if (type == voigt_type && b_doesy==true)
+            else if (type == voigt_type && b_dosy==true)
             {
-                multi_fit_voigt_doesy(i1 - i0, zzz, x[i], a[i][0], diffusion_coefficient[i], sigmax[i], gammax[i], err[i], loop, 100);
+                
+                multi_fit_voigt_doesy(i1 - i0, zzz, x[i], a_at_time_zero[i], diffusion_coefficient[i], sigmax[i], gammax[i], err[i], loop, 100);
                /**
                  * @brief fill a[0][1,2,3,...,nspec-1] using diffusion coefficient and a[0][0]
                  * 
                  */
-                for(int k=1;k<nspect;k++)
+                for(int k=0;k<nspect;k++)
                 {
-                    a[i][k]=a[i][0]*exp(-diffusion_coefficient[i]*k*k);
+                    double z_gradient_squared = z_gradients[k]*z_gradients[k];
+                    a[i][k]=a_at_time_zero[i]*exp(-diffusion_coefficient[i]*z_gradient_squared);
                 }
             }
             else if (type == lorentz_type)
             {
                 multi_fit_lorentz(i1 - i0, zzz, x[i], a[i], gammax[i], err[i]);
             }
+
+            if (fabs(sigmax.at(i)) + fabs(gammax.at(i)) < 0.2 || fabs(sigmax.at(i)) + fabs(gammax.at(i)) > 10.0 * median_width_x)
+            {
+                if(n_verbose>1)
+                {
+                    std::cout << original_ndx[i] << " will be removed because too wide or narrow x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << std::endl;
+                }
+                /**
+                 * Set a[i] to all 0.0 as flag. We keep them to keep original size and order of peaks
+                 */
+                for(int k=0;k<nspect;k++)
+                {
+                    a[i][k]=0.0;
+                }
+            }
+
+            
+            if (x.at(i) < 0 || x.at(i) >= i1 - i0)
+            {
+                if(n_verbose>1)
+                {
+                    std::cout << original_ndx[i] << " will be removed because moved out of area  x=" << x.at(i) << " i0="<<i0<<" i1="<<i1<<" a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << std::endl;
+                }
+                /**
+                 * Set a[i] to all 0.0 as flag. We keep them to keep original size and order of peaks
+                 */
+                for(int k=0;k<nspect;k++)
+                {
+                    a[i][k]=0.0;
+                }
+            }
+
+            if(x.at(i)+i0<x_range_left[i] || x.at(i)+i0>x_range_right[i])
+            {
+                if(n_verbose>1)
+                {
+                    std::cout << original_ndx[i] << " will be removed because moved out of range x=" << x.at(i) + i0 << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << std::endl;
+                }
+                /**
+                 * Set a[i] to all 0.0 as flag. We keep them to keep original size and order of peaks
+                 */
+                for(int k=0;k<nspect;k++)
+                {
+                    a[i][k]=0.0;
+                }
+            }
+
             x[i] += i0;
         } // end of parallel for(int i = 0; i < x.size(); i++)
 
@@ -2124,7 +2220,8 @@ bool gaussian_fit_1d::multi_fit_voigt_core_doesy(const int xdim,std::vector<std:
 
     for(int k=0;k<zz.size();k++)
     {
-        mycostfunction_voigt1d_doesy *cost_function = new mycostfunction_voigt1d_doesy(k,xdim, zz[k].data());
+        double z_gradient_squared = z_gradients[k]*z_gradients[k];
+        mycostfunction_voigt1d_doesy *cost_function = new mycostfunction_voigt1d_doesy(z_gradient_squared,xdim, zz[k].data());
         cost_function->set_n_residuals(zz[k].size());
         for (int m = 0; m < 5; m++)
             cost_function->parameter_block_sizes()->push_back(1);
@@ -2311,6 +2408,9 @@ bool spectrum_fit_1d::init_all_spectra(std::vector<std::string> fnames_,int n_st
     }
 };
 
+
+
+
 /**
  * @brief find signal free region and signal region
  * we may have both positive and negative peaks
@@ -2380,6 +2480,15 @@ bool spectrum_fit_1d::set_for_one_spectrum()
 
 bool spectrum_fit_1d::peak_fitting()
 {
+
+    /**
+     * If z_gradients is not set, we will turn off the doesy fitting
+    */
+    if(b_dosy==true && z_gradients.size()!=nspect)
+    {
+        std::cout<<"z_gradients.size()="<<z_gradients.size()<<" is not equal to nspect="<<nspect<<". Doesy fitting will be turned off."<<std::endl;
+        b_dosy=false;
+    }
 
     double wx;
 
@@ -2814,8 +2923,10 @@ bool spectrum_fit_1d::output(std::string outfname,bool b_out_json,bool b_individ
             {
                 for (int k = 1; k < amplitudes_all_spectra[i].size(); k++)
                 {
-
-                    amplitudes_all_spectra[i][k] /= amplitudes_all_spectra[i][0];
+                    /**
+                     * Add a small number to avoid division by zero
+                    */
+                    amplitudes_all_spectra[i][k] /= (amplitudes_all_spectra[i][0]+std::numeric_limits<double>::epsilon());
                 }
                 amplitudes_all_spectra[i][0] = 1.0;
             }

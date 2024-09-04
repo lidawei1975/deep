@@ -62,6 +62,24 @@ public:
     bool set_n(int); //set ndata
     bool run_apodization(float *,int) const;
 
+    inline bool set_first_point(float v){
+        /**
+         * @brief set_first_point: set the first point of the window function
+         * return false if the window function is not defined yet
+         * (this function should be called after set_n)
+        */
+        if(sps.size()==0){
+            std::cerr<<"Error: window function is not defined yet. Please call set_n first."<<std::endl;
+            return true;
+        }
+        /**
+         * @brief set_first_point: set the first point of the window function
+         * then return true
+        */
+        sps[0]=v;
+        return true;
+    }
+
 };
 
 

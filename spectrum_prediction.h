@@ -44,6 +44,10 @@ struct compound
     */
     std::vector<double> a,x,y,sigma_y,gamma_y;
     
+    /**
+     * Flag to indicate whether we need to simulate the spectrum.
+    */
+    int simulate_spectrum_flag;
 };
 
 class spectrum_prediction
@@ -60,6 +64,8 @@ private:
     int n_acquisition,n_zf; //number of acquisition and zero filling. n_acquisition*n_zf should be equal to x_dim.
     double spectral_width,spectral_width_c; //spectral width in direct and indirect dimension.
 
+
+
     /**
      * Compounds.
     */
@@ -70,6 +76,11 @@ private:
      * @param simulated_spectrum column major simulated spectrum.
     */
     std::vector<std::vector<double>> simulated_spectrum; 
+
+    /**
+     * This is the sum of all simulated spectrum.
+    */
+    std::vector<std::vector<double>> sum_of_simulated_spectrum;
 
     /**
      * Define a group of rectangles to label the signal region.
@@ -95,7 +106,8 @@ public:
     ~spectrum_prediction();
 
     void load_query_json(std::string query_file);
-    void work();
+    void simu_and_contour_one_by_one();
     void save_simulated_spectrum(std::string output_file);
     void save_simulated_spectrum_binary(std::string output_file);
+    void save_sum_of_simulated_spectrum(std::string output_file);
 };

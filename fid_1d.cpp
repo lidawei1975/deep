@@ -749,7 +749,7 @@ bool fid_1d::read_bruker_acqus_and_fid(const std::string &acqus_file_name, const
      * Here we leave them interleaved in fid_data_float or fid_data_int
      */
 
-
+    fid_data_float.clear();
 
     for (int i = 0; i < fid_data_file_names.size(); i++)
     {
@@ -809,7 +809,6 @@ bool fid_1d::read_bruker_acqus_and_fid(const std::string &acqus_file_name, const
         /**
          * convert int32 or double64 to float32.
          */
-        fid_data_float.clear();
         fid_data_float.resize(ndata_bruker * nspectra);    
         if (data_type == FID_DATA_TYPE_INT32)
         {

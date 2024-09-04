@@ -13,7 +13,8 @@
  * These are shared varibles between db_match_1d and pattern_match_1d and spectrum_pick_1d
 */
 int shared_data_1d::n_verbose=0; 
-bool shared_data_1d::b_doesy=false;
+bool shared_data_1d::b_dosy=false;
+std::vector<double> shared_data_1d::z_gradients;
 
 namespace ldw_math_spectrum_1d
 {

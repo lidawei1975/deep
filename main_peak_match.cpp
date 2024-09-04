@@ -210,15 +210,15 @@ int test()
 
 void peak_reading
 (
-    std::string fname,
-    std::vector<std::string> &header,
-    std::vector<std::string> &lines, 
-    int peak_pos_ndx, 
-    int peak_pos_ndx2, 
-    std::vector<std::array<double,2>> &peak_pos, 
-    int peak_infor_ndx, 
-    std::vector<std::string> &peak_info,
-    std::array<double,4> &region
+    std::string fname,  //name of the file to be read
+    std::vector<std::string> &header, //VARS and FORMAT line
+    std::vector<std::string> &lines,  //one line for each peak
+    int peak_pos_ndx,  //location of peak ppm_x in the line
+    int peak_pos_ndx2,  //location of peak ppm_y in the line
+    std::vector<std::array<double,2>> &peak_pos,  //x_ppm and y_ppm pair of each peak
+    int peak_infor_ndx, //location of peak assignment in the line
+    std::vector<std::string> &peak_info, //assignment of each peak
+    std::array<double,4> &region //spectral region (requried to fold peaks to the same region)
 )
 {
     bool b_data=false;
@@ -377,18 +377,23 @@ int main(int argc, char **argv)
     args2.push_back("match.tab");
     args3.push_back("output file name with assignment transfer from input 1 to input 2");
 
+    args.push_back("-out-ass");
+    args2.push_back("assignment.txt");
+    args3.push_back("out file contain assignments, one line per peak in in2 peak file");
+
     args.push_back("-n");
     args2.push_back("1");
     args3.push_back("Every peak in input 1 can match either 1 or 2 peak(s) in input 2");
    
     std::vector<std::string> header,header1;
     std::vector<std::string> lines,lines1; 
+    std::vector<std::string> ass;
     std::vector<std::array<double,2>> peak_pos1, peak_pos2;
     int peak_pos_ndx1,peak_pos_ndx12,peak_infor_ndx1,peak_pos_ndx2,peak_pos_ndx22,peak_infor_ndx2;
     std::vector<std::string> peak_infor1,peak_infor2;
     std::array<double,4> region1,region2;
 
-    std::string fin_name1,fin_name2,fout_name;
+    std::string fin_name1,fin_name2,fout_name,fout_ass_name;
 
     cmdline.init(args, args2, args3);
     cmdline.pharse(argc, argv);
@@ -400,6 +405,7 @@ int main(int argc, char **argv)
         fin_name1 = cmdline.query("-in1");
         fin_name2 = cmdline.query("-in2");
         fout_name = cmdline.query("-out");
+        fout_ass_name = cmdline.query("-out-ass");
 
         std::string stab(".tab");
         std::string slist(".list");
@@ -419,7 +425,7 @@ int main(int argc, char **argv)
         
         peak_reading(fin_name2,header,lines,peak_pos_ndx2,peak_pos_ndx22,peak_pos2,peak_infor_ndx2,peak_infor2,region2);
         
-
+        ass.resize(lines.size(),"");
 
         int npeak1=peak_pos1.size(); //with assignment
         int npeak2=peak_pos2.size();
@@ -558,6 +564,7 @@ int main(int argc, char **argv)
                 std::string part2 = lines[vd[i]].substr(found + infor_length);
 
                 lines[vd[i]] = part1 + peak_infor1[i] + part2;
+                ass[vd[i]] = peak_infor1[i];
 
                 int ii = i;
                 if (n == 2)
@@ -604,6 +611,13 @@ int main(int argc, char **argv)
             {
                 fout<<lines[i]<<std::endl;
             }
+        }
+        fout.close();
+
+        fout.open(fout_ass_name);
+        for(int i=0;i<ass.size();i++)
+        {
+            fout<<ass[i]<<std::endl;
         }
         fout.close();
 

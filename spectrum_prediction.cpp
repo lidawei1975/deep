@@ -153,6 +153,8 @@ void spectrum_prediction::load_query_json(std::string query_file)
     spectral_width = root["exp_information"]["spectral_width"].asDouble();
     spectral_width_c = root["exp_information"]["spectral_width_c"].asDouble();
 
+    
+
     /**
      * Load in compounds information. Loop through all compounds.
     */
@@ -165,7 +167,8 @@ void spectrum_prediction::load_query_json(std::string query_file)
         c.namne = root["compound"][i]["name"].asString();
         c.origin = root["compound"][i]["origin"].asString();
         c.origin_1d = root["compound"][i]["origin_1d"].asString();
-
+        c.simulate_spectrum_flag = root["compound"][i]["spectral_simulation"].asInt();
+       
         /**
          * Loop through all peaks of the compound.
         */
@@ -200,6 +203,7 @@ void spectrum_prediction::load_query_json(std::string query_file)
             c.gamma_y.push_back(0.0);
         }
         compounds.push_back(c);
+        std::cout<<"name is "<<c.namne<<" simulation flag is "<<c.simulate_spectrum_flag<<std::endl;
         std::cout<<"compound "<<i<<" loaded out of "<<root["compound"].size()<<std::endl;
     }
 
@@ -301,9 +305,26 @@ void spectrum_prediction::simulate_spectrum_of_one_compound(int compound_index)
     }
     std::cout<<"compound "<<compound_index<<" simulated."<<std::endl;
 
+
+    if(compound_index==0) //first compound
+    {
+        sum_of_simulated_spectrum = simulated_spectrum;
+    }
+    else
+    {
+        for(int i=0;i<x_dim;i++)
+        {
+            for(int j=0;j<y_dim;j++)
+            {
+                sum_of_simulated_spectrum[i][j] += simulated_spectrum[i][j];
+            }
+        }
+    }
+
     /**
      * Debug code
     */
+#ifdef DEBUG
     if(compound_index==0)
     {
         std::ofstream fout("simulated_spectrum.txt");
@@ -317,6 +338,7 @@ void spectrum_prediction::simulate_spectrum_of_one_compound(int compound_index)
         }
         fout.close();
     }
+#endif
 
     /**
      * Check for overlap of signal regions and merge them.
@@ -394,23 +416,47 @@ void spectrum_prediction::calcualte_contour(Json::Value &root_i,std::vector<floa
     return;
 };
 
-void spectrum_prediction::work()
+void spectrum_prediction::simu_and_contour_one_by_one()
 {
     root = Json::arrayValue;
 
     int n_current=0;
     for(int i=0;i<compounds.size();i++)
     {   
-        /**
-         * Simulate the spectrum of one compound. Save it to simulated_spectrum.
-        */
-        simulate_spectrum_of_one_compound(i);
+        
         Json::Value root_i;
         std::vector<float> raw_data;
+
         /**
-         * Calculate the contour of the simulated spectrum and save it to root_i and raw_data.
+         * If this is not a real compound:
+         * name starts with "multiplet"
+         * do not calculate the contour, set size to 0 and continue.
         */
-        calcualte_contour(root_i,raw_data);
+        if(compounds[i].namne.find("multiplet")!=std::string::npos)
+        {
+            root_i["size"] = 0;
+            raw_data.clear();
+        }
+        /**
+         * or if flag is 0, do not calculate the contour, set size to 0 and continue.
+        */
+        else if(compounds[i].simulate_spectrum_flag==0)
+        {
+            root_i["size"] = 0;
+            raw_data.clear();
+        }
+        else
+        {
+            /**
+             * Simulate the spectrum of one compound. Save it to simulated_spectrum.
+            */
+            simulate_spectrum_of_one_compound(i);
+            /**
+             * Calculate the contour of the simulated spectrum and save it to root_i and raw_data.
+            */
+            calcualte_contour(root_i,raw_data);
+        }
+
 
         /**
          * Track compound index for convenience.
@@ -427,7 +473,10 @@ void spectrum_prediction::work()
          * Append the root_i to root and append the raw_data to contour_data.
         */
         root.append(root_i);
-        contour_data.insert(contour_data.end(),raw_data.begin(),raw_data.end());
+        if(raw_data.size()>0)
+        {
+            contour_data.insert(contour_data.end(),raw_data.begin(),raw_data.end());
+        }
     }
     return;
 };
@@ -461,6 +510,35 @@ void spectrum_prediction::save_simulated_spectrum_binary(std::string output_file
         exit(1);
     }
     fwrite(contour_data.data(),sizeof(float),contour_data.size(),fp);
+    return;
+};
+
+
+void spectrum_prediction::save_sum_of_simulated_spectrum(std::string output_file)
+{
+    FILE *fout = fopen(output_file.c_str(),"wb");
+    if (fout == NULL)
+    {
+        std::cerr<<"Error: cannot open file "<<output_file<<std::endl;
+        exit(1);
+    }
+
+    /**
+     * sum_of_simulated_spectrum[xdim][ydim] is the column major simulated spectrum as double64.
+     * However, we need to save it as row major as float32 to be consistent with colmarm web server .bin format
+     * for spectrum.
+     * We do not need header information for the .bin file because it is the same as the experimental data.
+    */
+    std::vector<float> row(x_dim,0.0);
+    for(int j=0;j<y_dim;j++)
+    {
+        for(int i=0;i<x_dim;i++)
+        {
+            row[i] = sum_of_simulated_spectrum[i][j];
+        }
+        fwrite(row.data(),sizeof(float),x_dim,fout);
+    }
+    
     return;
 };
 

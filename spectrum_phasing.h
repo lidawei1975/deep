@@ -46,7 +46,6 @@ public:
     spectrum_phasing();
     ~spectrum_phasing();
 
-    bool auto_phase_correction();
     bool auto_phase_correction_v2();
     bool set_user_phase_correction(double p0_direct, double p1_direct, double p0_indirect, double p1_indirect);
     bool save_phase_correction_result(std::string fname) const;

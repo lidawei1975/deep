@@ -73,6 +73,10 @@ int main(int argc, char **argv)
     args2.push_back("0.0 0.0");
     args3.push_back("user defined phase correction at the left and right ends, separated by space.");
 
+    args.push_back("-flip");
+    args2.push_back("no");
+    args3.push_back("flip spectrum (yes,no,auto). auto means we will decide based on the positivity of spectrum.");
+
     args.push_back("-n_loop");
     args2.push_back("10");
     args3.push_back("number of iterations for phase correction.");
@@ -201,6 +205,25 @@ int main(int argc, char **argv)
             double user_phase_left = std::stod(user_phase_string_split[0]);
             double user_phase_right = std::stod(user_phase_string_split[1]);
             x.phase_spectrum(user_phase_left, user_phase_right);  //unit is degree !!
+
+            std::string flip=cmdline.query("-flip");
+            /**
+             * Get first element of flip 
+            */
+            char flip_char=flip[0];
+            if(flip_char == 'y' || flip_char == 'Y')
+            {
+                x.flip_spectrum();
+            }
+            else if(flip_char == 'a' || flip_char == 'A')
+            {
+                x.auto_flip_spectrum();
+            }
+            else
+            {
+                //do nothing
+            }
+
         }
         else
         {

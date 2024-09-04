@@ -1,4 +1,5 @@
 #include <vector>
+#include <array>
 #include <set>
 #include <deque>
 #include <string>
@@ -62,6 +63,7 @@ protected:
 
 private:
     bool b_pipe;
+    bool b_transpose; //if true, we need to transpose back the spectrum
     float header[512];  //nmrpipe format 
 
     
@@ -78,6 +80,7 @@ protected:
     float read_float(FILE *);
     bool read_float(FILE *,int, float *);
     int read_int(FILE *);
+    bool process_pipe_header(float *header);
 
     bool read_pipe(std::string fname); //nmrpipe
     bool read_topspin_txt(std::string fname); //topspin totxt format
@@ -110,8 +113,13 @@ public:
     spectrum_io();
     ~spectrum_io();
 
+#ifdef DEBUG
+    bool assess_match(spectrum_io &x);
+#endif
+
     bool init(std::string, int noise_flag=1);  //read spectrum and est noise
     bool read_spectrum(std::string); //read spectrum only
+    bool read_nmr_ft2_virtual(std::array<float,512> header, std::vector<float> data);
     
     /**
      * Public function to write spectrum to a file.

@@ -17,6 +17,8 @@ Linux System:
 
 Install Ceres-solver: Begin by installing Ceres-solver, a nonlinear optimization library. Follow the installation guide available at http://ceres-solver.org/installation.html. Note that Ceres-solver has its own dependencies, so make sure to install them as well according to the Ceres-solver guide.
 
+Without Ceres-solver, an alternative fitter will be built instead, which is about 2-3 times slower. 
+
 Download the source code: Download the Deep-picker source code and unzip it into a folder on your Linux system, such as /home/user-name/deep-picker.
 
 Create a build directory: Open a terminal and create a build directory by executing the following command: mkdir /home/user-name/build-deep-picker
@@ -67,7 +69,7 @@ The following are the spectral processing steps that should be followed carefull
 
 1. Run deep_picker to pick peaks, e.g. run "./deep_picker -in test.ft2" to generate a file named peaks.tab
 
-2. Run voigt_fit to optimize peaks, e.g., run "./voigt_fit -in test.ft2 -peak_in peaks.tab -out fitted.tab" to get an optimized peaks file named "fitted.tab"
+2. Run voigt_fit (or voigt_fit_2, with is built without Ceres-solver) to optimize peaks, e.g., run "./voigt_fit -in test.ft2 -peak_in peaks.tab -out fitted.tab" to get an optimized peaks file named "fitted.tab"
 
 # How to use Deep Picker
 Command line arguments of DEEP picker program "deep_picker"

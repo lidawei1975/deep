@@ -21,7 +21,11 @@ namespace ldw_math_spectrum_1d
 struct shared_data_1d
 {
   static int n_verbose; //0: minimal output, 1: normal output
-  static bool b_doesy;  // true: doesy fitting, false: normal fitting
+  static bool b_dosy;  // true: doesy fitting, false: normal fitting
+    /**
+   * Z_gradient is used in pseudo 2D DOSY fitting only
+  */
+  static std::vector<double> z_gradients;
 };
 
 

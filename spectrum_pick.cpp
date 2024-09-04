@@ -410,6 +410,7 @@ bool spectrum_pick::ann_peak_picking(int flag, int flag_t1_noise, bool b_negativ
     median_width_y=ldw_math_spectrum_2d::calcualte_median(sy);
 
     std::cout<<"Median peak width is estimated to be "<<median_width_x<<" "<<median_width_y<< " from ann picking."<<std::endl;
+    std::cout<<"On original spectrum without interpolation, median peak width is "<<median_width_x*interpolation_step_direct<<" "<<median_width_y*interpolation_step_indirect<<std::endl;
 
     return true;
 };
@@ -450,6 +451,17 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
         p2_original_spectrum.push_back(p2[i]*interpolation_step_indirect);
     }
 
+    /**
+     * Rescale sigmax, sigmay, gammax, gammay back to original spectrum size
+    */
+    for(int i=0;i<sigmax.size();i++)
+    {
+        sigmax[i] *= interpolation_step_direct;
+        sigmay[i] *= interpolation_step_indirect;
+        gammax[i] *= interpolation_step_direct;
+        gammay[i] *= interpolation_step_indirect;
+    }
+
 
     for(int m=0;m<file_names.size();m++)
     {
@@ -467,11 +479,6 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
                 double s1,s2;
                 s1=1.0692*gammax[i]+sqrt(0.8664*gammax[i]*gammax[i]+5.5452*sigmax[i]*sigmax[i]);
                 s2=1.0692*gammay[i]+sqrt(0.8664*gammay[i]*gammay[i]+5.5452*sigmay[i]*sigmay[i]);
-                /**
-                 * We need to scale s1 and s2 back to be consistent with original spectrum (before interpolcation)
-                */
-                s1 *= interpolation_step_direct;
-                s2 *= interpolation_step_indirect;
                 fprintf(fp,"%5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %s %4.2f <--\n",ii+1,p1_original_spectrum[i]+1,p2_original_spectrum[i]+1,p1_ppm[i], p2_ppm[i],s1,s2,
                             int(p1_original_spectrum[i]-3),int(p1_original_spectrum[i]+3),int(p2_original_spectrum[i]-3),int(p2_original_spectrum[i]+3),p_intensity[i],user_comments[i].c_str(),std::min(p_confidencex[i],p_confidencey[i]));        
             }

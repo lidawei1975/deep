@@ -29,6 +29,18 @@ int main(int argc, char **argv)
     args2.push_back("ser acqus acqu2s pulseprogram");
     args3.push_back("input fid,acqus,acqus2 and pulseprogram file names, separated by space(s) or *.ft1 or a folder name.");
 
+    args.push_back("-aqseq");
+    args2.push_back("321");
+    args3.push_back("acquisition sequence in pseudo-3D exp, 321 or 312 only. N.A. if not pseudo-3D exp.");
+
+    args.push_back("-negative");
+    args2.push_back("no");
+    args3.push_back("negative image data along indirect dimension?");
+    
+    args.push_back("-first_only");
+    args2.push_back("no");
+    args3.push_back("only process the first spectrum in pseudo-3D experiment.");
+
     args.push_back("-out");
     args2.push_back("test.ft2"); 
     args3.push_back("output frq domain file name");
@@ -70,8 +82,26 @@ int main(int argc, char **argv)
     {
         fid_2d fid;
         std::string fid_infname = cmdline.query("-in");
-        bool b_read_fid = false;
+        
 
+        std::string aqseq = cmdline.query("-aqseq");
+        
+
+        if(fid.set_aqseq(aqseq) == false)
+        {
+            return 1;
+        }
+
+        bool b_negative = cmdline.query("-negative")[0] == 'y' || cmdline.query("-negative")[0] == 'Y';
+
+        fid.set_negative(b_negative);
+
+        bool b_first_only = cmdline.query("-first_only")[0] == 'y' || cmdline.query("-first_only")[0] == 'Y';\
+
+        fid.set_first_only(b_first_only);
+
+
+        bool b_read_fid = false;
         std::vector<std::string> fid_infname_split;
         int n_fileds = fid_1d_helper::split(fid_infname, fid_infname_split, ' ');
         if (n_fileds >= 4)
@@ -117,7 +147,6 @@ int main(int argc, char **argv)
             std::cout << "Error: read fid file failed." << std::endl;
             return 1;
         }
-
 
         std::string apodization_string=cmdline.query("-apod");
         std::string apodization_string_indirect=cmdline.query("-apod-indirect");

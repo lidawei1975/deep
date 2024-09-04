@@ -18,6 +18,11 @@ protected:
     bool b_read_bruker_acqus_and_fid; //true if read_bruker_files is called. Only one can be true
     bool b_read_nmrpipe_fid; //true if read_nmrpipe_fid is called. Only one can be true
 
+    std::string aqseq; //"321" or "312"
+
+    bool b_negative; //true if imaginary data along indirect dimension is negative (needs to be flipped)
+
+    bool b_first_only; //if true, only process the first spectrum in a pseudo 3D NMR
 
     /**
      * PART1. These variables are read from acqus and acqu2s files
@@ -61,6 +66,12 @@ protected:
     int ndata; 
     int ndata_bruker_indirect;
     int ndata_indirect;
+
+    /**
+     * How many spectra are there in the ser (or fid) file. Useful for pseudo 3D NMR
+     * which contains multiple 2D NMR spectra
+    */
+    int nspectra; //number of spectra (in pseudo 3D NMR, nspectra>1, in 3D NMR, nspectra=1)
 
     /**
      * ndata must be a power of 2. We define ndata_power_of_2 as the smallest power of 2 that is larger than or equal to ndata.
@@ -127,7 +138,7 @@ protected:
     */
     bool fft_worker(int n_dim1, int n_dim2, int n_dim2_frq,const std::vector<float> &in, 
                     std::vector<float> &out1, std::vector<float> &out2,
-                    bool b_remove_filter,bool b_swap,int grpdly_) const;
+                    bool b_remove_filter,bool b_swap,double grpdly_) const;
 
     /**
      * Apply linear phase correction along dim2
@@ -198,8 +209,33 @@ public:
 
     bool write_nmrpipe_ft2(std::string outfname,bool b_real_only=false);
 
+    bool write_nmrpipe_ft2_virtual(std::array<float,512> &header, std::vector<float> &data);
 
     bool run_apodization(FID_APODIZATION_TYPE apodization_type, double p1,double p2=0.0,double p3=0.0,double p4=0.0,double p5=0.0,double p6=0.0);
+
+
+    inline bool set_aqseq(std::string aqseq_in)
+    {
+        if(aqseq_in != "321" && aqseq_in != "312")
+        {
+            std::cerr << "Error: aqseq must be 321 or 312." << std::endl;
+            return false;
+        }
+        aqseq=aqseq_in;
+        return true;
+    };
+
+    inline void set_negative(bool b)
+    {
+        b_negative=b;
+        return;
+    }
+
+    inline void set_first_only(bool b)
+    {
+        b_first_only=b;
+        return;
+    }
 };
 
 #endif

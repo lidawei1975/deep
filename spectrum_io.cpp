@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <valarray>
+#include <array>
 #include <string>
 #include <cstring>
 #include <vector>
@@ -645,9 +646,48 @@ bool spectrum_io::read_txt(std::string infname)
     return true;
 }
 
+bool spectrum_io::read_nmr_ft2_virtual(std::array<float,512> header_, std::vector<float> data)
+{
+    /**
+     * Copy from header_ to header
+    */
+    std::copy(header_.begin(), header_.end(), header);
+
+    process_pipe_header(header);
+
+    if (data_type_indirect == 0 && data_type_direct == 0 && b_transpose == 0) // both are complex
+    {
+        spect = new float[xdim * ydim];
+        spectrum_real_real = spect; // alias
+        spectrum_real_imag = new float[xdim * ydim];
+        spectrum_imag_real = new float[xdim * ydim];
+        spectrum_imag_imag = new float[xdim * ydim];
+
+        for (unsigned int i = 0; i < ydim; i++)
+        {
+            /**
+             * Copy from data to spectrum_real_real[i*xdim], length is xdim
+             * Then copy from data to spectrum_real_imag[i*xdim], length is xdim
+             * Then copy from data to spectrum_imag_real[i*xdim], length is xdim
+             * Then copy from data to spectrum_imag_imag[i*xdim], length is xdim
+             */
+            std::copy(data.begin() + i * 4 * xdim,          data.begin() + i * 4 * xdim + xdim  , spectrum_real_real + i * xdim);
+            std::copy(data.begin() + i * 4 * xdim + xdim,   data.begin() + i * 4 * xdim + xdim*2, spectrum_real_imag + i * xdim);
+            std::copy(data.begin() + i * 4 * xdim + xdim*2, data.begin() + i * 4 * xdim + xdim*3, spectrum_imag_real + i * xdim);
+            std::copy(data.begin() + i * 4 * xdim + xdim*3, data.begin() + i * 4 * xdim + xdim*4, spectrum_imag_imag + i * xdim);
+        }
+        return true;
+    }
+    else
+    {
+        std::cout << "ERROR: complex/real and transpose combination is not supported." << std::endl;
+        std::cout << "data_type_indirect=" << data_type_indirect << " data_type_direct=" << data_type_direct << std::endl;
+        return false;
+    }
+}
+
 bool spectrum_io::read_pipe(std::string infname)
 {
-    b_pipe = 1;
 
     FILE *fp;
     fp = fopen(infname.c_str(), "rb");
@@ -661,9 +701,76 @@ bool spectrum_io::read_pipe(std::string infname)
     {
         std::cout << "Wrong file format, can't read 2048 bytes of head information from " << infname << std::endl;
         return false;
+    }   
+
+    process_pipe_header(header);
+   
+
+    // case 1: both are real only
+    if (data_type_indirect == 1 && data_type_direct == 1)
+    {
+        // read in spectrum, row major
+        spect = new float[xdim * ydim];
+        if (b_transpose == 0)
+        {
+            for (unsigned int i = 0; i < ydim; i++)
+            {
+                unsigned int temp;
+                temp = fread(spect + i * xdim, sizeof(float), xdim, fp);
+                if (temp != xdim)
+                    return false;
+            }
+        }
+        else
+        {
+            for (unsigned int i = 0; i < xdim; i++)
+            {
+                for (unsigned int j = 0; j < ydim; j++)
+                {
+                    unsigned int temp;
+                    temp = fread(spect + j * xdim + i, sizeof(float), 1, fp);
+                    if (temp != 1)
+                        return false;
+                }
+            }
+        }
+    }
+    else if (data_type_indirect == 0 && data_type_direct == 0 && b_transpose == 0) // both are complex
+    {
+        spect = new float[xdim * ydim];
+        spectrum_real_real = spect; // alias
+        spectrum_real_imag = new float[xdim * ydim];
+        spectrum_imag_real = new float[xdim * ydim];
+        spectrum_imag_imag = new float[xdim * ydim];
+
+        for (unsigned int i = 0; i < ydim; i++)
+        {
+            if (fread(spect + i * xdim, sizeof(float), xdim, fp) != xdim)
+                return false;
+            if (fread(spectrum_real_imag + i * xdim, sizeof(float), xdim, fp) != xdim)
+                return false;
+            if (fread(spectrum_imag_real + i * xdim, sizeof(float), xdim, fp) != xdim)
+                return false;
+            if (fread(spectrum_imag_imag + i * xdim, sizeof(float), xdim, fp) != xdim)
+                return false;
+        }
+    }
+    else
+    {
+        std::cout << "ERROR: complex/real and transpose combination is not supported." << std::endl;
+        std::cout << "data_type_indirect=" << data_type_indirect << " data_type_direct=" << data_type_direct << " b_transpose=" << b_transpose << std::endl;
+        return false;
     }
 
-    bool b_transpose = int(header[221]) == 1; // 0 normal, 1: transpose
+    fclose(fp);
+
+    return true;
+};
+
+bool spectrum_io::process_pipe_header(float * header)
+{
+    b_pipe = 1;
+    b_transpose = int(header[221]) == 1; // 0 normal, 1: transpose
 
     if (b_transpose == 0 && int(header[24]) != 2)
     {
@@ -755,76 +862,21 @@ bool spectrum_io::read_pipe(std::string infname)
     */
     begin3 = begins[indirect_ndxz];
     stop3 = stops[indirect_ndxz];
-    
 
-
-
-    double sws_direct = sws[direct_ndx];
-    double sws_indirect = sws[indirect_ndx];
-    double frqs_direct = frqs[direct_ndx];
-    double frqs_indirect = frqs[indirect_ndx];
-
-    // case 1: both are real only
-    if (data_type_indirect == 1 && data_type_direct == 1)
-    {
-        // read in spectrum, row major
-        spect = new float[xdim * ydim];
-        if (b_transpose == 0)
-        {
-            for (unsigned int i = 0; i < ydim; i++)
-            {
-                unsigned int temp;
-                temp = fread(spect + i * xdim, sizeof(float), xdim, fp);
-                if (temp != xdim)
-                    return false;
-            }
-        }
-        else
-        {
-            for (unsigned int i = 0; i < xdim; i++)
-            {
-                for (unsigned int j = 0; j < ydim; j++)
-                {
-                    unsigned int temp;
-                    temp = fread(spect + j * xdim + i, sizeof(float), 1, fp);
-                    if (temp != 1)
-                        return false;
-                }
-            }
-        }
-    }
-    else if (data_type_indirect == 0 && data_type_direct == 0 && b_transpose == 0) // both are complex
+    if (data_type_indirect == 0 && data_type_direct == 0 && b_transpose == 0) // both are complex
     {
         /**
          * In nmrPipe, complex data is stored as real/imaginary pair
          * ydim/=2 to be consistent with nmrPipe
          */
         ydim = ydim / 2;
-
-        spect = new float[xdim * ydim];
-        spectrum_real_real = spect; // alias
-        spectrum_real_imag = new float[xdim * ydim];
-        spectrum_imag_real = new float[xdim * ydim];
-        spectrum_imag_imag = new float[xdim * ydim];
-
-        for (unsigned int i = 0; i < ydim; i++)
-        {
-            if (fread(spect + i * xdim, sizeof(float), xdim, fp) != xdim)
-                return false;
-            if (fread(spectrum_real_imag + i * xdim, sizeof(float), xdim, fp) != xdim)
-                return false;
-            if (fread(spectrum_imag_real + i * xdim, sizeof(float), xdim, fp) != xdim)
-                return false;
-            if (fread(spectrum_imag_imag + i * xdim, sizeof(float), xdim, fp) != xdim)
-                return false;
-        }
     }
-    else
-    {
-        std::cout << "ERROR: complex/real and transpose combination is not supported." << std::endl;
-        std::cout << "data_type_indirect=" << data_type_indirect << " data_type_direct=" << data_type_direct << " b_transpose=" << b_transpose << std::endl;
-        return false;
-    }
+    
+
+    double sws_direct = sws[direct_ndx];
+    double sws_indirect = sws[indirect_ndx];
+    double frqs_direct = frqs[direct_ndx];
+    double frqs_indirect = frqs[indirect_ndx];
 
     /**
      * Calculate step and update begin (to be consistent with nmrPipe)
@@ -843,6 +895,7 @@ bool spectrum_io::read_pipe(std::string infname)
     frq1 = frqs_direct;
     frq2 = frqs_indirect; // copy to member variables
 
+    
     std::cout << "Spectrum width are " << SW1 << " Hz and " << SW2 << " Hz" << std::endl;
     std::cout << "Fields are " << frq1 << " mHz and " << frq2 << " mHz" << std::endl;
     std::cout << "Direct dimension size is " << xdim << " indirect dimension is " << ydim << std::endl;
@@ -853,11 +906,13 @@ bool spectrum_io::read_pipe(std::string infname)
     {
         std::cout << "Data type is complex" << std::endl;
     }
-
-    fclose(fp);
+    else
+    {
+        std::cout << "Data type is real" << std::endl;
+    }
 
     return true;
-};
+}
 
 /**
  * This is a protected function, not to be called by user
@@ -1295,3 +1350,64 @@ void spectrum_io::estimate_noise_level()
 
     return;
 }
+
+
+#ifdef DEBUG
+/**
+ * Assess two spectra are same. Debug code
+*/
+bool spectrum_io::assess_match(spectrum_io &x)
+{
+    if(xdim != x.xdim) {
+        std::cout<<"xdim is different"<<std::endl;
+        return false;
+    }
+    if(ydim != x.ydim) {
+        std::cout<<"ydim is different"<<std::endl;
+        return false;
+    }
+    if(data_type_indirect != x.data_type_indirect) {
+        std::cout<<"data_type_indirect is different"<<std::endl;
+        return false;
+    }
+    if(data_type_direct != x.data_type_direct) {
+        std::cout<<"data_type_direct is different"<<std::endl;
+        return false;
+    }
+    if(b_transpose != x.b_transpose) {
+        std::cout<<"b_transpose is different"<<std::endl;
+        return false;
+    }
+
+    /**
+     * Assess data
+    */
+    for(int j=0;j<ydim;j++)
+    {
+        for(int i=0;i < xdim; i++)
+        {
+            if(spectrum_real_real[j*xdim+i] != x.spectrum_real_real[j*xdim+i])
+            {
+                std::cout<<"Data spect_real_imag is different at "<<i<<" "<<j<<std::endl;
+                return false;
+            }
+            if(spectrum_real_imag[j*xdim+i] != x.spectrum_real_imag[j*xdim+i])
+            {
+                std::cout<<"Data spect_real_imag is different at "<<i<<" "<<j<<std::endl;
+                return false;
+            }
+            if(spectrum_imag_real[j*xdim+i] != x.spectrum_imag_real[j*xdim+i])
+            {
+                std::cout<<"Data spect_imag_real is different at "<<i<<" "<<j<<std::endl;
+                return false;
+            }
+            if(spectrum_imag_imag[j*xdim+i] != x.spectrum_imag_imag[j*xdim+i])
+            {
+                std::cout<<"Data spect_imag_imag is different at "<<i<<" "<<j<<std::endl;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+#endif

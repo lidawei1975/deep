@@ -5,9 +5,14 @@ extern "C"
   void re_im_w_of_z(double x, double y, double *r, double *i); // re_im_w_of_z
 };
 
+
 #ifndef SPECTRUM_IO_HEAD
 #define SPECTRUM_IO_HEAD
 #include "spectrum_io.h"
+#endif
+
+#ifdef LMMIN
+#include "lmminimizer.h"
 #endif
 
 #ifndef FIT_TYPE
@@ -30,8 +35,15 @@ enum fit_type
 #define M_1_SQRT_PI 0.564189583547756
 #endif
 
+
+
+
 // for 2D voigt fitting, analytical derivative
+#ifdef LMMIN
+class mycostfunction_voigt : public ldwcostfunction
+#else
 class mycostfunction_voigt : public ceres::CostFunction
+#endif
 {
 
 private:
@@ -46,29 +58,19 @@ public:
   ~mycostfunction_voigt();
   mycostfunction_voigt(int, int, double *);
   bool Evaluate(double const *const *, double *, double **) const;
+#ifndef LMMIN
   inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
   inline void set_n_residuals(int n) { set_num_residuals(n); };
+#endif
 };
 
-class mycostfunction_voigt_v2 : public ceres::CostFunction
-{
 
-private:
-  int n_datapoint;   // size of x(y,z)
-  double *x, *y, *z; // x,y -> coor, z-> spectra data
 
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
-
-public:
-  ~mycostfunction_voigt_v2();
-  mycostfunction_voigt_v2(int, double *, double *, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-};
-
+#ifdef LMMIN
+class mycostfunction_nvoigt : public ldwcostfunction
+#else
 class mycostfunction_nvoigt : public ceres::CostFunction
+#endif
 {
 
 private:
@@ -84,35 +86,20 @@ public:
   ~mycostfunction_nvoigt();
   mycostfunction_nvoigt(int, int, int, double *);
   bool Evaluate(double const *const *, double *, double **) const;
+#ifndef LMMIN
   inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
   inline void set_n_residuals(int n) { set_num_residuals(n); };
+#endif
 };
 
-// for 2D voigt fitting, intensity only, analytical derivative
-/*
-class mycostfunction_voigt_a : public ceres::CostFunction
-{
 
-private:
-  int n_datapoint; //size of x(y,z)
-  int xdim,ydim;
-  double *z; //x,y -> coor, z-> spectra data
-  double x0,y0,sigmax,sigmay,gammax,gammay;
-
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
-
-public:
-  ~mycostfunction_voigt_a();
-  mycostfunction_voigt_a(int,int, double *,double,double,double,double,double,double);
-  bool Evaluate(double const *const *, double *, double **) const;
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-};
-*/
 
 // for 2D Gaussian fitting, analytical derivative
+#ifdef LMMIN
+class mycostfunction_gaussian : public ldwcostfunction
+#else
 class mycostfunction_gaussian : public ceres::CostFunction
+#endif
 {
 
 private:
@@ -124,26 +111,12 @@ public:
   ~mycostfunction_gaussian();
   mycostfunction_gaussian(int, int, double *);
   bool Evaluate(double const *const *, double *, double **) const;
+#ifndef LMMIN
   inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
   inline void set_n_residuals(int n) { set_num_residuals(n); };
+#endif
 };
 
-class mycostfunction_gaussian_v2 : public ceres::CostFunction
-{
-
-private:
-  int n_datapoint;   // size of x(y,z)
-  double *x, *y, *z; // x,y -> coor, z-> spectra data
-
-  double gaussian_funtion(double x, double y, double sx, double sy) const;
-
-public:
-  ~mycostfunction_gaussian_v2();
-  mycostfunction_gaussian_v2(int, double *, double *, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-};
 
 struct Exactshape // with phasing error
 {
@@ -183,24 +156,23 @@ private:
   std::vector<std::array<int, 4>> valid_fit_region;
   double removal_cutoff; // cutoff to remove peak when it is overlapping with a big neighbor
 
+#ifdef LMMIN
+#else
   ceres::Solver::Options options;
+#endif
 
   bool one_fit_exact(std::vector<double> &zz, double &x0, double &y0, double &a, double &r2x, double &r2y, double &sx, double &sy, double *e);
   bool one_fit_exact_shell(std::vector<double> &xx, std::vector<double> &yy, std::vector<double> &zz, const double x, const double y, double &aa, double &r2x, double &r2y, double &shiftx, double &shifty, double &phase_x, double &phase_y);
 
   bool one_fit_gaussian(int, int, std::vector<double> *zz, double &x0, double &y0, double &a, double &sigmax, double &sigmay, double *e);
-  bool one_fit_gaussian_v2(std::vector<double> *xx, std::vector<double> *yy, std::vector<double> *zz, double &x0, double &y0, double &a, double &sigmax, double &sigmay, double *e);
   bool one_fit_gaussian_intensity_only(int, int, std::vector<double> *zz, double &x0, double &y0, double &a, double &sigmax, double &sigmay, double *e);
   bool multiple_fit_gaussian(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double *e);
-  bool multiple_fit_gaussian_v2(std::vector<double> &xx, std::vector<double> &yy, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double *e);
 
   bool one_fit_voigt(int, int, std::vector<double> *, double &, double &, double &, double &, double &, double &, double &, double *, int n = 0);
   bool one_fit_voigt_core(int, int, std::vector<double> *, double &, double &, double &, double &, double &, double &, double &, double *);
 
-  bool one_fit_voigt_v2(std::vector<double> *xx, std::vector<double> *yy, std::vector<double> *zz, double &x0, double &y0, double &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n);
   bool one_fit_voigt_intensity_only(int, int, std::vector<double> *, double &, double, double, double, double, double, double, double *);
   bool multiple_fit_voigt(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n = 0);
-  bool multiple_fit_voigt_v2(std::vector<double> &xx, std::vector<double> &yy, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n = 0);
   bool multiple_fit_voigt_core(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e);
 
   bool gaussain_convolution(const int,const int,const double a,const double x,const double y,const double sigmax,const double sigmay,int&,int&,int&,int&, std::vector<double> *kernel, double scale = 1.5);
@@ -219,7 +191,6 @@ private:
   bool run_single_peak_exact();
   bool multi_spectra_run_multi_peaks(int rmax);
   bool multi_spectra_run_single_peak();
-  bool run_multi_peaks_method2();
 
   bool generate_random_noise(int m, int n, int m2, int n2, std::vector<std::vector<float>> &);
 

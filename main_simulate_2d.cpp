@@ -46,6 +46,10 @@ int main(int argc, char ** argv)
     args2.push_back("simulated-spectrum.bin");
     args3.push_back("output simulated spectrum contour binary file");
 
+    args.push_back("-out-bin-all");
+    args2.push_back("simulated-spectrum-all.bin");
+    args3.push_back("spectral file in bin format for sum of all compounds");
+
     cmdline.init(args, args2, args3);
     cmdline.pharse(argc, argv);
     cmdline.print();
@@ -61,9 +65,18 @@ int main(int argc, char ** argv)
     spectrum_prediction spe_prediction;
 
     spe_prediction.load_query_json(cmdline.query("-in"));
-    spe_prediction.work();
+    spe_prediction.simu_and_contour_one_by_one();
     spe_prediction.save_simulated_spectrum(cmdline.query("-out"));
     spe_prediction.save_simulated_spectrum_binary(cmdline.query("-out-bin"));
+
+    /**
+     * Save the sum of all simulated spectrum. none means no output.
+    */
+    std::string output_file = cmdline.query("-out-bin-all");
+    if (output_file != "none")
+    {
+        spe_prediction.save_sum_of_simulated_spectrum(output_file);
+    }
 
     return 0;
 }

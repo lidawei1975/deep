@@ -40,6 +40,12 @@ fid_2d::fid_2d()
     user_p1_direct = 0.0;
     user_p0_indirect = 0.0;
     user_p1_indirect = 0.0;
+
+    aqseq ="321"; //default
+
+    b_negative = false; //default. data is normal
+
+    b_first_only = false; //default. process all spectra
 }
 
 fid_2d::~fid_2d()
@@ -336,7 +342,6 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
      */
 
     fid_data_float.clear();
-    fid_data_float.resize(ndata_bruker * ndata_bruker_indirect, 0.0);
 
     for (int i = 0; i < fid_data_file_names.size(); i++)
     {
@@ -346,47 +351,137 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
 
         if (data_type == FID_DATA_TYPE_INT32)
         {
-            int nread;
+            nspectra = 0;
             fid_data_int.clear();
             fid_data_int.resize(ndata_bruker * ndata_bruker_indirect);
-            nread = fread(&fid_data_int[0], sizeof(int32_t), ndata_bruker * ndata_bruker_indirect, fp_fid_data);
-            if (nread != ndata_bruker * ndata_bruker_indirect)
+            while(fread(fid_data_int.data()+nspectra*ndata_bruker * ndata_bruker_indirect, sizeof(int32_t), ndata_bruker * ndata_bruker_indirect, fp_fid_data)==ndata_bruker * ndata_bruker_indirect)
             {
-                std::cout << "Error: cannot read " << ndata_bruker * ndata_bruker_indirect << " int32 from file " << fid_data_file_names[i] << std::endl;
+                nspectra++;
+                /**
+                 * Get space for the next spectrum (in case of pseudo 3D NMR)
+                 */
+                fid_data_int.resize(ndata_bruker * ndata_bruker_indirect * (nspectra + 1));
+            }
+            /**
+             * Set correct size for fid_data_int
+             */
+            fid_data_int.resize(ndata_bruker * ndata_bruker_indirect * nspectra);
+            if(nspectra==0)
+            {
+                std::cout << "Error: cannot read int32 from file " << fid_data_file_names[i] << std::endl;
                 return false;
             }
         }
         else if (data_type == FID_DATA_TYPE_FLOAT64)
         {
-            int nread;
+            nspectra = 0;
             temp_fid_data_float.clear();
             temp_fid_data_float.resize(ndata_bruker * ndata_bruker_indirect);
-            nread = fread(&temp_fid_data_float[0], sizeof(double), ndata_bruker * ndata_bruker_indirect, fp_fid_data);
-            if (nread != ndata_bruker * ndata_bruker_indirect)
+            nspectra = 0;
+            while(fread(temp_fid_data_float.data()+nspectra*ndata_bruker * ndata_bruker_indirect, sizeof(double), ndata_bruker * ndata_bruker_indirect, fp_fid_data) == ndata_bruker * ndata_bruker_indirect)
             {
-                std::cout << "Error: cannot read " << ndata_bruker * ndata_bruker_indirect << " float64 from file " << fid_data_file_names[i] << std::endl;
+                nspectra++;
+                /**
+                 * Get space for the next spectrum (in case of pseudo 3D NMR)
+                 */
+                temp_fid_data_float.resize(ndata_bruker * ndata_bruker_indirect * (nspectra + 1));
+            }
+            /**
+             * Set correct size for temp_fid_data_float
+             */
+            temp_fid_data_float.resize(ndata_bruker * ndata_bruker_indirect * nspectra);
+            if(nspectra==0)
+            {
+                std::cout << "Error: cannot read float64 from file " << fid_data_file_names[i] << std::endl;
                 return false;
             }
         }
 
         /**
-         * if data_type is int, copy them to double
+         * Add data to fid_data_float
          */
+        fid_data_float.resize(ndata_bruker * ndata_bruker_indirect * nspectra, 0.0);
         if (data_type == FID_DATA_TYPE_INT32)
         {
-            for (int i = 0; i < ndata_bruker * ndata_bruker_indirect; i++)
+            for (int i = 0; i < ndata_bruker * ndata_bruker_indirect * nspectra; i++)
             {
                 fid_data_float[i] += (float)fid_data_int[i];
             }
         }
         else
         {
-            for (int i = 0; i < ndata_bruker * ndata_bruker_indirect; i++)
+            for (int i = 0; i < ndata_bruker * ndata_bruker_indirect * nspectra; i++)
             {
                 fid_data_float[i] += (float)temp_fid_data_float[i];
             }
         }
         fclose(fp_fid_data);
+    }
+
+    std::cout << "Read " << nspectra << " spectra from " << fid_data_file_names.size() << " files" << std::endl;
+    std::cout <<" ndata_bruker = "<<ndata_bruker<<" ndata_bruker_indirect = "<<ndata_bruker_indirect<<std::endl;
+
+
+    /**
+     * Now we need to reorganize fid_data_float when order is 321 (from inner to outer), which means order is
+     * - indirect dimension (acqu3s ==> 1)
+     * - - pseudo dimension (acqu2s ==> 2)
+     * - - - direct dimension (acqus ==> 3)
+     * We need to reorganize it to 312, which means order is: pseudo dimension, indirect dimension, direct dimension
+     * then we can process all 2D spectra at one pseudo dimension data point one by one
+    */
+    if(aqseq=="321")
+    {
+        /**
+         * Rroganize fid_data_float, in case 2nd dimension is pseudo 3D dimension while 3rd dimension is the indirect dimension
+        */
+        std::vector<float> fid_data_float_temp=fid_data_float;
+        fid_data_float.clear();
+        fid_data_float.resize(nspectra * ndata_bruker * ndata_bruker_indirect, 0.0f);
+        for(int m=0;m<nspectra;m++)
+        {
+            for(int i=0;i<ndata_bruker_indirect;i++)
+            {
+                int k_from = m + nspectra * i;
+                int k_to = m * ndata_bruker_indirect + i;
+                /**
+                 * copy from fid_data_float_temp[k_from*ndata_bruker:(k_from+1)*ndata_bruker] to 
+                 * fid_data_float[k_to*ndata_bruker:(k_to+1)*ndata_bruker]
+                 */
+                std:memcpy(fid_data_float.data()+k_to*ndata_bruker,fid_data_float_temp.data()+k_from*ndata_bruker,sizeof(float)*ndata_bruker);
+            }
+        }
+        /**
+         * Release memory
+         */
+        fid_data_float_temp.clear();
+    }
+    else if(aqseq=="312")
+    {
+        /**
+         * Order is already 312 (from iner to outer), do nothing
+         * - pseudo dimension (acqu2s ==> 2)
+         * - - indirect dimension (acqu3s ==> 1)
+         * - - - direct dimension (acqus ==> 3)
+        */
+    }
+    else
+    {
+        /**
+         * Won't happen because we have checked aqseq in set_aqseq
+        */
+    }
+
+    /**
+     * If b_first_only is true, we only process the first spectrum
+     */
+    if(b_first_only)
+    {
+        nspectra=1;
+        /**
+         * Resize fid_data_float to contain only the first spectrum, discard the rest
+         */
+        fid_data_float.resize(ndata_bruker * ndata_bruker_indirect);
     }
 
     /**
@@ -481,44 +576,48 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
 
     if (fnmode == 6)
     {
-        /**
-         * Echo anti-echo pulse sequence.
-         *
-         * Step 1: along indirect dimension, (increment 0 - increment 1)/2.0 ==> increment 0
-         * Step 2: along indirect dimension, (increment 0 + increment 1)/2.0 ==> increment 1, and so on
-         * Step 3, for increment 1,3,5,..., apply 90 degree correction along direct dimension (i.e., multiply by i, real -> imaginary, imaginary -> -real)
-         */
-        for (int i = 0; i < ndata_bruker_indirect; i += 2)
+        for(int index_spectrum=0;index_spectrum<nspectra;index_spectrum++)
         {
-            std::vector<float> temp1(ndata_bruker, 0.0f), temp2(ndata_bruker, 0.0f), temp3(ndata_bruker, 0.0f);
-            for (int j = 0; j < ndata_bruker; j++)
-            {
-                /**
-                 * Step 1 here
-                */
-                temp1[j] = (fid_data_float[i * ndata_bruker + j] - fid_data_float[(i + 1) * ndata_bruker + j]) / 2.0f;
-                /**
-                 * Step 2 here
-                */
-                temp2[j] = (fid_data_float[i * ndata_bruker + j] + fid_data_float[(i + 1) * ndata_bruker + j]) / 2.0f;
-            }
+            int data_start = index_spectrum * ndata_bruker * ndata_bruker_indirect;
             /**
-             * Step 3 here
+             * Echo anti-echo pulse sequence.
+             *
+             * Step 1: along indirect dimension, (increment 0 - increment 1)/2.0 ==> increment 0
+             * Step 2: along indirect dimension, (increment 0 + increment 1)/2.0 ==> increment 1, and so on
+             * Step 3, for increment 1,3,5,..., apply 90 degree correction along direct dimension (i.e., multiply by i, real -> imaginary, imaginary -> -real)
              */
-            for (int k = 0; k < ndata_bruker; k += 2)
+            for (int i = 0; i < ndata_bruker_indirect; i += 2)
             {
-                temp3[k] = -temp2[k + 1];
-                temp3[k + 1] = temp2[k];
-            }
-            /**
-             * Copy temp1 and temp3 back to fid_data_float
-             */
-            for (int j = 0; j < ndata_bruker; j++)
-            {
-                fid_data_float[i * ndata_bruker + j] = temp1[j];
-                fid_data_float[(i + 1) * ndata_bruker + j] = temp3[j];
-            }
-        }
+                std::vector<float> temp1(ndata_bruker, 0.0f), temp2(ndata_bruker, 0.0f), temp3(ndata_bruker, 0.0f);
+                for (int j = 0; j < ndata_bruker; j++)
+                {
+                    /**
+                     * Step 1 here
+                    */
+                    temp1[j] = (fid_data_float[data_start + i * ndata_bruker + j] - fid_data_float[data_start + (i + 1) * ndata_bruker + j]) / 2.0f;
+                    /**
+                     * Step 2 here
+                    */
+                    temp2[j] = (fid_data_float[data_start + i * ndata_bruker + j] + fid_data_float[data_start + (i + 1) * ndata_bruker + j]) / 2.0f;
+                }
+                /**
+                 * Step 3 here
+                 */
+                for (int k = 0; k < ndata_bruker; k += 2)
+                {
+                    temp3[k] = -temp2[k + 1];
+                    temp3[k + 1] = temp2[k];
+                }
+                /**
+                 * Copy temp1 and temp3 back to fid_data_float
+                 */
+                for (int j = 0; j < ndata_bruker; j++)
+                {
+                    fid_data_float[data_start + i * ndata_bruker + j] = temp1[j];
+                    fid_data_float[data_start + (i + 1) * ndata_bruker + j] = temp3[j];
+                }
+            } // for (int i = 0; i < ndata_bruker_indirect; i += 2)
+        } // for(int index_spectrum=0;index_spectrum<nspectra;index_spectrum++)
     }
 
     return true;
@@ -662,7 +761,7 @@ bool fid_2d::fft_worker(int n_dim1, int n_dim2, int n_dim2_frq,
                         std::vector<float> &out2,
                         bool b_remove_filter,
                         bool b_swap,
-                        int grpdly_) const
+                        double grpdly_) const
 {
     /**
      * Assess whether n_dim1 and n_dim2 are valid
@@ -846,124 +945,141 @@ bool fid_2d::run_fft_and_rm_bruker_filter()
     ndata_frq_indirect = ndata_power_of_2_indirect * zf_indirect;
 
     /**
-     * Define spectrum_intermediate_real and spectrum_intermediate_imag
-     */
-    std::vector<float> intermediate_spectrum(ndata_frq * ndata_bruker_indirect, 0.0f);
-    std::vector<float> intermediate_spectrum_imag(ndata_frq * ndata_bruker_indirect, 0.0f);
-
-    /**
-     * Apodization along direct dimension
-     */
-    apodization_direct->set_n(ndata);
-    for(int i=0;i<ndata_bruker_indirect;i++)
-    {
-        apodization_direct->run_apodization(fid_data_float.data()+i*ndata_bruker,ndata*2);
-    }
-
-
-    /**
-     * FFT along direct dimension
-    */
-    fft_worker(ndata_bruker_indirect, ndata, ndata_frq, fid_data_float, intermediate_spectrum, intermediate_spectrum_imag, true /** digital fileter*/, false /** swap*/, grpdly);
-
-
-    /**
-     * Apply phase correction along direct dimension. Debug code
-     * Mathmatically equivalent to direct dimension phase correction code below
-    */
-    phase_correction_worker(ndata_bruker_indirect, ndata_frq, intermediate_spectrum,intermediate_spectrum_imag, user_p0_direct /** P0 */,user_p1_direct /** P1*/);
-
-
-    /**
-     * Debug code. write intermediate_spectrum to file
-     */
-    // std::ofstream fout("intermediate_spectrum_real.txt");
-    // for (int i = 0; i < ndata_bruker_indirect; i++)
-    // {
-    //     for (int j = 0; j < ndata_frq; j++)
-    //     {
-    //         fout << intermediate_spectrum[j + i * ndata_frq] << " ";
-    //     }
-    //     fout << std::endl;
-    // }
-    // fout.close();
-    // fout.open("intermediate_spectrum_imag.txt");
-    // for (int i = 0; i < ndata_bruker_indirect; i++)
-    // {
-    //     for (int j = 0; j < ndata_frq; j++)
-    //     {
-    //         fout << intermediate_spectrum_imag[j + i * ndata_frq] << " ";
-    //     }
-    //     fout << std::endl;
-    // }
-    // fout.close();
-
-    transpose_2d(intermediate_spectrum, ndata_bruker_indirect, ndata_frq);
-    transpose_2d(intermediate_spectrum_imag, ndata_bruker_indirect, ndata_frq);
-
-   
-    /**
-     * Set correct size for spectrum_real_real and spectrum_real_imag spectrum_imag_real and spectrum_imag_imag
+     * clear spectrum_real_real, spectrum_real_imag, spectrum_imag_real, and spectrum_imag_imag
      */
     spectrum_real_real.clear();
     spectrum_real_imag.clear();
     spectrum_imag_real.clear();
     spectrum_imag_imag.clear();
 
-    spectrum_real_real.resize(ndata_frq_indirect * ndata_frq);
-    spectrum_real_imag.resize(ndata_frq_indirect * ndata_frq);
-    spectrum_imag_real.resize(ndata_frq_indirect * ndata_frq);
-    spectrum_imag_imag.resize(ndata_frq_indirect * ndata_frq);
 
-    /**
-     * size of intermediate_spectrum is [ndata_frq][ndata_bruker_indirect]
-    */
-
-    apodization_indirect->set_n(ndata_indirect);
-    for(int i=0;i<ndata_frq;i++)
+    for(int i=0;i<nspectra;i++)
     {
-        apodization_indirect->run_apodization(intermediate_spectrum.data()+i*ndata_bruker_indirect,ndata_indirect*2);
-        apodization_indirect->run_apodization(intermediate_spectrum_imag.data()+i*ndata_bruker_indirect,ndata_indirect*2);
+        /**
+         * We process each spectrum one by one. 
+         * First, define a temporary fid data for this spectrum
+         */
+        std::vector<float> temp_fid_data_float(0);
+
+        /**
+         * Copy data from fid_data_float to temp_fid_data_float
+         */
+        temp_fid_data_float.insert(temp_fid_data_float.end(), fid_data_float.begin() + i * ndata_bruker * ndata_bruker_indirect, fid_data_float.begin() + (i + 1) * ndata_bruker * ndata_bruker_indirect);
+
+
+        /**
+         * Define spectrum_intermediate_real and spectrum_intermediate_imag
+         */
+        std::vector<float> intermediate_spectrum(ndata_frq * ndata_bruker_indirect, 0.0f);
+        std::vector<float> intermediate_spectrum_imag(ndata_frq * ndata_bruker_indirect, 0.0f);
+
+        /**
+         * Apodization along direct dimension
+         */
+        apodization_direct->set_n(ndata);
+        apodization_direct->set_first_point(0.5);
+        for(int j=0;j<ndata_bruker_indirect;j++)
+        {
+            apodization_direct->run_apodization(temp_fid_data_float.data()+j*ndata_bruker,ndata*2);
+        }
+
+
+        /**
+         * FFT along direct dimension
+        */
+        fft_worker(ndata_bruker_indirect, ndata, ndata_frq, temp_fid_data_float, intermediate_spectrum, intermediate_spectrum_imag, true /** digital fileter*/, false /** swap*/, grpdly);
+
+
+        /**
+         * Apply phase correction along direct dimension.
+         * Mathmatically equivalent to direct dimension phase correction code below
+        */
+        phase_correction_worker(ndata_bruker_indirect, ndata_frq, intermediate_spectrum,intermediate_spectrum_imag, user_p0_direct /** P0 */,user_p1_direct /** P1*/);
+
+        transpose_2d(intermediate_spectrum, ndata_bruker_indirect, ndata_frq);
+        transpose_2d(intermediate_spectrum_imag, ndata_bruker_indirect, ndata_frq);
+
+   
+        /**
+         * size of intermediate_spectrum is [ndata_frq][ndata_bruker_indirect]
+        */
+
+        apodization_indirect->set_n(ndata_indirect);
+        apodization_indirect->set_first_point(1.0);
+        for(int i=0;i<ndata_frq;i++)
+        {
+            apodization_indirect->run_apodization(intermediate_spectrum.data()+i*ndata_bruker_indirect,ndata_indirect*2);
+            apodization_indirect->run_apodization(intermediate_spectrum_imag.data()+i*ndata_bruker_indirect,ndata_indirect*2);
+        }
+
+
+        /**
+         * FFT along indirect dimension.
+         * fnmode == 6 means echo anti-echo pulse sequence
+        */
+        bool b_swap = false;
+        if(fnmode==6)
+        {
+            b_swap = false;
+        }
+        else if(fnmode==5) //state-tppi. Need to swap
+        {
+            b_swap = true;
+        }
+        /**
+         * TODO: other cases
+        */
+
+       /**
+        * If b_negative == true. Change sign of imaginary part of intermediate_spectrum and intermediate_spectrum_imag
+        * For both intermediate_spectrum and intermediate_spectrum_imag, real part is at even index (0,2,4), imaginary part is at odd index (1,3, 5)
+       */
+        if(b_negative)
+        {
+            for(int i=1;i<ndata_frq*ndata_bruker_indirect;i+=2)
+            {
+                intermediate_spectrum_imag[i] = -intermediate_spectrum_imag[i];
+                intermediate_spectrum[i] = -intermediate_spectrum[i];
+            }
+        }
+
+        /**
+         * Definal temporary spectrum_real_real, spectrum_real_imag, spectrum_imag_real, spectrum_imag_imag for this spectrum
+        */
+        std::vector<float> temp_spectrum_real_real(ndata_frq * ndata_frq_indirect, 0.0f);
+        std::vector<float> temp_spectrum_real_imag(ndata_frq * ndata_frq_indirect, 0.0f);
+        std::vector<float> temp_spectrum_imag_real(ndata_frq * ndata_frq_indirect, 0.0f);
+        std::vector<float> temp_spectrum_imag_imag(ndata_frq * ndata_frq_indirect, 0.0f);
+
+
+        fft_worker(ndata_frq, ndata_indirect, ndata_frq_indirect, intermediate_spectrum, temp_spectrum_real_real, temp_spectrum_real_imag, false /**no grpdly correction*/, b_swap, -1 /** not used.*/); 
+        fft_worker(ndata_frq, ndata_indirect, ndata_frq_indirect, intermediate_spectrum_imag, temp_spectrum_imag_real, temp_spectrum_imag_imag, false /**no grpdly correction*/, b_swap, -1 /** not used.*/); 
+
+        /**
+         * Apply phase correction along indirect dimension. 
+        */
+        phase_correction_worker(ndata_frq, ndata_frq_indirect, temp_spectrum_real_real,temp_spectrum_real_imag, user_p0_indirect /** P0 */,user_p1_indirect /** P1*/);
+        phase_correction_worker(ndata_frq, ndata_frq_indirect, temp_spectrum_imag_real,temp_spectrum_imag_imag, user_p0_indirect /** P0 */,user_p1_indirect /** P1*/);
+
+        transpose_2d(temp_spectrum_real_real, ndata_frq, ndata_frq_indirect);
+        transpose_2d(temp_spectrum_real_imag, ndata_frq, ndata_frq_indirect);
+        transpose_2d(temp_spectrum_imag_real, ndata_frq, ndata_frq_indirect);
+        transpose_2d(temp_spectrum_imag_imag, ndata_frq, ndata_frq_indirect);
+
+        /**
+         * Apply phase correction along direct dimension. This is debug code.
+        */
+        // phase_correction_worker(ndata_frq_indirect, ndata_frq, spectrum_real_real,spectrum_imag_real, user_p0_direct /** P0 */,user_p1_direct /** P1*/);
+        // phase_correction_worker(ndata_frq_indirect, ndata_frq, spectrum_real_imag,spectrum_imag_imag, user_p0_direct /** P0 */,user_p1_direct /** P1*/);
+
+        /**
+         * Append from temp_spectrum_real_real, temp_spectrum_real_imag, temp_spectrum_imag_real, temp_spectrum_imag_imag to spectrum_real_real, spectrum_real_imag, spectrum_imag_real, spectrum_imag_imag
+        */
+        spectrum_real_real.insert(spectrum_real_real.end(), temp_spectrum_real_real.begin(), temp_spectrum_real_real.end());
+        spectrum_real_imag.insert(spectrum_real_imag.end(), temp_spectrum_real_imag.begin(), temp_spectrum_real_imag.end());
+        spectrum_imag_real.insert(spectrum_imag_real.end(), temp_spectrum_imag_real.begin(), temp_spectrum_imag_real.end());
+        spectrum_imag_imag.insert(spectrum_imag_imag.end(), temp_spectrum_imag_imag.begin(), temp_spectrum_imag_imag.end());
     }
-
-
-    /**
-     * FFT along indirect dimension.
-     * fnmode == 6 means echo anti-echo pulse sequence
-    */
-    bool b_swap = false;
-    if(fnmode==6)
-    {
-        b_swap = false;
-    }
-    else if(fnmode==5) //state-tppi. Need to swap
-    {
-        b_swap = true;
-    }
-    /**
-     * TODO: other cases
-    */
-
-    fft_worker(ndata_frq, ndata_indirect, ndata_frq_indirect, intermediate_spectrum, spectrum_real_real, spectrum_real_imag, false /**no grpdly correction*/, b_swap, -1 /** not used.*/); 
-
-    fft_worker(ndata_frq, ndata_indirect, ndata_frq_indirect, intermediate_spectrum_imag, spectrum_imag_real, spectrum_imag_imag, false /**no grpdly correction*/, b_swap, -1 /** not used.*/); 
-
-    /**
-     * Apply phase correction along indirect dimension. This is debug code.
-    */
-    phase_correction_worker(ndata_frq, ndata_frq_indirect, spectrum_real_real,spectrum_real_imag, user_p0_indirect /** P0 */,user_p1_indirect /** P1*/);
-    phase_correction_worker(ndata_frq, ndata_frq_indirect, spectrum_imag_real,spectrum_imag_imag, user_p0_indirect /** P0 */,user_p1_indirect /** P1*/);
-
-    transpose_2d(spectrum_real_real, ndata_frq, ndata_frq_indirect);
-    transpose_2d(spectrum_real_imag, ndata_frq, ndata_frq_indirect);
-    transpose_2d(spectrum_imag_real, ndata_frq, ndata_frq_indirect);
-    transpose_2d(spectrum_imag_imag, ndata_frq, ndata_frq_indirect);
-
-    /**
-     * Apply phase correction along direct dimension. This is debug code.
-    */
-    // phase_correction_worker(ndata_frq_indirect, ndata_frq, spectrum_real_real,spectrum_imag_real, user_p0_direct /** P0 */,user_p1_direct /** P1*/);
-    // phase_correction_worker(ndata_frq_indirect, ndata_frq, spectrum_real_imag,spectrum_imag_imag, user_p0_direct /** P0 */,user_p1_direct /** P1*/);
 
     /**
      * Apply receiver_gain if > 1.0
@@ -1120,6 +1236,37 @@ bool fid_2d::create_nmrpipe_dictionary(bool b_frq, std::map<std::string, std::st
     return true;
 }
 
+bool fid_2d::write_nmrpipe_ft2_virtual(std::array<float, 512> &nmrpipe_header_data, std::vector<float> &data)
+{
+    /**
+     * create nmrpipe header.
+     * This will set values for nmrpipe_dict_string and nmrpipe_dict_float
+     * from udict_acqus and derived values
+     * True means we are saving frq data
+     */
+    create_nmrpipe_dictionary(true, nmrpipe_dict_string, nmrpipe_dict_float);
+    nmrpipe_header_data.fill(0.0f);
+    nmrPipe::nmrpipe_dictionary_to_header(nmrpipe_header_data.data(), nmrpipe_dict_string, nmrpipe_dict_float);
+
+    data.clear();
+    data.resize(ndata_frq_indirect*ndata_frq*4,0.0f);
+
+    for (int j = 0; j < ndata_frq_indirect; j++)
+    {
+        /**
+         * copy spectrum_real_real from j * ndata_frq to (j + 1) * ndata_frq to data at j * ndata_frq * 4
+         * then spectrum_real_imag from j * ndata_frq to (j + 1) * ndata_frq to data at j * ndata_frq * 4 + ndata_frq
+         * then spectrum_imag_real from j * ndata_frq to (j + 1) * ndata_frq to data at j * ndata_frq * 4 + ndata_frq*2
+         * then spectrum_imag_imag from j * ndata_frq to (j + 1) * ndata_frq to data at j * ndata_frq * 4 + ndata_frq*3
+         */
+        std::copy(spectrum_real_real.begin() + j * ndata_frq, spectrum_real_real.begin() + (j + 1) * ndata_frq, data.begin() + j * ndata_frq * 4);
+        std::copy(spectrum_real_imag.begin() + j * ndata_frq, spectrum_real_imag.begin() + (j + 1) * ndata_frq, data.begin() + j * ndata_frq * 4 + ndata_frq);
+        std::copy(spectrum_imag_real.begin() + j * ndata_frq, spectrum_imag_real.begin() + (j + 1) * ndata_frq, data.begin() + j * ndata_frq * 4 + ndata_frq*2);
+        std::copy(spectrum_imag_imag.begin() + j * ndata_frq, spectrum_imag_imag.begin() + (j + 1) * ndata_frq, data.begin() + j * ndata_frq * 4 + ndata_frq*3);
+    }
+    return true;
+}
+
 /**
  * @brief fid_1d::write_nmrpipe_ft1: write 1D spectrum to nmrpipe file
  * Before writing, define nmrpipe header, set values from udict_acqus and derived values
@@ -1192,20 +1339,66 @@ bool fid_2d::write_nmrpipe_ft2(std::string outfname, bool b_real_only)
         /**
          * This is how data are organized in nmrpipe file
          */
-        for (int i = 0; i < ndata_frq_indirect; i++)
+        for (int j = 0; j < ndata_frq_indirect; j++)
         {
-            fwrite(spectrum_real_real.data() + i * ndata_frq, sizeof(float), ndata_frq, fp);
+            fwrite(spectrum_real_real.data() + j * ndata_frq, sizeof(float), ndata_frq, fp);
             /**
              * If we are saving real data only, we don't need to save imaginary part for either direct or indirect dimension
             */
             if(b_real_only==false)
             {
-                fwrite(spectrum_real_imag.data() + i * ndata_frq, sizeof(float), ndata_frq, fp);
-                fwrite(spectrum_imag_real.data() + i * ndata_frq, sizeof(float), ndata_frq, fp);
-                fwrite(spectrum_imag_imag.data() + i * ndata_frq, sizeof(float), ndata_frq, fp);
+                fwrite(spectrum_real_imag.data() + j * ndata_frq, sizeof(float), ndata_frq, fp);
+                fwrite(spectrum_imag_real.data() + j * ndata_frq, sizeof(float), ndata_frq, fp);
+                fwrite(spectrum_imag_imag.data() + j * ndata_frq, sizeof(float), ndata_frq, fp);
             }
         }
         fclose(fp);
+
+        /**
+         * If nspcetra>1, we need to save the rest of the spectra to separate files
+        */
+        if(nspectra>1)
+        {
+            /**
+             * Find filename extension: after last . in outfname, such as .ft2.
+             * In case there is no . in outfname, ext will be empty and basename will be outfname
+             */
+            std::string ext = outfname.substr(outfname.find_last_of(".") + 1);
+            std::string basename = outfname.substr(0, outfname.find_last_of("."));
+
+            for(int i=1;i<nspectra;i++) // i starts from 1 because we already saved the first spectrum
+            {
+                std::string outfname2 = basename + "_" + std::to_string(i) + "." + ext;
+                FILE *fp2 = fopen(outfname2.c_str(), "wb");
+                if (fp2 == NULL)
+                {
+                    std::cerr << "Error: cannot open file " << outfname2 << " for writing" << std::endl;
+                    return false;
+                }
+                /**
+                 * Write header first
+                 */
+                fwrite(nmrpipe_header_data.data(), sizeof(float), 512, fp2);
+
+                /**
+                 * Write the rest of the spectra
+                 */
+                for (int j = 0; j < ndata_frq_indirect; j++)
+                {
+                    fwrite(spectrum_real_real.data() + i * ndata_frq * ndata_frq_indirect + j * ndata_frq, sizeof(float), ndata_frq, fp2);
+                    /**
+                     * If we are saving real data only, we don't need to save imaginary part for either direct or indirect dimension
+                    */
+                    if(b_real_only==false)
+                    {
+                        fwrite(spectrum_real_imag.data() + i * ndata_frq * ndata_frq_indirect + j * ndata_frq, sizeof(float), ndata_frq, fp2);
+                        fwrite(spectrum_imag_real.data() + i * ndata_frq * ndata_frq_indirect + j * ndata_frq, sizeof(float), ndata_frq, fp2);
+                        fwrite(spectrum_imag_imag.data() + i * ndata_frq * ndata_frq_indirect + j * ndata_frq, sizeof(float), ndata_frq, fp2);
+                    }
+                }
+                fclose(fp2);
+            }
+        }
     }
 
     return true;

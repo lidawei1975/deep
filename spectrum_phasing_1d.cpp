@@ -1402,3 +1402,28 @@ bool spectrum_phasing_1d::gd_optimization_from_cross(const int left_end, const f
 
     return true;
 }
+
+
+bool spectrum_phasing_1d::flip_spectrum()
+{
+    for (int i = 0; i < spect.size(); i++)
+    {
+        spect[i] = -spect[i];
+        spe_image[i] = -spe_image[i];
+    }
+    return true;
+}
+
+bool spectrum_phasing_1d::auto_flip_spectrum()
+{
+    double sum = 0;
+    for (int i = 0; i < spect.size(); i++)
+    {
+        sum += spect[i];
+    }
+    if (sum < 0)
+    {
+        flip_spectrum();
+    }
+    return true;
+}

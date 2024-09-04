@@ -85,6 +85,10 @@ int main(int argc, char **argv)
     args2.push_back("no");
     args3.push_back("doesy experiments for pseudo 2D spectra");
 
+    args.push_back("-z_gradient");
+    args2.push_back("z_gradient.txt");
+    args3.push_back("z_gradient file for pseudo 2D spectra");
+
     args.push_back("-out");
     args2.push_back("fitted.tab");
     args3.push_back("output file name");
@@ -138,7 +142,7 @@ int main(int argc, char **argv)
     b_negative=cmdline.query("-negative")=="yes" || cmdline.query("-negative")=="y";
 
     shared_data_1d::n_verbose=atoi(cmdline.query("-v").c_str()); //set verbose level. Defined in spectrum_fit_1d.cpp
-    shared_data_1d::b_doesy=cmdline.query("-doesy")=="yes" || cmdline.query("-doesy")=="y"; //set doesy flag
+    shared_data_1d::b_dosy=cmdline.query("-doesy")=="yes" || cmdline.query("-doesy")=="y"; //set doesy flag
 
 
     double noise_level=stod(cmdline.query("-noise_level"));
@@ -183,6 +187,30 @@ int main(int argc, char **argv)
         class spectrum_fit_1d x;
         x.init(user,user2,noise_level);
         x.init_fit(fit_type_flag,maxround,to_near_cutoff);
+        
+        /**
+         * Read z_gradient file for pseudo 2D spectra when b_dosy is true
+        */
+        if(shared_data_1d::b_dosy==true)
+        {
+            std::string filename=cmdline.query("-z_gradient");
+            std::ifstream file(filename);
+            if (!file)
+            {
+                std::cerr << "Cannot open z gradient file " << filename << std::endl;
+                shared_data_1d::b_dosy=false;
+            }
+
+            double z_gradient;
+            while (file >> z_gradient)
+            {
+                shared_data_1d::z_gradients.push_back(z_gradient);
+            }
+
+            file.close();
+
+        }
+
 
         int n_err=std::stoi(cmdline.query("-n_err"));
         if(n_err>=2)

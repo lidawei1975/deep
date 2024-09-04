@@ -30,11 +30,11 @@ int main(int argc, char **argv)
     args3.push_back("verbose level (0: minimal, 1:normal)");
     
     args.push_back("-f");
-    args2.push_back("none");
+    args2.push_back("argument_voigt_fit.txt");
     args3.push_back("Parguments file");
 
     args.push_back("-method");
-    args2.push_back("gaussian");
+    args2.push_back("voigt");
     args3.push_back("Peak shape: gaussian or voigt.");   
 
     args.push_back("-scale");
@@ -50,11 +50,11 @@ int main(int argc, char **argv)
     args3.push_back("Direct set noise level to this value. Noise level will be estimated from sepctrum if input is 0.0");
 
     args.push_back("-in");
-    args2.push_back("04.csv");
+    args2.push_back("hsqc.ft2");
     args3.push_back("input spectral file names. Multiple files should be seprated by space");
 
     args.push_back("-peak_in");
-    args2.push_back(" picked_peaks.json");
+    args2.push_back("peaks.tab");
     args3.push_back("Read peaks list from this file. Support .tab or .list format");
     
     args.push_back("-out");
@@ -70,11 +70,11 @@ int main(int argc, char **argv)
     args3.push_back("save reconstructed and differential spectra files in this folder.");
 
     args.push_back("-maxround");
-    args2.push_back("100");
+    args2.push_back("50");
     args3.push_back("maximal rounds in iterative fitting process(50)");
 
     args.push_back("-combine");
-    args2.push_back("0.04");
+    args2.push_back("0.00");
     args3.push_back("Cutoff to combine tightly overlapping peaks, 0.04 (0.08,0.12) for high(medium,low) quality spectrum");
 
     args.push_back("-wx");

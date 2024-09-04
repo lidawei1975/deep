@@ -45,6 +45,13 @@ protected:
 public:
     spectrum_phasing_1d();
     ~spectrum_phasing_1d();
+
+    /**
+     * Flip spectrum
+    */
+    bool flip_spectrum();
+    bool auto_flip_spectrum();
+
     bool phase_spectrum(const double phase_left, const double phase_right);
     bool set_up_parameters(const int max_loop, const int max_peak, const int max_dist,const bool b_end, const bool b_smooth_baseline=false);
     bool auto_phase_correction();                                                    // main working function
