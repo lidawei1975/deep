@@ -342,7 +342,8 @@ bool CDosyFit::read_fitted_peaks(const std::string &filename)
         */
         if (peak_heights.size() <= trace_indices[trace_indices.size() - 1])
         {
-            std::cerr << "Not enough traces." << std::endl;
+            std::cerr << "Not enough traces, peak_heights.size() = " << peak_heights.size() << ", last trace index = " << trace_indices[trace_indices.size() - 1] << std::endl;
+            std::cerr << std::endl;
             return false;
         }
 

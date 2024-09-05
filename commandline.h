@@ -13,6 +13,7 @@ class CCommandline
   protected:
   public:
     bool pharse(int argc, char **argv);
+    bool pharse_file(int argc, char ** argv);
     void init(std::vector<std::string>, std::vector<std::string>);
     void init(std::vector<std::string>, std::vector<std::string>, std::vector<std::string>);
     void print();

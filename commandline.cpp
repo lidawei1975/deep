@@ -7,18 +7,82 @@
 
 #include "commandline.h"
 
+/**
+ * @brief pharse_file: pharse the commandline arguments (in argc and argv)
+ * Once we match with arguments ("-f" only)
+ * we will store the parameters in the parameters vector.
+*/
+bool CCommandline::pharse_file(int argc, char ** argv)
+{
+    int j_of_file=-1;
+    for (int j = 0; j < narg; j++)
+    {
+        if (arguments.at(j).compare("-f") == 0) 
+        {
+            j_of_file=j;
+            break;   
+        }
+    }
+    if(j_of_file==-1)
+    {
+        /**
+         * there is no "-f"
+        */
+        return false;
+    }
+
+    for (int i = 1; i < argc; i++)
+    {
+        if (arguments.at(j_of_file).compare(argv[i]) == 0) 
+        {
+            parameters.at(j_of_file) = ""; 
+            if(i+1>=argc || is_key(argv[i + 1])==true)
+            {
+                parameters.at(j_of_file) = "yes";
+            }
+            while (i + 1 < argc && is_key(argv[i + 1])==false)
+            {
+                parameters.at(j_of_file).append(argv[i + 1]);
+                parameters.at(j_of_file).append(" ");
+                i++;
+            }    
+            continue;                
+        }  
+    }
+
+
+    return true;
+}
+
+/**
+ * @brief pharse_core: pharse the commandline arguments (in argc and argv) 
+ * Once we match with arguments,
+ * we will store the parameters in the parameters vector.
+*/
 bool CCommandline::pharse_core(int argc, char ** argv)
 {
     int i, j;
     for (i = 1; i < argc; i++)
-    {
+    {   
+        /**
+         * @brief -f is a special case, we already process earlier
+         * so we will skip it from commandline arguments list, including its parameters
+        */
+        if(strcmp(argv[i],"-f")==0)
+        {
+            while (i + 1 < argc && is_key(argv[i + 1]) == false)
+            {
+                i++;
+            }
+            continue;
+        }
+
         bool b=false;
         for (j = 0; j < narg; j++)
         {
             /**
              * @brief arguments is the list of arguments, e.g. -in, -out, -v, etc.
              * Each argument always starts with a dash, e.g. -in
-             * 
              */
             if (arguments.at(j).compare(argv[i]) == 0) 
             {
@@ -78,21 +142,19 @@ bool CCommandline::is_key(std::string in)
 
 bool CCommandline::pharse(int argc, char **argv)
 {
-    
-    if (pharse_core(argc, argv) == false)
-    {
-        return false;
-    }
+
+    /**
+     * Update -f arguments if it is set in the commandline arguments
+     * otherwise, we will use the default arguments.
+    */
+    pharse_file(argc, argv);
 
     //check to see whether -f is set or not
     std::string arguments_file=query("-f");
-    if(arguments_file != "none")
+    std::ifstream fin(arguments_file);
+    if(arguments_file != "none" && fin)
     {
-        std::ifstream fin(arguments_file);
-        if(!fin)
-        {
-            return true;
-        }
+
         std::vector<std::string> ps;
         std::string s;
 
@@ -112,15 +174,18 @@ bool CCommandline::pharse(int argc, char **argv)
             argv2[i]=new char[ps.at(i).size()+1];
             strcpy(argv2[i],ps.at(i).c_str());
         }
-
-        //pharse again
-        if (pharse_core(ps.size(), argv2) == false)
-        {
-            return false;
-        }
-        return true;
+    
+        /**
+         * pharse everything in the file to replace the default arguments
+        */
+        pharse_core(ps.size(), argv2);
     }
 
+    /**
+     * pharse the commandline arguments.
+     * argument in commandline arguments will overwrite the arguments in the file
+    */
+    pharse_core(argc, argv);
 
 
     return true;
