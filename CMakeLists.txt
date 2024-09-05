@@ -118,3 +118,23 @@ if(Ceres_FOUND)
   target_include_directories(dosy PRIVATE ${EIGEN3_INCLUDE_DIR})
   target_link_libraries(dosy ${CERES_LIBRARIES})
 endif()
+
+
+# test programs
+configure_file(test/test_dp.pl ${CMAKE_CURRENT_BINARY_DIR}/test_dp.pl COPYONLY)
+configure_file(test/test_vf.pl ${CMAKE_CURRENT_BINARY_DIR}/test_vf.pl COPYONLY)
+configure_file(test/test_vf2.pl ${CMAKE_CURRENT_BINARY_DIR}/test_vf2.pl COPYONLY)
+configure_file(test/plane001.ft2 ${CMAKE_CURRENT_BINARY_DIR}/plane001.ft2 COPYONLY)
+configure_file(test/plane002.ft2 ${CMAKE_CURRENT_BINARY_DIR}/plane002.ft2 COPYONLY)
+configure_file(test/plane003.ft2 ${CMAKE_CURRENT_BINARY_DIR}/plane003.ft2 COPYONLY)
+
+
+enable_testing()
+
+add_test(NAME test_deep_picker COMMAND /usr/bin/env perl test_dp.pl)
+
+add_test(NAME test_voigt_fit COMMAND /usr/bin/env perl test_vf.pl)
+set_tests_properties(test_voigt_fit PROPERTIES DEPENDS test_deep_picker)
+
+add_test(NAME test_voigt_fit_pseudo3D COMMAND /usr/bin/env perl test_vf2.pl)
+set_tests_properties(test_voigt_fit_pseudo3D PROPERTIES DEPENDS test_voigt_fit)
