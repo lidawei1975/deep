@@ -1,4 +1,6 @@
 #include "dnn_base.h"
+#include <Eigen/Sparse>
+
 
 #ifndef DNN_PICKER_H
 #define DNN_PICKER_H
@@ -86,10 +88,11 @@ private:
     
     //connnecting dots into lines
     std::vector<int> column_line_x,column_line_y,column_line_segment;
-    std::vector<int> row_line_x,row_line_y,row_line_segment;
+    std::vector<int> row_line_x,row_line_y,row_line_segment; 
     std::vector<int> column_line_index,row_line_index;
-    std::vector<int> rl_column,rl_row; //column and row line, in 2D matrix form, point to line index, see second part of predict_step2
-    std::vector<int> rl_column_p,rl_row_p; //column and row line, in 2D matrix form, point to peak index, see second part of predict_step2
+
+    Eigen::SparseMatrix<unsigned int> rl_row,rl_column;//column and row line, in 2D matrix form, point to line index, see second part of predict_step2
+    Eigen::SparseMatrix<unsigned int> rl_column_p,rl_row_p; //column and row line, in 2D matrix form, point to peak index, see second part of predict_step2
     
     //information from special_case2 to special_case3, method 0
     std::vector<int> peak_exclude;

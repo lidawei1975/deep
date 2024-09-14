@@ -89,7 +89,7 @@ add_executable(simple_picker main_simple_picking.cpp spectrum_io.cpp spectrum_si
 
 
 # build a alternative peak fitting program for 2D, using my own minimization algorithm instead of Ceres
-add_executable(voigt_fit_2 main_peak_fitting.cpp spectrum_io.cpp spectrum_fit.cpp kiss_fft.c lmminimizer.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+add_executable(voigt_fit_2 main_peak_fitting.cpp spectrum_io.cpp spectrum_fit.cpp cost_functions.cpp kiss_fft.c lmminimizer.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
 target_include_directories(voigt_fit_2 PRIVATE ${EIGEN3_INCLUDE_DIR})
 target_link_libraries(voigt_fit_2 libcerf)
 target_compile_definitions(voigt_fit_2 PRIVATE LMMIN)
@@ -100,7 +100,7 @@ find_package(Ceres)
 
 # peak fitting programs for both 1D and 2D
 if(Ceres_FOUND)
-  add_executable(voigt_fit main_peak_fitting.cpp spectrum_io.cpp spectrum_fit.cpp kiss_fft.c $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+  add_executable(voigt_fit main_peak_fitting.cpp spectrum_io.cpp spectrum_fit.cpp cost_functions.cpp kiss_fft.c $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
   target_include_directories(voigt_fit PRIVATE ${CERES_INCLUDE_DIRS})
   target_include_directories(voigt_fit PRIVATE ${EIGEN3_INCLUDE_DIR})
   target_link_libraries(voigt_fit ${CERES_LIBRARIES})
@@ -127,6 +127,10 @@ configure_file(test/test_vf2.pl ${CMAKE_CURRENT_BINARY_DIR}/test_vf2.pl COPYONLY
 configure_file(test/plane001.ft2 ${CMAKE_CURRENT_BINARY_DIR}/plane001.ft2 COPYONLY)
 configure_file(test/plane002.ft2 ${CMAKE_CURRENT_BINARY_DIR}/plane002.ft2 COPYONLY)
 configure_file(test/plane003.ft2 ${CMAKE_CURRENT_BINARY_DIR}/plane003.ft2 COPYONLY)
+# test programs and files for peak_match
+configure_file(test/test_peak_match.pl ${CMAKE_CURRENT_BINARY_DIR}/test_peak_match.pl COPYONLY)
+configure_file(test/ass.list ${CMAKE_CURRENT_BINARY_DIR}/ass.list COPYONLY)
+configure_file(test/peaks_ass.tab ${CMAKE_CURRENT_BINARY_DIR}/peaks_ass.tab COPYONLY)
 
 
 enable_testing()
@@ -138,3 +142,10 @@ set_tests_properties(test_voigt_fit PROPERTIES DEPENDS test_deep_picker)
 
 add_test(NAME test_voigt_fit_pseudo3D COMMAND /usr/bin/env perl test_vf2.pl)
 set_tests_properties(test_voigt_fit_pseudo3D PROPERTIES DEPENDS test_voigt_fit)
+
+add_test(NAME test_peak_match COMMAND /usr/bin/env perl test_peak_match.pl)
+
+
+add_executable(test_functors test_functors.cpp cost_functions.cpp kiss_fft.c)
+target_link_libraries(test_functors libcerf)
+add_test(NAME test_functors COMMAND test_functors)

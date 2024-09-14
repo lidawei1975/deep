@@ -6,14 +6,12 @@ extern "C"
 };
 
 
-#ifndef SPECTRUM_IO_HEAD
-#define SPECTRUM_IO_HEAD
 #include "spectrum_io.h"
-#endif
 
-#ifdef LMMIN
-#include "lmminimizer.h"
-#endif
+struct shared_data_2d
+{
+  static int n_verbose; //0: minimal, 1: normal
+};
 
 #ifndef FIT_TYPE
 #define FIT_TYPE
@@ -22,117 +20,11 @@ enum fit_type
   gaussian_type,
   voigt_type,
   exact_type,
+  voigt_lorentz_type, // voigt along x and lorentzian along y
   null_type
 };
 #endif
 
-#ifndef LDW_PARAS
-#define LDW_PARAS
-#define SMALL 1e-10
-#define PI 3.14159265358979323846
-#define M_SQRT_PI 1.772453850905516
-#define M_SQRT_2PI 2.506628274631000
-#define M_1_SQRT_PI 0.564189583547756
-#endif
-
-
-
-
-// for 2D voigt fitting, analytical derivative
-#ifdef LMMIN
-class mycostfunction_voigt : public ldwcostfunction
-#else
-class mycostfunction_voigt : public ceres::CostFunction
-#endif
-{
-
-private:
-  int n_datapoint; // size of x(y,z)
-  int xdim, ydim;
-  double *z; // x,y -> coor, z-> spectra data
-
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
-
-public:
-  ~mycostfunction_voigt();
-  mycostfunction_voigt(int, int, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-#ifndef LMMIN
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-#endif
-};
-
-
-
-#ifdef LMMIN
-class mycostfunction_nvoigt : public ldwcostfunction
-#else
-class mycostfunction_nvoigt : public ceres::CostFunction
-#endif
-{
-
-private:
-  int npeak;       // number of peaks
-  int n_datapoint; // size of x(y,z)
-  int xdim, ydim;
-  double *z; // x,y -> coor, z-> spectra data
-
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
-
-public:
-  ~mycostfunction_nvoigt();
-  mycostfunction_nvoigt(int, int, int, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-#ifndef LMMIN
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-#endif
-};
-
-
-
-// for 2D Gaussian fitting, analytical derivative
-#ifdef LMMIN
-class mycostfunction_gaussian : public ldwcostfunction
-#else
-class mycostfunction_gaussian : public ceres::CostFunction
-#endif
-{
-
-private:
-  int n_datapoint; // size of x(y,z)
-  int xdim, ydim;
-  double *z; // x,y -> coor, z-> spectra data
-
-public:
-  ~mycostfunction_gaussian();
-  mycostfunction_gaussian(int, int, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-#ifndef LMMIN
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-#endif
-};
-
-
-struct Exactshape // with phasing error
-{
-  Exactshape(double *zz_, int nx_, int zfx_, int ny_, int zfy_) : zz(zz_), nx(nx_), zfx(zfx_), ny(ny_), zfy(zfy_){};
-  bool operator()(const double *const a, const double *const x0, const double *const y0, const double *const r2x, const double *const r2y, const double *const sx, const double *const sy, double *residue) const;
-  bool val(const double a, const double x0, const double y0, const double r2x, const double r2y, const double sx, const double sy, double *v) const;
-
-private:
-  const double *zz;
-  const int nx, zfx, ny, zfy;
-};
-
-struct shared_data_2d
-{
-  static int n_verbose; //0: minimal, 1: normal
-};
 
 
 class gaussian_fit: public shared_data_2d
@@ -175,12 +67,23 @@ private:
   bool multiple_fit_voigt(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n = 0);
   bool multiple_fit_voigt_core(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e);
 
+  bool one_fit_voigt_lorentz(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e, int n);
+  bool one_fit_voigt_lorentz_core(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &gammax,double &gammay,double *e);
+
+  bool multiple_fit_voigt_lorentz(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x0, double &y0, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n);
+  bool multiple_fit_voigt_lorentz_core(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &gammax, double &gammay, double *e);
+
+
+
   bool gaussain_convolution(const int,const int,const double a,const double x,const double y,const double sigmax,const double sigmay,int&,int&,int&,int&, std::vector<double> *kernel, double scale = 1.5);
   bool gaussain_convolution_within_region(const int ndx,const double a,const double x,const double y,const double sigmax,const double sigmay,int&,int&,int&,int&, std::vector<double> *kernel, double scale = 1.0);
 
   bool voigt_convolution(const int,const int,const double a,const double x,const double y,const double sigmax,const double sigmay,const double gammax,const double gammay,int&,int&,int&,int&, std::vector<double> *kernel, double scale = 1.5);
   bool voigt_convolution_2(const int,const int,const double a,const double x,const double y,const double sigmax,const double sigmay,const double gammax,const double gammay,int&,int&,int&,int&, std::vector<double> *kernel, double scale = 1.5);
   bool voigt_convolution_within_region(int ndx,const double a,const double x,const double y,const double sigmax,const double sigmay,const double gammax,const double gammay,int&,int&,int&,int&, std::vector<double> *kernel, double scale = 1.0);
+
+  bool voigt_lorentz_convolution(const int,const int,const double a,const double x,const double y,const double sigmax,const double sigmay,const double gammax,const double gammay,int&,int&,int&,int&, std::vector<double> *kernel, double scale1 = 1.5, double scale2 = 3.0);
+  bool voigt_lorentz_convolution_within_region(int ndx,const double a,const double x,const double y,const double sigmax,const double sigmay,const double gammax,const double gammay,int&,int&,int&,int&, std::vector<double> *kernel, double scale1 = 1.0, double scale2 = 3.0);
 
   // bool voigt_convolution_2(double a, double x, double y, double sigmax, double sigmay, double gammax, double gammay, std::vector<double> *kernel,int xdim2,int ydim2);
 
@@ -198,18 +101,8 @@ private:
   std::vector<std::pair<int, int>> get_possible_excess_peaks();
   int test_excess_peaks(int, int);
 
-
   bool get_pair_overlap(const int m, const int n, double &, double &) const;
-  bool test_excess_peaks_multi();
-  bool test_whether_to_remove(const int j,const std::deque<int> &cluster);
-  double fit_multiple_peaks(const std::vector< std::vector<double>> &reconstrcuted_spectrum,
-    std::vector<double> intens,
-    std::vector<double> sx,
-    std::vector<double> sy,
-    std::vector<double> gx,
-    std::vector<double> gy,
-    std::vector<double> xx,
-    std::vector<double> yy);
+
 
 public:
   std::vector<std::string> * peak_assignments; //reference to spectrum_fit varaible user_comments

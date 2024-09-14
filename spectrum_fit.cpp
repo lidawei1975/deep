@@ -30,10 +30,22 @@
 #include "kiss_fft.h"
 #include "json/json.h"
 #include "commandline.h"
+#include "cost_functors.h"
 #include "spectrum_fit.h"
 
 namespace ldw_math_spectrum_fit
 {
+    /**
+     * Lorentzian function
+     * Using this definition: 1/(1+(x/gamma)^2)
+     * Peak height is 1.0
+     * Peak area is pi*gamma
+    */
+    double lorentz(double x, double gamma)
+    {
+        return 1 / (1 + x * x / (gamma * gamma));
+    };
+
     void calcualte_std_vector(std::vector<std::vector<double>> x, std::vector<double> &dx)
     {
         int ntry=x.size();
@@ -263,6 +275,62 @@ namespace ldw_math_spectrum_fit
         return 1;
     };
 
+
+    bool generate_spectrum_voigt_lorentz(std::vector<double> inten, std::vector<double> sigmax, std::vector<double> gammax, std::vector<double> gammay, 
+    std::vector<double> centerx, std::vector<double> centery, std::vector< std::vector<double> > &spectrum, int xdim_local, int ydim_local)
+    {
+
+        int min_w=15;
+        int max_w=150;
+
+        spectrum.resize(ydim_local);
+        for (unsigned int i = 0; i < ydim_local; i++)
+            spectrum[i].resize(xdim_local);
+
+        for (unsigned int m = 0; m < centerx.size(); m++)
+        {
+
+            float s1=0.5346*gammax[m]*2+std::sqrt(0.2166*4*gammax[m]*gammax[m]+sigmax[m]*sigmax[m]*8*0.6931);
+            float s2=2.0*gammay[m];
+
+            int height=std::max(int(fabs(s2*15)),min_w);
+            int width =std::max(int(fabs(s1*5)),min_w);
+
+            height=std::min(height,max_w);
+            width=std::min(width,max_w);
+
+            int p2 = int(centerx[m]+0.5);
+            int p1 = int(centery[m]+0.5);
+
+            double r2=centerx[m]-p2;
+            double r1=centery[m]-p1;
+
+            //std::cout<<p2<<" "<<p1<<" "<<centerx[m]<<" "<<centery[m]<<" "<<r1<<" "<<r2<<std::endl;
+
+            std::vector< std::vector<double> > kernel(height * 2 + 1, std::vector<double>(width * 2 + 1));
+            for (int i = -height; i <= height; i++)
+            {
+                for (int j = -width; j <= width; j++)
+                {
+                    double z1=lorentz ( i-r1, gammay[m]);
+                    double z2=voigt ( j-r2, sigmax[m], gammax[m] );
+                    kernel[i + height][j + width] = z1*z2;
+                }
+            }
+
+            for (int i = std::max(-height, -p1); i <= std::min(height, ydim_local - p1 -1); i++)
+            {
+                for (int j = std::max(-width, -p2); j <= std::min(width, xdim_local - p2 -1 ); j++)
+                {
+                    spectrum[p1 + i][p2 + j] += kernel[i + height][j + width] * inten[m];
+                    //std::cout<<p1+i<<" "<<kernel[i + height][j + width]<<std::endl;
+                }
+            }
+        }
+        return 1;
+    };
+
+
     bool is_assignment(std::string ass)
     {
         if (ass.find("?") == 0 || ass.find("Peak") == 0 || ass.find("peak") == 0 || ass.find("None") == 0 || ass.find("none") == 0 || ass.find("X") || ass.find("x") == 0)
@@ -277,479 +345,6 @@ namespace ldw_math_spectrum_fit
     };
 };
 
-
-//cost functions for ceres-solver
-//Gaussian
-mycostfunction_gaussian::~mycostfunction_gaussian(){};
-mycostfunction_gaussian::mycostfunction_gaussian(int xdim_, int ydim_, double *z_)
-{
-    xdim=xdim_;
-    ydim=ydim_;
-    n_datapoint=xdim*ydim;
-    z=z_;   
-};
-
-bool mycostfunction_gaussian::Evaluate(double const *const *xx, double *residual, double **jaco) const
-{
-    double a=xx[0][0];
-    double x0=xx[1][0];
-    double sigmax=fabs(xx[2][0]);
-    double y0=xx[3][0];
-    double sigmay=fabs(xx[4][0]);
- 
-
-    if (jaco != NULL ) //both residual errors and jaco are required.
-    {
-        for(int i=0;i<xdim;i++)
-        {
-            double x_sigmax=(i-x0)/sigmax;
-            double gx=exp((x0-i)*x_sigmax);
-            for(int j=0;j<ydim;j++)
-            {
-                double y_sigmay=(j-y0)/sigmay;
-                double g=gx*exp((y0-j)*y_sigmay);
-                double ag=a*g;
-                int ii=i*ydim+j;
-
-                residual[ii]=ag-z[ii]; 
-                jaco[0][ii]=g; //with respect to a
-                jaco[1][ii]=ag*2*x_sigmax; //x0
-                jaco[2][ii]=ag*x_sigmax*x_sigmax; //sigmax
-                jaco[3][ii]=ag*2*y_sigmay; //y0
-                jaco[4][ii]=ag*y_sigmay*y_sigmay; //sigmay
-            }
-        }
-    }
-    else //only require residual errors
-    {
-        for(int i=0;i<xdim;i++)
-        {
-            double gx=a*exp(-(i-x0)*(i-x0)/sigmax);
-            for(int j=0;j<ydim;j++)
-            { 
-                int ii=i*ydim+j;
-                residual[ii]=gx*exp(-(j-y0)*(j-y0)/sigmay)-z[ii];  
-            }
-        }
-    }
-    return true;
-};
-
-//Voigt 
-mycostfunction_voigt::~mycostfunction_voigt(){};
-mycostfunction_voigt::mycostfunction_voigt(int xdim_, int ydim_, double *z_)
-{
-    xdim=xdim_;
-    ydim=ydim_;
-    n_datapoint=xdim*ydim;
-    z=z_;   
-};
-
-void mycostfunction_voigt::voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const
-{
-    double v,l;
-    double z_r=x0/(sqrt(2)*sigma);
-    double z_i=gamma/(sqrt(2)*sigma);
-    double sigma2=sigma*sigma;
-    double sigma3=sigma*sigma2;
-
-    re_im_w_of_z(z_r,z_i,&v,&l);
-    *vv=v/sqrt(2*M_PI*sigma2);
-    
-    double t1=z_i*l-z_r*v;
-    double t2=z_r*l+z_i*v;
-
-    *r_x0=t1/(sigma2*M_SQRT_PI); 
-    *r_gamma=(t2-M_1_SQRT_PI)/(sigma2*M_SQRT_PI);
-    *r_sigma=-v/M_SQRT_2PI/sigma2 - t1*x0/sigma3/M_SQRT_PI - (t2-M_1_SQRT_PI)*gamma/sigma3/M_SQRT_PI;
-
-    return;
-};
-
-void mycostfunction_voigt::voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const
-{
-    double v,l;
-    double z_r=x0/(sqrt(2)*sigma);
-    double z_i=gamma/(sqrt(2)*sigma);
-    double sigma2=sigma*sigma;
-
-    re_im_w_of_z(z_r,z_i,&v,&l);
-    *vv=v/sqrt(2*M_PI*sigma2);
-    return;
-};
-
-bool mycostfunction_voigt::Evaluate(double const *const *xx, double *residual, double **jaco) const
-{
-    double a=xx[0][0];
-    double x0=xx[1][0];
-    double sigmax=fabs(xx[2][0]);
-    double gammax=fabs(xx[3][0]);
-    double y0=xx[4][0];
-    double sigmay=fabs(xx[5][0]);
-    double gammay=fabs(xx[6][0]);
-    
-    double vvx,vvy,r_x,r_y,r_sigmax,r_sigmay,r_gammax,r_gammay;
-
-    voigt_helper(x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
-    voigt_helper(y0, sigmay, gammay, &vvy, &r_y, &r_sigmay, &r_gammay);
-
-    if (jaco != NULL ) //both residual errors and jaco are required.
-    {
-        for(int i=0;i<xdim;i++)
-        {
-            voigt_helper(i-x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax); 
-            for(int j=0;j<ydim;j++)
-            {
-                int ii=i*ydim+j;
-                voigt_helper(j-y0, sigmay, gammay, &vvy, &r_y, &r_sigmay, &r_gammay);
-                residual[ii]=a*vvx*vvy-z[ii]; 
-                jaco[0][ii]=vvx*vvy; //with respect to a
-                jaco[1][ii]=-a*r_x*vvy; //x0
-                jaco[2][ii]=a*r_sigmax*vvy; //sigmax
-                jaco[3][ii]=a*r_gammax*vvy; //gammax
-                jaco[4][ii]=-a*r_y*vvx; //y0
-                jaco[5][ii]=a*r_sigmay*vvx; //sigmay
-                jaco[6][ii]=a*r_gammay*vvx; //gammay
-            }
-        }
-    }
-    else //only require residual errors
-    {
-        for(int i=0;i<xdim;i++)
-        {
-            voigt_helper(i-x0, sigmax, gammax, &vvx);      
-            for(int j=0;j<ydim;j++)
-            {
-                int ii=i*ydim+j;
-                voigt_helper(j-y0, sigmay, gammay, &vvy);   
-                residual[ii]=a*vvx*vvy-z[ii];    
-            }
-        }
-    }
-    return true;
-};
-
-
-//Voigt npeak
-mycostfunction_nvoigt::~mycostfunction_nvoigt(){};
-mycostfunction_nvoigt::mycostfunction_nvoigt(int n,int xdim_, int ydim_, double *z_)
-{
-    npeak=n;
-    xdim=xdim_;
-    ydim=ydim_;
-    n_datapoint=xdim*ydim;
-    z=z_;   
-};
-
-void mycostfunction_nvoigt::voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const
-{
-    double v,l;
-    double z_r=x0/(sqrt(2)*sigma);
-    double z_i=gamma/(sqrt(2)*sigma);
-    double sigma2=sigma*sigma;
-    double sigma3=sigma*sigma2;
-
-    re_im_w_of_z(z_r,z_i,&v,&l);
-    *vv=v/sqrt(2*M_PI*sigma2);
-    
-    double t1=z_i*l-z_r*v;
-    double t2=z_r*l+z_i*v;
-
-    *r_x0=t1/(sigma2*M_SQRT_PI); 
-    *r_gamma=(t2-M_1_SQRT_PI)/(sigma2*M_SQRT_PI);
-    *r_sigma=-v/M_SQRT_2PI/sigma2 - t1*x0/sigma3/M_SQRT_PI - (t2-M_1_SQRT_PI)*gamma/sigma3/M_SQRT_PI;
-
-    return;
-};
-
-void mycostfunction_nvoigt::voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const
-{
-    double v,l;
-    double z_r=x0/(sqrt(2)*sigma);
-    double z_i=gamma/(sqrt(2)*sigma);
-    double sigma2=sigma*sigma;
-
-    re_im_w_of_z(z_r,z_i,&v,&l);
-    *vv=v/sqrt(2*M_PI*sigma2);
-    return;
-};
-
-bool mycostfunction_nvoigt::Evaluate(double const *const *xx, double *residual, double **jaco) const
-{
-    
-    
-    double vvx,vvy,r_x,r_y,r_sigmax,r_sigmay,r_gammax,r_gammay;
-
-
-
-    if (jaco != NULL ) //both residual errors and jaco are required.
-    {
-        for(int i=0;i<n_datapoint;i++)
-        {
-            residual[i]=-z[i];
-        }
-
-        for(int m=0;m<npeak;m++)
-        {
-            double a=xx[m][0];
-            double x0=xx[m][1];
-            double sigmax=fabs(xx[m][2]);
-            double gammax=fabs(xx[m][3]);
-            double y0=xx[m][4];
-            double sigmay=fabs(xx[m][5]);
-            double gammay=fabs(xx[m][6]);
-            for(int i=0;i<xdim;i++)
-            {
-                
-                voigt_helper(i-x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax); 
-                for(int j=0;j<ydim;j++)
-                {
-                    int ii=i*ydim+j;
-                    voigt_helper(j-y0, sigmay, gammay, &vvy, &r_y, &r_sigmay, &r_gammay);
-                    residual[ii]+=a*vvx*vvy; 
-                    jaco[m][ii*7+0]=vvx*vvy; //with respect to a
-                    jaco[m][ii*7+1]=-a*r_x*vvy; //x0
-                    jaco[m][ii*7+2]=a*r_sigmax*vvy; //sigmax
-                    jaco[m][ii*7+3]=a*r_gammax*vvy; //gammax
-                    jaco[m][ii*7+4]=-a*r_y*vvx; //y0
-                    jaco[m][ii*7+5]=a*r_sigmay*vvx; //sigmay
-                    jaco[m][ii*7+6]=a*r_gammay*vvx; //gammay
-                }
-            }
-        }
-    }
-    else //only require residual errors
-    {
-        for(int i=0;i<n_datapoint;i++)
-        {
-            residual[i]=-z[i];
-        }
-        for(int m=0;m<npeak;m++)
-        {
-            double a=xx[m][0];
-            double x0=xx[m][1];
-            double sigmax=fabs(xx[m][2]);
-            double gammax=fabs(xx[m][3]);
-            double y0=xx[m][4];
-            double sigmay=fabs(xx[m][5]);
-            double gammay=fabs(xx[m][6]);
-            for(int i=0;i<xdim;i++)
-            {
-                voigt_helper(i-x0, sigmax, gammax, &vvx);      
-                for(int j=0;j<ydim;j++)
-                {
-                    int ii=i*ydim+j;
-                    voigt_helper(j-y0, sigmay, gammay, &vvy);   
-                    residual[ii]+=a*vvx*vvy;    
-                }
-            }
-        }
-    }
-    return true;
-};
-
-
-bool Exactshape::operator()(const double *const a, const double *const x0, const double *const y0, const double *const r2x, const double *const r2y, const double *const sx, const double *const sy, double *residue) const
-{
-    std::vector<double> result;
-    result.resize(41 * 41, 0.0);
-    val(*a, *x0, *y0, *r2x, *r2y, *sx, *sy, result.data());
-    for (int i = 0; i < 41 * 41; i++)
-    {
-        residue[i] = result[i] - zz[i];
-    }
-    return true;
-};
-
-bool Exactshape::val(const double a, const double x0, const double y0, const double r2x, const double r2y, const double sx, const double sy, double *v) const
-{
-
-    std::vector<double> resultx, resulty;
-
-    kiss_fft_cfg cfg;
-    kiss_fft_cpx *y, *z;
-
-    int nx2 = nx * zfx;
-    int ny2 = ny * zfy;
-
-    //x dimension
-    y = new kiss_fft_cpx[nx2];
-    z = new kiss_fft_cpx[nx2];
-
-    for (int i = 0; i < nx; i++)
-    {
-        double sp = pow(sin(PI * 0.5 + PI * 0.448 / nx * i), 3.684);
-        if (i == 0)
-            sp = 0.5;
-        y[i].r = cos((0.5 - x0 / nx2) * 2 * PI * (i - sx)) * exp(-fabs(r2x) * i) * sp;
-        y[i].i = -sin((0.5 - x0 / nx2) * 2 * PI * (i - sx)) * exp(-fabs(r2x) * i) * sp;
-        // std::cout<<y[i].r<<" ";
-    }
-    // std::cout<<std::endl;
-
-    for (int i = nx; i < nx2; i++)
-    {
-        y[i].r = 0;
-        y[i].i = 0;
-    }
-
-    if ((cfg = kiss_fft_alloc(nx2, 0, NULL, NULL)) != NULL)
-    {
-        kiss_fft(cfg, y, z);
-        free(cfg);
-    }
-    else
-    {
-        return false;
-    }
-
-    for (int i = nx2 / 2 - 20; i <= nx2 / 2 + 20; i++)
-    {
-        resultx.push_back(z[i].r);
-    }
-
-    delete[] y;
-    delete[] z;
-
-    //y dimension
-    y = new kiss_fft_cpx[ny2];
-    z = new kiss_fft_cpx[ny2];
-
-    for (int i = 0; i < ny; i++)
-    {
-        double sp = pow(sin(PI * 0.5 + PI * 0.448 / ny * i), 3.684);
-        if (i == 0)
-            sp = 0.5;
-        y[i].r = cos((0.5 - y0 / ny2) * 2 * PI * (i - sy)) * exp(-fabs(r2y) * i) * sp;
-        y[i].i = -sin((0.5 - y0 / ny2) * 2 * PI * (i - sy)) * exp(-fabs(r2y) * i) * sp;
-    }
-
-    for (int i = ny; i < ny2; i++)
-    {
-        y[i].r = 0;
-        y[i].i = 0;
-    }
-
-    if ((cfg = kiss_fft_alloc(ny2, 0, NULL, NULL)) != NULL)
-    {
-        kiss_fft(cfg, y, z);
-        free(cfg);
-    }
-    else
-    {
-        return false;
-    }
-
-    for (int i = ny2 / 2 - 20; i <= ny2 / 2 + 20; i++)
-    {
-        resulty.push_back(z[i].r);
-    }
-
-    delete[] y;
-    delete[] z;
-
-    //final result
-    for (int i = 0; i < 41; i++)
-    {
-        for (int j = 0; j < 41; j++)
-        {
-            v[i * 41 + j] = a * resultx[i] * resulty[j];
-        }
-    }
-
-    return true;
-};
-
-//Voigt: intensity only
-/*
-mycostfunction_voigt_a::~mycostfunction_voigt_a(){};
-mycostfunction_voigt_a::mycostfunction_voigt_a(int xdim_, int ydim_, double *z_,double x0_,double sigmax_,double gammax_,double y0_,double sigmay_,double gammay_)
-{
-    xdim=xdim_;
-    ydim=ydim_;
-    n_datapoint=xdim*ydim;
-    z=z_;   
-
-    x0=x0_;
-    sigmax=sigmax_;
-    gammax=gammax_;
-    y0=y0_;
-    sigmay=sigmay_;
-    gammay=gammay_;
-};
-
-void mycostfunction_voigt_a::voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const
-{
-    double v,l;
-    double z_r=x0/(sqrt(2)*sigma);
-    double z_i=gamma/(sqrt(2)*sigma);
-    double sigma2=sigma*sigma;
-    double sigma3=sigma*sigma2;
-
-    re_im_w_of_z(z_r,z_i,&v,&l);
-    *vv=v/sqrt(2*M_PI*sigma2);
-    
-    double t1=z_i*l-z_r*v;
-    double t2=z_r*l+z_i*v;
-
-    *r_x0=t1/(sigma2*M_SQRT_PI); 
-    *r_gamma=(t2-M_1_SQRT_PI)/(sigma2*M_SQRT_PI);
-    *r_sigma=-v/M_SQRT_2PI/sigma2 - t1*x0/sigma3/M_SQRT_PI - (t2-M_1_SQRT_PI)*gamma/sigma3/M_SQRT_PI;
-
-    return;
-};
-
-void mycostfunction_voigt_a::voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const
-{
-    double v,l;
-    double z_r=x0/(sqrt(2)*sigma);
-    double z_i=gamma/(sqrt(2)*sigma);
-    double sigma2=sigma*sigma;
-
-    re_im_w_of_z(z_r,z_i,&v,&l);
-    *vv=v/sqrt(2*M_PI*sigma2);
-    return;
-};
-
-bool mycostfunction_voigt_a::Evaluate(double const *const *xx, double *residual, double **jaco) const
-{
-    double a=xx[0][0];    
-    double vvx,vvy,r_x,r_y,r_sigmax,r_sigmay,r_gammax,r_gammay;
-
-    voigt_helper(x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
-    voigt_helper(y0, sigmay, gammay, &vvy, &r_y, &r_sigmay, &r_gammay);
-
-    if (jaco != NULL ) //both residual errors and jaco are required.
-    {
-        for(int i=0;i<xdim;i++)
-        {
-            voigt_helper(i-x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
-            for(int j=0;j<ydim;j++)
-            {
-                int ii=i*ydim+j;
-                voigt_helper(j-y0, sigmay, gammay, &vvy, &r_y, &r_sigmay, &r_gammay);
-                residual[ii]=a*vvx*vvy-z[ii]; 
-                jaco[0][ii]=vvx*vvy; //with respect to a
-            }
-        }
-    }
-    else //only require residual errors
-    {
-        for(int i=0;i<xdim;i++)
-        {
-            voigt_helper(i-x0, sigmax, gammax, &vvx);
-            for(int j=0;j<ydim;j++)
-            {
-                int ii=i*ydim+j;
-                voigt_helper(j-y0, sigmay, gammay, &vvy);
-                residual[ii]=a*vvx*vvy-z[ii]; 
-            }
-        }
-    }
-    return true;
-};
-
-*/
 
 //class gaussian_fit
 
@@ -783,6 +378,7 @@ gaussian_fit::gaussian_fit()
 #endif
 
 };
+
 gaussian_fit::~gaussian_fit()
 {
     //std::cout<<"delete gaussain fit "<<std::endl;
@@ -1079,14 +675,15 @@ bool gaussian_fit::one_fit_voigt(int xsize,int ysize,std::vector<double> *zz, do
     if(n<=0)
     {
         /**
-         * Fit a Guassian first
+         * Fit a Guassian first. At this time, a is peak volume.
+         * a*voigt(x)*voigt(y) is the peak height.
         */
         one_fit_gaussian(xsize,ysize,zz,x0,y0,a,sigmax,sigmay,e);
         /**
          * In Gaussian fitting, fitted a is the peak height.
          * Need to converge to peak volume. 
         */
-        a = a *  2 * M_PI * sigmax * sigmay;
+        a = a *  2 * M_PI * sigmax * sigmay;  //a is the peak volume
 
 
     
@@ -1104,7 +701,7 @@ bool gaussian_fit::one_fit_voigt(int xsize,int ysize,std::vector<double> *zz, do
         test_gammay[1]=fwhhy/4.0;
         test_gammay[2]=fwhhy/2.0*0.98;
 
-        double inten=a*voigt(0,sigmax,gammax)*voigt(0,sigmay,gammay);
+        double inten=a*voigt(0,sigmax,gammax)*voigt(0,sigmay,gammay); //inten is the peak height
         double min_e=std::numeric_limits<double>::max();
 
         double x0_try,y0_try,a_try;
@@ -1117,7 +714,7 @@ bool gaussian_fit::one_fit_voigt(int xsize,int ysize,std::vector<double> *zz, do
                 double sigmax_try=sqrt(((fwhhx-1.0692*gammax_try)*(fwhhx-1.0692*gammax_try)-0.2166*4*gammax_try*gammax_try)/(8*0.6931));
                 double gammay_try=test_gammay[j];
                 double sigmay_try=sqrt(((fwhhy-1.0692*gammay_try)*(fwhhy-1.0692*gammay_try)-0.2166*4*gammay_try*gammay_try)/(8*0.6931));
-                a_try=inten/(voigt(0,sigmax_try,gammax_try)*voigt(0,sigmay_try,gammay_try));
+                a_try=inten/(voigt(0,sigmax_try,gammax_try)*voigt(0,sigmay_try,gammay_try)); // a_try is the peak volume
                 x0_try=x0;
                 y0_try=y0;
                 // std::cout<<"inten="<<inten<<" sigmax="<<sigmax_try<<" sigmay="<<sigmay_try<<" gammax="<<gammax_try<<" gammay="<<gammay_try<<" ==> ";
@@ -1215,6 +812,145 @@ bool gaussian_fit::one_fit_voigt_core(int xsize,int ysize,std::vector<double> *z
     return true;
 };
     
+
+bool gaussian_fit::multiple_fit_voigt_lorentz(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x0, double &y0, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n)
+{
+    /**
+         * IF sigmay is not zero, we are reading either a Voigt or Gaussian in the indirect dimension.
+         * Convert to FWHH, then to Lorentzian (gammay = fwhhy/2.0)
+         * When gammay is zero, it is already a Lorentzian but the FWHH and gamma caculation are the same.
+        */
+    if(n==0)
+    {
+        double fwhhy=1.0692*gammay+sqrt(0.8664*gammay*gammay+5.5452*sigmay*sigmay);
+        double gammay_input=fwhhy/2.0;
+        /**
+         * Keep the original input values
+         * At input, a_input * voigt(0, sigmax, gammax) is the peak height.
+        */
+        std::vector<double> a_input = a;
+        double x0_input = x0;
+        double y0_input = y0;
+        
+        /**
+         * For direct dimension, we test several sigma, gamma values to find the best fitting.
+        */
+        double fwhhx=1.0692*gammax+sqrt(0.8664*gammax*gammax+5.5452*sigmax*sigmax);
+        double test_gammax[3],test_gammay[3];
+        test_gammax[0]=1e-9;
+        test_gammax[1]=fwhhx/4.0;
+        test_gammax[2]=fwhhx/2.0*0.98;
+
+
+
+        double min_e=std::numeric_limits<double>::max();
+        for (int i = 0; i < 3; i++)
+        {
+            double gammay_try = gammay_input;
+            double gammax_try = test_gammax[i];
+            double sigmax_try = sqrt(((fwhhx - 1.0692 * gammax_try) * (fwhhx - 1.0692 * gammax_try) - 0.2166 * 4 * gammax_try * gammax_try) / (8 * 0.6931));
+            std::vector<double> a_try = a_input; 
+            double x0_try = x0_input;
+            double y0_try = y0_input;
+            double e_try;
+            multiple_fit_voigt_lorentz_core(xsize, ysize, zz, x0_try, y0_try, a_try, sigmax_try, gammax_try, gammay_try, &e_try);
+            if (e_try < min_e)
+            {
+                min_e = e_try;
+                *e = e_try;
+                x0 = x0_try;
+                y0 = y0_try;
+                a = a_try;
+                sigmax = sigmax_try;
+                gammax = gammax_try;
+                gammay = gammay_try;
+            }
+        }
+        /**
+         * Set sigmay to 0.0, because we are fitting a Lorentzian in the indirect dimension but we still use sigmay in the following round (to calculate fwhh)
+        */
+        sigmay=0.0;
+    }
+
+    return multiple_fit_voigt_lorentz_core(xsize,ysize,zz,x0,y0,a,sigmax,gammax,gammay,e);    
+}
+
+bool gaussian_fit::multiple_fit_voigt_lorentz_core(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &gammax, double &gammay, double *e)
+{
+#ifdef LMMIN
+
+    int nspect = zz.size();
+    double **par;
+
+    par = new double*[5+nspect];
+    for(int i=0;i<5+nspect;i++) 
+    {
+        par[i]=new double[1];
+    }
+
+    par[0][0]=a[0];
+    par[1][0]=x;
+    par[2][0]=sigmax;
+    par[3][0]=gammax;
+    par[4][0]=y;
+    par[5][0]=gammay;
+
+    for(int i=1;i<nspect;i++)
+    {
+        par[5+i][0]=a[i];
+    }
+
+    std::vector<ldwcostfunction *> cost_functions;
+
+    for (unsigned int k = 0; k < nspect; k++)
+    {
+        cost_functions.push_back(new mycostfunction_voigt_lorentz(xsize,ysize,zz[k].data()));
+    }
+
+    class levmarq minimizer;
+
+    minimizer.solve(5, 5+nspect, par, zz[0].size(), NULL /**weight*/, cost_functions);
+
+    a[0]=par[0][0];
+    x=par[1][0];
+    sigmax=fabs(par[2][0]);
+    gammax=fabs(par[3][0]);
+    y=par[4][0];
+    gammay=fabs(par[5][0]);
+
+    for(int i=1;i<nspect;i++)
+    {
+        a[i]=par[5+i][0];
+    }
+
+    *e = minimizer.error_func(5, par, zz[0].size(), NULL /**weight*/, cost_functions);
+
+    for(int i=0;i<5+nspect;i++) delete [] par[i];
+    delete [] par;
+
+#else
+
+    ceres::Solver::Summary summary;
+    ceres::Problem problem;
+
+    for (unsigned int k = 0; k < zz.size(); k++)
+    {
+        mycostfunction_voigt_lorentz *cost_function = new mycostfunction_voigt_lorentz(xsize,ysize, zz[k].data());
+        cost_function->set_n_residuals(zz[k].size());
+        for (int m = 0; m < 6; m++)
+            cost_function->parameter_block_sizes()->push_back(1);
+        problem.AddResidualBlock(cost_function, NULL, &(a[k]), &x, &sigmax, &gammax, &y, &gammay);
+    }
+    ceres::Solve(options, &problem, &summary);
+    *e = sqrt(summary.final_cost);
+
+    sigmax = fabs(sigmax);
+    gammax = fabs(gammax);
+    gammay = fabs(gammay);
+
+#endif
+    return true;
+}
 
 bool gaussian_fit::multiple_fit_voigt(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x0, double &y0, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n)
 {
@@ -1376,6 +1112,142 @@ bool gaussian_fit::multiple_fit_voigt_core(int xsize,int ysize, std::vector<std:
     return true;
 };
 
+/**
+ * This is the interface to fit a voigt-lorentz peak
+ * n=0: first round:
+ * For direct dimension, we test several sigma, gamma values to find the best fitting.
+ * Also need to adjust a (because in Gaussian and DP, a is height, in Voigt, a is volume)
+ * For indirect dimension, we use the provied sigma, gamma values to convert to Lorentzian shape (sigma=0, gamma becomes larger)
+ * 
+ * 
+ * n>0: skip sigmay then call the core function
+*/
+bool gaussian_fit::one_fit_voigt_lorentz(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e,int n)
+{
+    if(n==0)
+    {
+        /**
+         * IF sigmay is not zero, we are reading either a Voigt or Gaussian in the indirect dimension.
+         * Convert to FWHH, then to Lorentzian (gammay = fwhhy/2.0)
+         * When gammay is zero, it is already a Lorentzian but the FWHH and gamma caculation are the same.
+        */
+        
+        double fwhhy=1.0692*gammay+sqrt(0.8664*gammay*gammay+5.5452*sigmay*sigmay);
+        double gammay_input=fwhhy/2.0;
+        /**
+         * Keep the original input values
+         * At input, a_input * voigt(0, sigmax, gammax) is the peak height.
+        */
+        double a_input = a;
+        double x0_input = x0;
+        double y0_input = y0;
+        
+        /**
+         * For direct dimension, we test several sigma, gamma values to find the best fitting.
+        */
+        double fwhhx=1.0692*gammax+sqrt(0.8664*gammax*gammax+5.5452*sigmax*sigmax);
+        double test_gammax[3],test_gammay[3];
+        test_gammax[0]=1e-9;
+        test_gammax[1]=fwhhx/4.0;
+        test_gammax[2]=fwhhx/2.0*0.98;
+
+
+
+        double min_e=std::numeric_limits<double>::max();
+        for (int i = 0; i < 3; i++)
+        {
+            double gammay_try = gammay_input;
+            double gammax_try = test_gammax[i];
+            double sigmax_try = sqrt(((fwhhx - 1.0692 * gammax_try) * (fwhhx - 1.0692 * gammax_try) - 0.2166 * 4 * gammax_try * gammax_try) / (8 * 0.6931));
+            double a_try = a_input; 
+            double x0_try = x0_input;
+            double y0_try = y0_input;
+            double e_try;
+            one_fit_voigt_lorentz_core(xsize, ysize, zz, x0_try, y0_try, a_try, sigmax_try, gammax_try, gammay_try, &e_try);
+            if (e_try < min_e)
+            {
+                min_e = e_try;
+                *e = e_try;
+                x0 = x0_try;
+                y0 = y0_try;
+                a = a_try;
+                sigmax = sigmax_try;
+                gammax = gammax_try;
+                gammay = gammay_try;
+            }
+        }
+        /**
+         * Set sigmay to 0.0, because we are fitting a Lorentzian in the indirect dimension but we still use sigmay in the following round (to calculate fwhh)
+        */
+        sigmay=0.0;
+    }
+    return one_fit_voigt_lorentz_core(xsize,ysize,zz,x0,y0,a,sigmax,gammax,gammay,e);
+}
+
+bool gaussian_fit::one_fit_voigt_lorentz_core(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &gammax,double &gammay,double *e)
+{
+
+#ifdef LMMIN
+
+    double **par;
+
+    par = new double*[6];
+    for(int i=0;i<6;i++) 
+    {
+        par[i]=new double[1];
+    }
+
+    par[0][0]=a;
+    par[1][0]=x0;
+    par[2][0]=sigmax;
+    par[3][0]=gammax;
+    par[4][0]=y0;
+    par[5][0]=gammay;
+
+    mycostfunction_voigt_lorentz cost_function(xsize,ysize,zz->data());
+
+    class levmarq minimizer;
+
+    minimizer.solve(6, par, zz->size(), NULL /**weight*/, cost_function);
+
+    a=par[0][0];
+    x0=par[1][0];
+    sigmax=fabs(par[2][0]);
+    gammax=fabs(par[3][0]);
+    y0=par[4][0];
+    gammay=fabs(par[5][0]);
+
+    *e = minimizer.error_func(par, zz->size(), NULL /**weight*/, cost_function);
+
+    for(int i=0;i<6;i++) delete [] par[i];
+    delete [] par;
+
+
+#else
+
+    ceres::Solver::Summary summary;
+    ceres::Problem problem;
+
+    mycostfunction_voigt_lorentz *cost_function = new mycostfunction_voigt_lorentz(xsize,ysize,zz->data());
+    cost_function->set_n_residuals(zz->size());
+    for (int m = 0; m < 6; m++)
+        cost_function->parameter_block_sizes()->push_back(1); //number of fitting parameters
+    problem.AddResidualBlock(cost_function, NULL, &a,&x0,&sigmax,&gammax,&y0,&gammay);
+
+    ceres::Solve(options, &problem, &summary);
+    *e = sqrt(summary.final_cost / zz->size());
+
+    sigmax=fabs(sigmax);
+    gammax=fabs(gammax);
+    gammay=fabs(gammay);
+
+#endif
+
+    return true;
+};
+
+
+
 bool gaussian_fit::gaussain_convolution(const int xdim,const int ydim,const double a,const double x,const double y,const  double sigmax,const  double sigmay,int &i0, int &i1, int &j0, int &j1,std::vector<double> *kernel,double scale)
 {
     float wx=2.3548*sigmax*scale;
@@ -1526,6 +1398,59 @@ bool gaussian_fit::voigt_convolution_within_region(const int ndx,const double a,
 };
 
 
+bool gaussian_fit::voigt_lorentz_convolution(const int xdim, const int ydim,const double a,const  double x,const  double y,const  double sigmax,const  double sigmay,const  double gammax,const  double gammay,int &i0, int &i1, int &j0, int &j1,std::vector<double> *kernel,double scale,double scale2)
+{
+    float wx=(1.0692*gammax+sqrt(0.8664*gammax*gammax+5.5452*sigmax*sigmax))*scale;
+    float wy=(1.0692*gammay+sqrt(0.8664*gammay*gammay+5.5452*sigmay*sigmay))*scale2;
+
+    i0=std::max(0,int(x-wx+0.5));
+    i1=std::min(xdim,int(x+wx+0.5));
+    j0=std::max(0,int(y-wy+0.5));
+    j1=std::min(ydim,int(y+wy+0.5));
+
+    kernel->clear();
+    kernel->resize((i1-i0)*(j1-j0));
+    
+    for (int i =i0; i < i1; i++)
+    {
+        for (int j = j0; j < j1; j++)
+        {
+            double z1=voigt ( i-x, sigmax, gammax );
+            double z2=ldw_math_spectrum_fit::lorentz ( j-y, gammay );
+            kernel->at((i-i0)*(j1-j0)+j-j0)=a*z1*z2;
+        }
+    }
+    return true;
+};
+
+bool gaussian_fit::voigt_lorentz_convolution_within_region(const int ndx,const double a,const  double x,const  double y,const  double sigmax,const  double sigmay,const  double gammax,const  double gammay,int &i0, int &i1, int &j0, int &j1,std::vector<double> *kernel,double scale,double scale2)
+{
+    float wx=(1.0692*gammax+sqrt(0.8664*gammax*gammax+5.5452*sigmax*sigmax))*scale;
+    float wy=(1.0692*gammay+sqrt(0.8664*gammay*gammay+5.5452*sigmay*sigmay))*scale2;
+
+    std::array<int,4> add_limit=valid_fit_region.at(ndx);
+
+    i0=std::max(std::max(0,int(x-wx+0.5)),add_limit[0]);
+    i1=std::min(std::min(xdim,int(x+wx+0.5)),add_limit[1]);
+    j0=std::max(std::max(0,int(y-wy+0.5)),add_limit[2]);
+    j1=std::min(std::min(ydim,int(y+wy+0.5)),add_limit[3]);
+
+    kernel->clear();
+    kernel->resize((i1-i0)*(j1-j0));
+    
+    for (int i =i0; i < i1; i++)
+    {
+        for (int j = j0; j < j1; j++)
+        {
+            double z1 = voigt ( i-x, sigmax, gammax );
+            double z2 = ldw_math_spectrum_fit::lorentz ( j-y, gammay );
+            kernel->at((i-i0)*(j1-j0)+j-j0)=a*z1*z2;
+        }
+    }
+    return true;
+};
+
+
 bool gaussian_fit::init(int x00,int y00,int xdim_, int ydim_, std::vector< std::vector<double> >surface_, std::vector<double> x_, std::vector<double> y_, 
                     std::vector< std::vector<double> > aa, std::vector<double> sx, std::vector<double> sy, std::vector<double> gx, std::vector<double> gy, std::vector<int> ns, std::vector<int> move_,
                     double mw_x,double mw_y)
@@ -1598,24 +1523,37 @@ bool gaussian_fit::init(int x00,int y00,int xdim_, int ydim_, std::vector< std::
     peaks_total.clear();
     peaks_total.resize(xdim*ydim,0.0);
     err.resize(npeak,0.0);
-    num_sum.resize(npeak,std::vector<double>(surface.size(),0.0));
+    num_sum.resize(npeak, std::vector<double>(surface.size(), 0.0));
 
-    //In gaussian fitting, sigma is actually 2*sigma*sigma.
-    //But in voigt fitting, sigma is sigma and gamma is gamma.
-    //in init, we always receive 2*sigma*sigma in sigma vector. 
+    /**
+     * becase a[i] is the peak height of the peak we estiamted before fitting
+     * After voigt fitting, a[i]*voigt(x)*voigt(y) is the peak height
+     * After voigt_lorentz fitting, a[i]*voigt(x) is the peak height
+     * After Gaussian fittting, a[i] is the peak height.
+     */
     if(peak_shape==voigt_type)
     {
         for(int i=0;i<npeak;i++)
         {
-            //becase a[i] is the max height of the peak we estiamted before fitting
-            //After voigt fitting, a[i]*voigt(x)*voigt(y) is the max height
-            //After Gaussian fittting, a[i] is the max height. 
-            //In other words, voigt function has the prefactor in its defination but gaussian's is always 1.0
             for(int j=0;j<surface.size();j++)
             {
                 a[i][j]/=(voigt(0.0,sigmax[i],gammax[i])*voigt(0.0,sigmay[i],gammay[i]));  
             }
         }
+    }
+    else if(peak_shape==voigt_lorentz_type)
+    {
+        for(int i=0;i<npeak;i++)
+        {
+            for(int j=0;j<surface.size();j++)
+            {
+                a[i][j]/=voigt(0.0,sigmax[i],gammax[i]);  
+            }
+        }
+    }
+    else if(peak_shape==gaussian_type)
+    {
+        //do nothing
     }
     return true;
 };
@@ -2123,6 +2061,30 @@ bool gaussian_fit::run_single_peak()
             to_remove[0] = 1; //this is a flag only
         }
     }
+    else if(peak_shape == voigt_lorentz_type)//voigt-lorentz
+    {
+        one_fit_voigt_lorentz(i1-i0,j1-j0, &zz0, current_x, current_y, a[0][0], sigmax.at(0),sigmay.at(0),gammax.at(0),gammay.at(0),&e,0);
+        
+        if (fabs(sigmax.at(0)) + fabs(gammax.at(0)) < 0.2 || fabs(gammay.at(0)) < 0.2 || current_x < 0 || current_x >= xdim || current_y < 0 || current_y >= ydim)
+        {
+            if(n_verbose>0){
+                std::cout<<"remove failed peak because "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
+            to_remove[0] = 1; //this is a flag only
+        }
+
+        double true_height=a[0][0]*voigt(0.0,sigmax[0],gammax[0]);
+        if(fabs(true_height)*scale_factor<minimal_height)
+        {
+            if(n_verbose>0){
+                std::cout<<"remove too lower peak "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
+            to_remove[0] = 1; //this is a flag only
+        }
+    }
+
+
+
     nround=1;
     a[0][0]*=scale_factor;
     x[0]=current_x+i0;
@@ -2206,491 +2168,6 @@ bool gaussian_fit::get_pair_overlap(const int i_peak,const int j_peak,double &ov
     return true;
 }
 
-bool gaussian_fit::test_excess_peaks_multi()
-{
-    bool b=false;
-    int npeak = x.size();
-
-    // check whether still peak after Laplacian filter.
-
-    //constrcut fitted spectrum
-    std::vector< std::vector<double> > reconstrcuted_spectrum;
-    std::vector<double> intens;
-
-    for(int i=0;i<npeak;i++)
-    {
-        if(to_remove[i]==1) {
-            intens.push_back(0.0);
-        }
-        else{
-            intens.push_back(a[i][0]);
-        }
-    }
-
-    if (peak_shape == voigt_type)
-    {
-        ldw_math_spectrum_fit::generate_spectrum_voigt(intens, sigmax, sigmay, gammax, gammay, x, y, reconstrcuted_spectrum, xdim, ydim);
-    }
-    else if (peak_shape == gaussian_type)
-    {
-        ldw_math_spectrum_fit::generate_spectrum_gaussian(intens, sigmax, sigmay, x, y, reconstrcuted_spectrum, xdim, ydim);
-    }
-
-    // for(int i=0;i<xdim;i++)
-    // {
-    //     std::cout<<reconstrcuted_spectrum[57][i]<<" ";
-    // }
-    // std::cout<<std::flush;
-
-    std::vector<double> s;
-    double lap[3][3] = {{0.1667, 0.6667, 0.1667}, {0.6667, -3.3333, 0.6667}, {0.1667, 0.6667, 0.1667}};
-    s.resize(xdim * ydim, 0.0);
-    for (unsigned int j = 1; j < ydim - 1; j++)
-    {
-        for (unsigned int i = 1; i < xdim - 1; i++)
-        {
-            double t = reconstrcuted_spectrum[j][i];
-
-            for (int m = -1; m <= 1; m++)
-            {
-                for (int n = -1; n <= 1; n++)
-                {
-                    s[(j + m) + (i + n) * ydim] -= lap[m + 1][n + 1] * t;
-                }
-            }
-        }
-    }
-
-    std::vector<int> laplacian_peak_x,laplacian_peak_y;
-    for(int i=1;i<xdim-1;i++)
-    {
-        for(int j=1-2;j<ydim-1;j++)
-        {
-            if(s[i*ydim+j]>s[i*ydim+j+1]
-                && s[i*ydim+j]>s[i*ydim+j-1]
-                && s[i*ydim+j]>s[(i+1)*ydim+j]
-                && s[i*ydim+j]>s[(i-1)*ydim+j]
-                && s[i*ydim+j]>s[(i-1)*ydim+j-1]
-                && s[i*ydim+j]>s[(i-1)*ydim+j+1]
-                && s[i*ydim+j]>s[(i+1)*ydim+j-1]
-                && s[i*ydim+j]>s[(i+1)*ydim+j+1]
-            )
-            {
-                laplacian_peak_x.push_back(i);
-                laplacian_peak_y.push_back(j);
-            }  
-        }
-    }
-
-    //assign a laplacian peak to every true peak
-    std::vector<int> matched_laplacian_peaks;
-    for(int i=0;i<x.size(); i++)
-    {
-        if(to_remove[i]==1) continue;
-        double min_d=2.5;
-        int ndx=-1;
-        for(int j=0;j<laplacian_peak_x.size();j++)
-        {
-            double dx=laplacian_peak_x[j]-x[i];
-            double dy=laplacian_peak_y[j]-y[i];
-            if(sqrt(dx*dx+dy*dy)<=min_d)
-            {
-                min_d=dx*dx+dy*dy;
-                ndx=j;
-            }
-        }
-        if(ndx!=-1)
-        {
-            matched_laplacian_peaks.push_back(ndx);
-        }
-    }
-
-    //-1 means no match, that is, subject to removal if also failed fitting error check
-    //other value: match a laplacian peak, should not be removed
-    std::vector<int> true_peak_matching_laplacian_peak(x.size(),-1); 
-    for(int jj=0;jj<matched_laplacian_peaks.size();jj++)
-    {
-        int j=matched_laplacian_peaks[jj];
-        double min_d=2.5;
-        int ndx=-1;
-        for(int i=0;i<x.size(); i++)
-        {
-            if(to_remove[i]==1) continue;
-            double dx=laplacian_peak_x[j]-x[i];
-            double dy=laplacian_peak_y[j]-y[i];
-            if(sqrt(dx*dx+dy*dy)<=min_d)
-            {
-                min_d=dx*dx+dy*dy;
-                ndx=i;
-            }    
-        }
-        if(ndx!=-1)
-        {
-            true_peak_matching_laplacian_peak[ndx]=j;   
-        }
-    }
-
-    std::vector<double> overlaps(npeak*npeak);
-    std::vector<int> neighbours(npeak*npeak,0);
-    for (unsigned int i_peak = 0; i_peak < npeak; i_peak++)
-    {
-        if(to_remove[i_peak]==1) continue;  
-        double fwhhxi=1.0692*gammax[i_peak]+sqrt(0.8664*gammax[i_peak]*gammax[i_peak]+5.5452*sigmax[i_peak]*sigmax[i_peak]);
-        double fwhhyi=1.0692*gammay[i_peak]+sqrt(0.8664*gammay[i_peak]*gammay[i_peak]+5.5452*sigmay[i_peak]*sigmay[i_peak]);
-
-        for(unsigned int j_peak = i_peak+1; j_peak < npeak; j_peak++ )
-        {
-            if(to_remove[j_peak]==1) continue; 
-            double fwhhxj=1.0692*gammax[j_peak]+sqrt(0.8664*gammax[j_peak]*gammax[j_peak]+5.5452*sigmax[j_peak]*sigmax[j_peak]);
-            double fwhhyj=1.0692*gammay[j_peak]+sqrt(0.8664*gammay[j_peak]*gammay[j_peak]+5.5452*sigmay[j_peak]*sigmay[j_peak]);
-            double d1=x[j_peak]-x[i_peak];
-            double d2=y[j_peak]-y[i_peak];
-
-            if(d1<fwhhxi+fwhhxj && d2<fwhhyi+fwhhyj)
-            {
-                double overlap1,overlap2;
-                int pos; 
-                get_pair_overlap(i_peak,j_peak,overlap1,overlap2);//vl1-->i_peak, vl2-->j_peak
-                overlaps[i_peak*npeak+j_peak]=overlap1;
-                overlaps[npeak*j_peak+i_peak]=overlap2;
-                if(overlap1>=0.3 || overlap2>=0.3)
-                {
-                    neighbours[i_peak*npeak+j_peak]=1;
-                    neighbours[npeak*j_peak+i_peak]=1;
-                }
-            }
-        }
-    }   
-
-    std::vector<std::deque<int>> clusters=ldw_math_spectrum_fit::bread_first(neighbours, npeak);
-    
-    for(int i=0;i<clusters.size();i++)
-    {
-        if(clusters[i].size()<=2) continue;
-        //construct overlap score matrix for each cluster
-        // std::deque<int> cluster=clusters[i];
-        // std::vector<double> overlaps_cluster(cluster.size()*cluster.size());
-        // for(int j1=0;j1<cluster.size();j1++)
-        // {
-        //     for(int j2=0;j2<cluster.size();j2++)
-        //     {
-        //         overlaps_cluster[j1*cluster.size()+j2]=overlaps[cluster[j1]*npeak+cluster[j2]];
-        //     }
-        // }
-
-
-        // //get total overlap score of each peak in cluste    
-        // std::vector<double> total_overlap(cluster.size(),0);
-        // for(int j=0;j<cluster.size();j++)
-        // {
-        //     double s=0.0;
-        //     for(int k=0;k<cluster.size();k++)
-        //     {
-        //         s+=overlaps_cluster[j*cluster.size()+k];
-        //     }
-        //     total_overlap[j]=s;
-        // }
-
-        // //sort them according to total_overlap
-        // std::vector<int> ndx;
-        // ldw_math_spectrum_2d::sortArr(total_overlap,ndx);
-        // int ndx_remove=-1;
-
-        // for(int jj=0;jj<ndx.size();jj++)
-        // {
-        //     int j=ndx[jj];
-        //     if(true_peak_matching_laplacian_peak[cluster[j]]==-1 && test_whether_to_remove(j,cluster,overlaps_cluster))
-        //     {
-        //         to_remove[cluster[j]]=1;
-        //     }
-        // }
-
-        for(int j=0;j<clusters[i].size();j++)
-        {
-            if(true_peak_matching_laplacian_peak[clusters[i][j]]==-1 && test_whether_to_remove(j,clusters[i]))
-            {
-                to_remove[clusters[i][j]]=1;
-                b=true;
-                break;
-            }
-        }
-    }
-
-    return b;
-};
-
-//j peak to test, j is the index in cluster
-//cluster: peak index (of all peaks in this object) of all peaks
-bool gaussian_fit::test_whether_to_remove(const int ndx,const std::deque<int> &cluster)
-{
-    if(n_verbose>0)
-    {
-        std::cout<<"Testing "<<original_ndx[cluster[ndx]]<<" x="<<x[cluster[ndx]]+xstart<<" y="<<y[cluster[ndx]]+ystart;
-        std::cout<<" total # of peak is "<<cluster.size();
-        std::cout<<std::endl;
-    }
-
-    //constrcut fitted spectrum
-    std::vector< std::vector<double>> reconstrcuted_spectrum;
-    std::vector<double> intens,sx,sy,gx,gy,xx,yy;
-    int xdim_local,ydim_local;
-
-    double min_x=10000.0;
-    double min_y=10000.0;
-    double max_x=-10000.0;
-    double max_y=-10000.0;
-    
-
-    for(int i=0;i<cluster.size();i++)
-    {
-        intens.push_back(a[cluster[i]][0]);
-        sx.push_back(sigmax[cluster[i]]);
-        sy.push_back(sigmay[cluster[i]]);
-        gx.push_back(gammax[cluster[i]]);
-        gy.push_back(gammay[cluster[i]]);
-        if(x[cluster[i]]<min_x) min_x=x[cluster[i]];
-        if(x[cluster[i]]>max_x) max_x=x[cluster[i]];
-        if(y[cluster[i]]<min_y) min_y=y[cluster[i]];
-        if(y[cluster[i]]>max_y) max_y=y[cluster[i]];
-    }
-
-    min_x-=10.0;
-    min_y-=10.0;
-    max_x+=10.0;
-    max_y+=10.0;
-
-    xdim_local=int(round(max_x-min_x));
-    ydim_local=int(round(max_y-min_y));
-
-    for(int i=0;i<cluster.size();i++)
-    {
-        xx.push_back(x[cluster[i]]-min_x);
-        yy.push_back(y[cluster[i]]-min_y);
-    }
-    
-
-    if (peak_shape == voigt_type)
-    {
-        ldw_math_spectrum_fit::generate_spectrum_voigt(intens, sx, sy, gx, gy, xx, yy, reconstrcuted_spectrum, xdim_local, ydim_local);
-    }
-    else if (peak_shape == gaussian_type)
-    {
-        ldw_math_spectrum_fit::generate_spectrum_gaussian(intens, sx, sy, xx, yy, reconstrcuted_spectrum,  xdim_local, ydim_local);
-    }
-
-    bool b=false;
-    sx.erase(sx.begin() + ndx);
-    sy.erase(sy.begin() + ndx);
-    gx.erase(gx.begin() + ndx);
-    gy.erase(gy.begin() + ndx);
-    xx.erase(xx.begin() + ndx);
-    yy.erase(yy.begin() + ndx);
-    intens.erase(intens.begin()+ ndx);
-
-    // std::cout<<"Before fit_multiple_peaks"<<std::endl<<std::flush;
-    if(!(fit_multiple_peaks(reconstrcuted_spectrum,intens,sx,sy,gx,gy,xx,yy)>removal_cutoff))
-    {
-        b=true;
-    }
-    // std::cout<<"After fit_multiple_peaks"<<std::endl<<std::endl<<std::flush;
-
-    if(b && n_verbose>0)
-    {
-        std::cout<<"Remove this peak."<<std::endl;
-    }
-
-    return b;
-};
-
-double gaussian_fit::fit_multiple_peaks(const std::vector< std::vector<double>> &spectrum,
-    std::vector<double> a,
-    std::vector<double> sigmax,
-    std::vector<double> sigmay,
-    std::vector<double> gammax,
-    std::vector<double> gammay,
-    std::vector<double> x,
-    std::vector<double> y)
-{
-    int npeak = x.size();
-    int ydim = spectrum.size();
-    int xdim = spectrum[0].size();
-
-    std::vector<std::vector<double>> analytical_spectra; // analytical spectrum for each peak
-    std::vector<double> peaks_total;  
-
-    std::vector<int> i0s(x.size(),-1),i1s(x.size(),-1),j0s(x.size(),-1),j1s(x.size(),-1);
-    
-    
-    std::vector<std::vector<double>> x_old,y_old;
-    bool bcon = false;
-    for (int loop = 0; loop < 100; loop++)
-    {
-        // std::cout<<std::endl<<"loop "<<loop<<std::endl;
-        analytical_spectra.clear();
-        analytical_spectra.resize(npeak);
-        peaks_total.clear();
-        peaks_total.resize(xdim*ydim,0.0);//std::cout<<"line 2622 "<<std::flush;
-
-        for (unsigned int i_peak = 0; i_peak < x.size(); i_peak++)
-        {
-            int i0,i1,j0,j1;
-            if(fabs(a[i_peak]) < std::numeric_limits<double>::epsilon())
-            {
-                continue;
-            }
-            voigt_convolution_2(xdim,ydim,a[i_peak], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1, &(analytical_spectra[i_peak]),100.0);
-            
-            for (int ii = i0; ii < i1; ii++)
-            {
-                for (int jj = j0; jj < j1; jj++)
-                {
-                    peaks_total[ii * ydim + jj] += analytical_spectra[i_peak][(ii - i0) * (j1 - j0) + jj - j0];
-                }
-            }
-            
-            i0s[i_peak]=i0;
-            i1s[i_peak]=i1;
-            j0s[i_peak]=j0;
-            j1s[i_peak]=j1;
-        }
-        x_old.push_back(x);
-        y_old.push_back(y);
-        if(bcon) break;
-
-        #pragma omp parallel for
-        for (int i_peak = 0; i_peak < x.size(); i_peak++)
-        {
-            if(fabs(a[i_peak]) < std::numeric_limits<double>::epsilon())
-            {
-                continue;
-            }
-
-            std::vector<double> zz;
-            zz.clear();
-            int current_xdim,current_ydim;
-            double total_z = 0.0;
-            double current_x,current_y;
-            double e;
-
-            int i0=i0s[i_peak];
-            int i1=i1s[i_peak];
-            int j0=j0s[i_peak];
-            int j1=j1s[i_peak];
-            
-     
-            current_xdim=i1-i0;
-            current_ydim=j1-j0;
-            current_x=x.at(i_peak)-i0;
-            current_y=y.at(i_peak)-j0;
-
-            for (int ii = i0; ii < i1; ii++)
-            {
-                for (int jj = j0; jj < j1; jj++)
-                {
-                    double inten1 = analytical_spectra[i_peak][(ii-i0) * (j1-j0) + jj-j0];
-                    double inten2 = peaks_total[ii * ydim + jj];
-                    double scale_factor;
-                    if (fabs(inten2) > 1e-100)
-                        scale_factor = inten1 / inten2;
-                    else
-                        scale_factor = 0.0;
-
-                    scale_factor = std::min(scale_factor, 1.0);
-                    scale_factor = std::max(scale_factor, -1.0);
-                    double temp = scale_factor * spectrum[jj][ii];
-                    zz.push_back(temp);
-
-                    // std::cout<<temp<<" ";
-                    total_z += temp;
-                }      
-            }
-            one_fit_voigt(current_xdim, current_ydim, &zz, current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e, loop + 10);
-
-            if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.2 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) < 0.2 || fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) > 100.0 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) > 100.0)
-            {
-                a[i_peak] = 0.0;
-            }
-
-            if (current_x < 0 || current_x > current_xdim || current_y < 0 || current_y > current_ydim)
-            {
-                a[i_peak] = 0.0;
-            }
-
-            x[i_peak]=current_x+i0;
-            y[i_peak]=current_y+j0;
-        }
-
-        
-        for (int i = x_old.size() - 1; i >= std::max(int(x_old.size()) - 2, 0); i--)
-        {
-            bool b = true;
-            for (int j = 0; j < x.size(); j++)
-            {
-                if(fabs(a[j]) < std::numeric_limits<double>::epsilon())
-                {
-                    continue;
-                }
-                if (fabs(x[j] - x_old[i][j]) > 0.01)
-                {
-                    b = false;
-                    break;
-                }
-                if (fabs(y[j] - y_old[i][j]) > 0.01)
-                {
-                    b = false;
-                    break;
-                }
-            }
-            if (b == true)
-            {
-                bcon = true;
-                break;
-            }
-        }
-    }
-
-    analytical_spectra.clear();
-    analytical_spectra.resize(npeak);
-    peaks_total.clear();
-    peaks_total.resize(xdim * ydim, 0.0);
-    for (unsigned int i_peak = 0; i_peak < x.size(); i_peak++)
-    {
-        if (fabs(a[i_peak]) < std::numeric_limits<double>::epsilon())
-        {
-            continue;
-        }
-        int i0,i1,j0,j1;
-        voigt_convolution(xdim, ydim, a[i_peak], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]), 100.0);
-        for (int ii = i0; ii < i1; ii++)
-        {
-            for (int jj = j0; jj < j1; jj++)
-            {
-                peaks_total[ii * ydim + jj] += analytical_spectra[i_peak][(ii - i0) * (j1 - j0) + jj - j0];
-            }
-        }
-    }
-
-    double max_e = 0.0;
-    double max_z = 0.0;
-    for (int i = 0; i < xdim; i++)
-    {
-        for (int j = 0; j < ydim; j++)
-        {
-            double z = spectrum[j][i] - peaks_total[i * ydim + j];
-            if (fabs(z) > max_e)
-            {
-                max_e = fabs(z);
-            }
-            if(fabs(spectrum[j][i])>max_z)
-            {
-                max_z = fabs(spectrum[j][i]);
-            }
-        }
-    }
-
-    return max_e/max_z;
-};
-
 
 std::vector<std::pair<int,int>> gaussian_fit::get_possible_excess_peaks()
 {
@@ -2746,45 +2223,27 @@ std::vector<std::pair<int,int>> gaussian_fit::get_possible_excess_peaks()
     return r;
 };
 
-/*
-std::vector<std::pair<int,int>> gaussian_fit::get_possible_excess_peaks()
-{
-    std::vector<std::pair<int,int>> r;
-    for (unsigned int i_peak = 0; i_peak < x.size(); i_peak++)
-    {
-        if(to_remove[i_peak]==1) continue;  
-        double fwhhxi=1.0692*gammax[i_peak]+sqrt(0.8664*gammax[i_peak]*gammax[i_peak]+5.5452*sigmax[i_peak]*sigmax[i_peak]);
-        double fwhhyi=1.0692*gammay[i_peak]+sqrt(0.8664*gammay[i_peak]*gammay[i_peak]+5.5452*sigmay[i_peak]*sigmay[i_peak]);
-        double fwhhi=(fwhhxi+fwhhyi)/2.0;
-
-        for(unsigned int j_peak = i_peak+1; j_peak < x.size(); j_peak++ )
-        {
-            if(to_remove[j_peak]==1) continue;  
-            double fwhhxj=1.0692*gammax[j_peak]+sqrt(0.8664*gammax[j_peak]*gammax[j_peak]+5.5452*sigmax[j_peak]*sigmax[j_peak]);
-            double fwhhyj=1.0692*gammay[j_peak]+sqrt(0.8664*gammay[j_peak]*gammay[j_peak]+5.5452*sigmay[j_peak]*sigmay[j_peak]);
-            double fwhhj=(fwhhxj+fwhhyj)/2.0;
-            double d1=x[j_peak]-x[i_peak];
-            double d2=y[j_peak]-y[i_peak];
-            double d=sqrt(d1*d1+d2*d2);
-
-            if(d<fwhhi+fwhhj)
-            {
-                r.push_back({i_peak,j_peak});
-            }
-        }
-    }    
-    return r;
-};
+/**
+ * This function will test if two peaks are excess peaks.
+ * If they are not, then we keep both peaks.
+ * @return 0: keep both peaks, 1: remove i_peak, 2: remove j_peak
 */
-
 int gaussian_fit::test_excess_peaks(int i_peak,int j_peak)
 {
+    if(peak_shape != voigt_type && peak_shape != gaussian_type)
+    {
+        /**
+         * Not implemented yet. Turn off excess peak removal. 
+        */
+        return 0;
+    }
+
     if(a[i_peak][0]*a[j_peak][0]<0.0) return 0; //different sign, keep both peaks
 
     int xleft,xright,yleft,yright;
     double fwhhxi,fwhhxj,fwhhyi,fwhhyj,heighti,heightj;
 
-    if(peak_shape == voigt_type)
+    if(peak_shape == voigt_type || peak_shape == voigt_lorentz_type)
     {
         fwhhxi=1.0692*gammax[i_peak]+sqrt(0.8664*gammax[i_peak]*gammax[i_peak]+5.5452*sigmax[i_peak]*sigmax[i_peak]);
         fwhhyi=1.0692*gammay[i_peak]+sqrt(0.8664*gammay[i_peak]*gammay[i_peak]+5.5452*sigmay[i_peak]*sigmay[i_peak]);
@@ -2837,7 +2296,7 @@ int gaussian_fit::test_excess_peaks(int i_peak,int j_peak)
 
             if(peak_shape == voigt_type)
             {
-                zi = fabs(a[i_peak][0])*voigt(tix,sigmax[i_peak],gammax[i_peak]) * voigt(tiy,sigmay[i_peak],gammay[i_peak]); //treat both peaks as positve peaks
+                zi = fabs(a[i_peak][0]) * voigt(tix,sigmax[i_peak],gammax[i_peak]) * voigt(tiy,sigmay[i_peak],gammay[i_peak]); //treat both peaks as positve peaks
                 zj = fabs(a[j_peak][0]) * voigt(tjx, sigmax[j_peak], gammax[j_peak]) * voigt(tjy, sigmay[j_peak], gammay[j_peak]);
             }
             else //Gaussian
@@ -3093,7 +2552,7 @@ int gaussian_fit::test_excess_peaks(int i_peak,int j_peak)
             return -1;
         }
     }
-}
+};
 
 
 bool gaussian_fit::run_multi_peaks(int loop_max)
@@ -3101,7 +2560,6 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
 
     int npeak = x.size();
 
-    
 
     x_old.clear();
     y_old.clear();
@@ -3133,11 +2591,19 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
             int i0,i1,j0,j1;
             
             // #pragma omp critical
-            {
             if (peak_shape == gaussian_type)
                 gaussain_convolution(xdim,ydim,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0);
             else if(peak_shape == voigt_type)
+            {
                 voigt_convolution(xdim,ydim,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0);
+            }
+            else if(peak_shape == voigt_lorentz_type)
+            {
+                /**
+                 * Notice: still need sigmay to estimate FWHH in first round
+                 * In the following rounds, sigmay is set to 0, so that we can continue use the same equation as in x direction to estimate FWHH.
+                */
+                voigt_lorentz_convolution(xdim,ydim,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak),gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0,4.0);
             }
 
 
@@ -3177,11 +2643,13 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                 {
                     gaussain_convolution_within_region(i_peak,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),1.0);
                 }
-                if (peak_shape == voigt_type)
+                else if (peak_shape == voigt_type)
                 {
-                    // std::cout<<"loop= "<<loop<<" i_peak= "<<i_peak<<" gaussain_convolution_within_region starts"<<std::endl;
                     voigt_convolution_within_region(i_peak,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0);
-                    // std::cout<<"loop= "<<loop<<" i_peak= "<<i_peak<<" gaussain_convolution_within_region done"<<std::endl;
+                }
+                else if (peak_shape == voigt_lorentz_type)
+                {
+                    voigt_lorentz_convolution_within_region(i_peak,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak),sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0,4.0);
                 }
             }
 
@@ -3256,6 +2724,10 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                     one_fit_voigt(current_xdim, current_ydim, &zz, current_x, current_y, a[i_peak][0], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);            
                 }
             }
+            else if (peak_shape == voigt_lorentz_type)
+            {
+                one_fit_voigt_lorentz(current_xdim, current_ydim, &zz, current_x, current_y, a[i_peak][0], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);
+            }
 
             err.at(i_peak) = e;
             // std::cout<<"after fit at loop "<<loop<<" peak "<<original_ndx[i_peak]<<" x="<<x[i_peak]<<" y="<<y[i_peak]<<" xdim="<<xdim<<" ydim="<<ydim;
@@ -3284,6 +2756,16 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                 {
                     if(n_verbose>0){
                         std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because " << current_x + i0 << " " << current_y + j0 << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << gammax.at(i_peak) << " " << sigmay.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
+                    }
+                    peak_remove_flag[i_peak]=1;
+                }
+            }
+            else  if (peak_shape == voigt_lorentz_type)
+            {
+                if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.2 || fabs(gammay.at(i_peak)) < 0.2 || fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) >100.0 || fabs(gammay.at(i_peak)) >100.0)
+                {
+                    if(n_verbose>0){
+                        std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because " << current_x + i0 << " " << current_y + j0 << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << gammax.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
                     }
                     peak_remove_flag[i_peak]=1;
                 }
@@ -3630,6 +3112,35 @@ bool gaussian_fit::multi_spectra_run_single_peak()
             to_remove[0] = 1; //this is a flag only
         }
     }
+    else if(peak_shape == voigt_lorentz_type)
+    {
+        multiple_fit_voigt_lorentz(i1-i0,j1-j0, zz, current_x, current_y, a[0], sigmax.at(0), sigmay.at(0),gammax.at(0),gammay.at(0),&e,0);
+        if (fabs(sigmax.at(0)) + fabs(gammax.at(0)) < 0.2 || fabs(gammay.at(0)) < 0.2 || current_x < 0 || current_x >= i1-i0 || current_y < 0 || current_y >= j1-j0)
+        {
+            if(n_verbose>0){
+                std::cout<<"remove failed peak because "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
+            to_remove[0] = 1; //this is a flag only
+        }
+
+        bool b_tolow=true;
+        for(int k=0;k<surface.size();k++)
+        {
+            if(fabs(a[0][k])*(voigt(0.0,sigmax[0],gammax[0]))*spectral_max>=minimal_height)
+            {
+                b_tolow=false;
+                break;
+            }
+        }
+       
+        if(b_tolow)
+        {
+            if(n_verbose>0){
+                std::cout<<"remove too lower peak "<<a[0][0]<<" "<<fabs(sigmax.at(0))<<" "<<fabs(sigmay.at(0))<<" "<<fabs(gammax.at(0))<<" "<<fabs(gammay.at(0))<<" "<<current_x<<" "<<current_y<<std::endl;
+            }
+            to_remove[0] = 1; //this is a flag only
+        }
+    }
     
     nround=1;
     x[0]=current_x+i0;
@@ -3711,6 +3222,9 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                     gaussain_convolution(xdim,ydim,a[i_peak][spectrum_index], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0);
                 else if(peak_shape == voigt_type)
                     voigt_convolution(xdim,ydim,a[i_peak][spectrum_index], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0);
+                else if(peak_shape == voigt_lorentz_type)
+                    voigt_lorentz_convolution(xdim,ydim,a[i_peak][spectrum_index], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak),sigmay.at(i_peak),gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0,4.0);
+ 
             
                 #pragma omp critical
                 {
@@ -3736,9 +3250,13 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                 {
                     gaussain_convolution_within_region(i_peak,a[i_peak][spectrum_index], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),1.0);
                 }
-                if (peak_shape == voigt_type)
+                else if (peak_shape == voigt_type)
                 {
                     voigt_convolution_within_region(i_peak,a[i_peak][spectrum_index], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0);
+                }
+                else if (peak_shape == voigt_lorentz_type)
+                {
+                    voigt_lorentz_convolution_within_region(i_peak,a[i_peak][spectrum_index], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0,4.0);
                 }
 
                 if(spectrum_index==0)
@@ -3817,26 +3335,7 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                 a[i_peak][i]/=spectral_max;
             }
 
-            // if(original_ndx[i_peak] ==2)
-            // {
-            //     std::cout <<" i=0 "<<i0<<" i1="<<i1<<" j0="<<j0<<" j1="<<j1<<std::endl;
-            //     std::cout <<"Before " <<loop<<" "<< original_ndx[i_peak] << " " << current_x+i0 << " " << current_y+j0 << " " << a[i_peak][0]*spectral_max  << " " << a[i_peak][1]/a[i_peak][0] << " " << sigmax.at(i_peak) << " " << sigmay.at(i_peak)<< " " << gammax.at(i_peak) << " " << gammay.at(i_peak) << std::endl;
-                
-            //     if(loop == 4 )
-            //     {
-            //         std::ofstream fdebug("debug.txt");
-            //         for(int k1=0;k1<zzs[i_peak].size();k1++)
-            //         {
-            //             for(int k2=0;k2<zzs[i_peak][k1].size();k2++)
-            //             {
-            //                 fdebug<<zzs[i_peak][k1][k2]<<" ";
-            //             }
-            //             fdebug<<std::endl;
-            //         }
-            //         fdebug.close();
-            //     }
-            
-            // }
+
             if (peak_shape == gaussian_type)
             {
                 multiple_fit_gaussian(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), &e);
@@ -3845,11 +3344,10 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
             {
                 multiple_fit_voigt(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);            
             }
-            // if(original_ndx[i_peak] ==2)
-            // {
-            //     std::cout<<"After " <<loop<<" "<< original_ndx[i_peak] << " " << current_x+i0 << " " << current_y+j0 << " " << a[i_peak][0]*spectral_max  << " " << a[i_peak][1]/a[i_peak][0] << " " << sigmax.at(i_peak) << " " << sigmay.at(i_peak)<< " " << gammax.at(i_peak) << " " << gammay.at(i_peak) << std::endl;
-            //     std::cout<<" e= "<<e<<std::endl;
-            // }
+            else if (peak_shape == voigt_lorentz_type)
+            {
+                multiple_fit_voigt_lorentz(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);
+            }
 
             /**
              * Restore a[i_peak][0] to original scale.
@@ -4123,7 +3621,7 @@ bool spectrum_fit::initflags_fit(int n,double r,double c,int im)
 {
     if(im==1) peak_shape=gaussian_type;
     else if(im==2) peak_shape=voigt_type;
-    else if(im==3) peak_shape=exact_type;
+    else if(im==3) peak_shape=voigt_lorentz_type;
     else peak_shape=null_type;
 
     removal_cutoff=r;
@@ -4518,11 +4016,8 @@ bool spectrum_fit::fit_gather_original()
         num_sums.insert(num_sums.end(), fits[i].num_sum.begin(), fits[i].num_sum.end());
         p_intensity_all_spectra.insert(p_intensity_all_spectra.end(), fits[i].a.begin(), fits[i].a.end()); 
     
-        if (peak_shape==voigt_type || peak_shape == exact_type) //exact type, gamma is actually phasing err
-        {
-            gammax.insert(gammax.end(), fits[i].gammax.begin(), fits[i].gammax.end());
-            gammay.insert(gammay.end(), fits[i].gammay.begin(), fits[i].gammay.end());
-        }
+        gammax.insert(gammax.end(), fits[i].gammax.begin(), fits[i].gammax.end());
+        gammay.insert(gammay.end(), fits[i].gammay.begin(), fits[i].gammay.end());
         // std::cout<<"In fits"<<i<<" gathering part is done out of total"<<fits.size()<<std::endl;
         // std::cout<<"Current size of p_intensitu is "<<p_intensity.size()<<std::endl;
         assess_size();
@@ -4598,11 +4093,10 @@ bool spectrum_fit::fit_gather_original()
             peak_index.erase(peak_index.begin()+i);
             sigmax.erase(sigmax.begin()+i);
             sigmay.erase(sigmay.begin()+i);
-            if (peak_shape==voigt_type || peak_shape == exact_type)
-            {
-                gammax.erase(gammax.begin()+i);
-                gammay.erase(gammay.begin()+i);
-            }
+            
+            gammax.erase(gammax.begin()+i);
+            gammay.erase(gammay.begin()+i);
+            
             nround.erase(nround.begin()+i);
             user_comments.erase(user_comments.begin()+i);
         }
@@ -4641,11 +4135,9 @@ bool spectrum_fit::fit_gather(int c)
         sigmay.insert(sigmay.end(), fits[i].batch_sigmay[c].begin(), fits[i].batch_sigmay[c].end());
         p_intensity_all_spectra.insert(p_intensity_all_spectra.end(), fits[i].batch_a[c].begin(), fits[i].batch_a[c].end()); 
     
-        if (peak_shape==voigt_type || peak_shape == exact_type) //exact type, gamma is actually phasing err
-        {
-            gammax.insert(gammax.end(), fits[i].batch_gammax[c].begin(), fits[i].batch_gammax[c].end());
-            gammay.insert(gammay.end(), fits[i].batch_gammay[c].begin(), fits[i].batch_gammay[c].end());
-        }
+        gammax.insert(gammax.end(), fits[i].batch_gammax[c].begin(), fits[i].batch_gammax[c].end());
+        gammay.insert(gammay.end(), fits[i].batch_gammay[c].begin(), fits[i].batch_gammay[c].end());
+        
     }
 
 
@@ -4673,11 +4165,9 @@ bool spectrum_fit::fit_gather(int c)
             p_intensity_all_spectra.erase(p_intensity_all_spectra.begin()+i);
             sigmax.erase(sigmax.begin()+i);
             sigmay.erase(sigmay.begin()+i);
-            if (peak_shape==voigt_type || peak_shape == exact_type)
-            {
-                gammax.erase(gammax.begin()+i);
-                gammay.erase(gammay.begin()+i);
-            }
+            
+            gammax.erase(gammax.begin()+i);
+            gammay.erase(gammay.begin()+i);
         }
     }
     return true;
@@ -4698,9 +4188,18 @@ bool spectrum_fit::generate_recon_and_diff_spectrum(std::string folder_name)
         {
             file_name="gaussian_"+file_name;    
         }
-        else
+        else if(peak_shape==voigt_type)
         {
             file_name="voigt_"+file_name;    
+        }
+        else if(peak_shape==voigt_lorentz_type)
+        {
+            file_name="voigt_lorentz_"+file_name;    
+        }
+        else
+        {
+            std::cout<<"ERROR: not implemented for peak shape"<<std::endl;
+            continue;
         }
 
         spe.clear();
@@ -4718,6 +4217,15 @@ bool spectrum_fit::generate_recon_and_diff_spectrum(std::string folder_name)
         else if (peak_shape==gaussian_type)
         {
             ldw_math_spectrum_fit::generate_spectrum_gaussian(intens, sigmax, sigmay, p1, p2, spe, xdim, ydim);
+        }
+        else if(peak_shape==voigt_lorentz_type)
+        {
+            ldw_math_spectrum_fit::generate_spectrum_voigt_lorentz(intens, sigmax, gammax, gammay, p1, p2, spe, xdim, ydim);
+        }
+        else
+        {
+            std::cout<<"ERROR: not implemented for peak shape"<<std::endl;
+            continue;
         }
 
         std::vector< std::vector<float> > spe_float;
@@ -4816,6 +4324,14 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
                 amplitudes.push_back(p_intensity[i] * (voigt(0.0, sigmax[i], gammax[i]) * voigt(0.0, sigmay[i], gammay[i])));
             }
         }
+        else if(peak_shape == voigt_lorentz_type)
+        {
+            for (int i = 0; i < p_intensity.size(); i++)
+            {
+                fitted_volume.push_back(p_intensity[i] * fabs(gammay[i]) * 3.14159265358979);
+                amplitudes.push_back(p_intensity[i] * (voigt(0.0, sigmax[i], gammax[i])));
+            }
+        }
         else if (peak_shape == exact_type)
         {
             fitted_volume = p_intensity;
@@ -4849,6 +4365,22 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
                     }
                 }
             }
+            else if(peak_shape == voigt_lorentz_type)
+            {
+                amplitudes_all_spectra.resize(p_intensity_all_spectra.size());
+                for (int i = 0; i < p_intensity_all_spectra.size(); i++)
+                {
+                    for (int k = 0; k < p_intensity_all_spectra[i].size(); k++)
+                    {
+                        float temp = p_intensity_all_spectra[i][k] * (voigt(0.0, sigmax[i], gammax[i]));
+                        amplitudes_all_spectra[i].push_back(temp);
+                    }
+                }
+            }
+            else if (peak_shape == exact_type)
+            {
+                amplitudes_all_spectra = p_intensity_all_spectra;
+            }
 
             //rescale amplitudes_all_spectra using first spectrum
             for (int i = 0; i < p_intensity_all_spectra.size(); i++)
@@ -4876,7 +4408,8 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
                 fprintf(fp,"DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n",xdim,begin1,stop1);
                 fprintf(fp,"DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n",ydim,begin2,stop2);
 
-                if (peak_shape == voigt_type || peak_shape == exact_type)
+                if (peak_shape == voigt_type || peak_shape == exact_type || peak_shape == voigt_lorentz_type)
+
                 {
                     //fprintf(fp,"#x y ppm_x ppm_y intensity sigmax sigmay (gammx gammay) fitted_volume num_volume type group\n");
                     fprintf(fp, "VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL SIMGAX SIGMAY GAMMAX GAMMAY NROUND POINTER");
@@ -4908,7 +4441,7 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
 
                         fprintf(fp, "%5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %f %f %f %f %4d <--",
                                 peak_index[i]+1, p1[i] + 1, p2[i] + 1, p1_ppm[i], p2_ppm[i], s1, s2,
-                                int(p1[i] - 3), int(p1[i] + 3), int(p2[i] - 3), int(p2[i] + 3), amplitudes[i], err[i], user_comments[i].c_str(), group[i], num_sums[i][0], p_intensity[i], sigmax[i], sigmay[i], gammax[i], gammay[i], nround[i]);
+                                int(p1[i] - 3), int(p1[i] + 3), int(p2[i] - 3), int(p2[i] + 3), amplitudes[i], err[i], user_comments[i].c_str(), group[i], num_sums[i][0], fitted_volume[i], sigmax[i], sigmay[i], gammax[i], gammay[i], nround[i]);
                         if (spects.size() > 1)
                         {
                             for (int j = 0; j < spects.size(); j++)
@@ -5000,7 +4533,7 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
                     }
                     fprintf(fp3, "]}");
                 }
-                else if (peak_shape == voigt_type)
+                else if (peak_shape == voigt_type || peak_shape == voigt_lorentz_type)
                 {
                     fprintf(fp3, "{\"fitted_peaks\":[");
 

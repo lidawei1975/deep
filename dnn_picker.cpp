@@ -1425,10 +1425,10 @@ bool peak2d::predict_step2()
     fout.close();
 #endif
 
-    rl_column.resize(xdim*ydim,-1);
-    rl_row.resize(xdim*ydim,-1);
-    rl_column_p.resize(xdim*ydim,-1);
-    rl_row_p.resize(xdim*ydim,-1);
+    rl_column.resize(xdim,ydim);
+    rl_row.resize(xdim,ydim);
+    rl_column_p.resize(xdim,ydim);
+    rl_row_p.resize(xdim,ydim);
 
 
     /**
@@ -1446,8 +1446,8 @@ bool peak2d::predict_step2()
         s=column_line_segment[i];
         for(int j=b;j<s;j++)
         {
-            rl_column[column_line_x[j]*ydim+column_line_y[j]]=i; 
-            rl_column_p[column_line_x[j]*ydim+column_line_y[j]]=column_line_index[j];
+            rl_column.coeffRef(column_line_x[j],column_line_y[j])=i+1;
+            rl_column_p.coeffRef(column_line_x[j],column_line_y[j])=column_line_index[j]+1;
         }
     }
 
@@ -1459,8 +1459,9 @@ bool peak2d::predict_step2()
         s=row_line_segment[i];
         for(int j=b;j<s;j++)
         {
-            rl_row[row_line_x[j]*ydim+row_line_y[j]]=i;
-            rl_row_p[row_line_x[j]*ydim+row_line_y[j]]=row_line_index[j];
+            // rl_row[row_line_x[j]*ydim+row_line_y[j]]=i;
+            rl_row.coeffRef(row_line_x[j],row_line_y[j])=i+1;
+            rl_row_p.coeffRef(row_line_x[j],row_line_y[j])=row_line_index[j]+1;
         }
     }
     return true;
@@ -1657,18 +1658,18 @@ bool peak2d::predict_step3()
         s=row_line_segment[i];
         tx.clear();
         ty.clear();
-        int c=-1;
+        int c=0; // c is the index of column_line+1, 0 means not exist
         for (int j = b; j < s; j++)
         {
              //(x,y) is one point in row_line
             int x = row_line_x[j];
             int y = row_line_y[j];        
             // check whether this point is also a point in column_line   
-            if (rl_column[x * ydim + y] >= 0) 
+            if (rl_column.coeff(x,y) > 0) 
             {
-                //rl_column[x * ydim + y]!=c means we have a new column_line,
+                //rl_column[x * ydim + y]!=c means we have a new column_line,x,y
                 //so we need to select the best peak from tx and ty and add it to cx and cy
-                if(tx.size()>0 && rl_column[x * ydim + y]!=c) 
+                if(tx.size()>0 && rl_column.coeff(x,y)!=c) 
                 {
                     std::vector<int> ndxs=select_max_nonoverlap_set(tx,ty,ncutoff);
                     for(int n=0;n<ndxs.size();n++)
@@ -1681,7 +1682,7 @@ bool peak2d::predict_step3()
                 }
                 tx.push_back(x); //tx,ty are vector of intersection points of row_line and column_line
                 ty.push_back(y);
-                c=rl_column[x * ydim + y]; //c is the index of column_line
+                c=rl_column.coeff(x,y); //c is the index of column_line+1
             }
         }
         if (tx.size() > 0)
@@ -1700,17 +1701,20 @@ bool peak2d::predict_step3()
     {
         int ndxx = cx[j];
         int ndxy = cy[j];
-        p_2_column_paras.push_back(rl_column_p[ndxx * ydim + ndxy]);
-        p_2_row_paras.push_back(rl_row_p[ndxx * ydim + ndxy]);
-        p_2_line_column.push_back(rl_column[ndxx * ydim + ndxy]);
-        p_2_line_row.push_back(rl_row[ndxx * ydim + ndxy]);
+        p_2_column_paras.push_back(rl_column_p.coeff(ndxx,ndxy)-1);
+        p_2_row_paras.push_back(rl_row_p.coeff(ndxx,ndxy)-1);
+        p_2_line_column.push_back(rl_column.coeff(ndxx,ndxy)-1);
+        p_2_line_row.push_back(rl_row.coeff(ndxx,ndxy)-1);
+        // p_2_line_row.push_back(rl_row[ndxx * ydim + ndxy]);
     }
+    // std::cout<<"Size of matrix are "<<rl_column.nonZeros()<<" "<<rl_column_p.nonZeros()<<" "<<rl_row.nonZeros()<<" "<<rl_row_p.nonZeros()<<std::endl;
     //we do not need rl_column,rl_column_p, rl_row or rl_row_p from here. clear them to save memory!!
-    rl_column.clear();
-    rl_column_p.clear();
-    rl_row.clear();
-    rl_row_p.clear();
+    rl_column.resize(0,0);
+    rl_column_p.resize(0,0);
+    rl_row.resize(0,0);
+    rl_row_p.resize(0,0);
 
+    // std::cout<<"Size of matrix are "<<rl_column.nonZeros()<<" "<<rl_column_p.nonZeros()<<" "<<rl_row.nonZeros()<<" "<<rl_row_p.nonZeros()<<std::endl;
     // check_special_peaks_1(); //actually do nothing in this function. Kept here for future consideration only !!
 
 #ifdef LDW_DEBUG

@@ -35,7 +35,7 @@ int main(int argc, char **argv)
 
     args.push_back("-method");
     args2.push_back("voigt");
-    args3.push_back("Peak shape: gaussian or voigt.");   
+    args3.push_back("Peak shape: gaussian, voigt or voigt-lorentz");   
 
     args.push_back("-scale");
     args2.push_back("5.5");
@@ -130,12 +130,19 @@ int main(int argc, char **argv)
 
    
     int i_method=2;
-    if(cmdline.query("-method") == "gaussian") i_method=1;
-    else if(cmdline.query("-method").rfind("g", 0) == 0) i_method=1;
-    else if(cmdline.query("-method").rfind("G", 0) == 0) i_method=1;
-    else if (cmdline.query("-method") == "voigt") i_method=2;
-    else if (cmdline.query("-method").rfind("v", 0) == 0) i_method=2;
-    else if (cmdline.query("-method").rfind("V", 0) == 0) i_method=2;
+    std::string method=cmdline.query("-method");
+    /**
+     * Convert to all lower case
+    */
+    std::transform(method.begin(), method.end(), method.begin(), ::tolower);
+
+    if(method == "gaussian") i_method=1;
+    else if(method[0] == 'g') i_method=1;
+    else if (method == "voigt") i_method=2;
+    else if (method[0] == 'v' && /**no - */ method.find("-") == std::string::npos && /**no - */ method.find("_") == std::string::npos) i_method=2;
+    else if (method == "voigt-lorentz") i_method=3;
+    else if (method == "voigt_lorentz") i_method=3;
+    else if (method[0] == 'v') i_method=3;
     else 
     {
         std::cout<<"Unrecognized fitting line shape. Exit."<<std::endl;
@@ -148,7 +155,8 @@ int main(int argc, char **argv)
         class spectrum_fit x;
         std::cout<<"Input files are "<<infname<<std::endl;
         if(i_method==1) std::cout<<"Fitting line shape is Gaussian"<<std::endl;
-        else std::cout<<"Fitting line shape is Voigt"<<std::endl;
+        else if(i_method==2) std::cout<<"Fitting line shape is Voigt"<<std::endl;
+        else std::cout<<"Fitting line shape is Voigt-Lorentz"<<std::endl;
         std::cout<<std::endl;
         
         std::istringstream iss;
