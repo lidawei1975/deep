@@ -8,7 +8,7 @@ DEEP Pikcer 1D and Voigt Fitter 1D are similar but are for 1D spectra.
 
 
 # INSTALLATION
-DEEP Picker and peak fitter can be built using CMAKE on any platform with C++ (V11 or newer). 
+DEEP Picker and peak fitter can be built using CMAKE on any platform with C++ (The latest version requires C++17 support). 
 DEEP Picker depends on EIGEN version 3 (https://eigen.tuxfamily.org). The peak fitter depends on Ceres-solver (http://ceres-solver.org/).
 
 Step by step guide
@@ -16,6 +16,28 @@ Step by step guide
 Linux System:
 
 Install Ceres-solver: Begin by installing Ceres-solver, a nonlinear optimization library. Follow the installation guide available at http://ceres-solver.org/installation.html. Note that Ceres-solver has its own dependencies, so make sure to install them as well according to the Ceres-solver guide.
+
+IMPORTANT NOTE ABOUT Ceres-Solver
+
+Download the Latest Stable Version
+
+Ensure you download the latest stable release (not the current development master).
+On the Ceres-Solver page, click the link that says, "You can start with the latest stable release."
+Do not use git clone.
+
+Install CMake and build essentials.
+Install Ceres-Solver Dependencies
+
+Required libraries include: Eigen3, LAPACK, SuiteSparse, Glog, and GFlags.
+For simplicity, run the following commands in your terminal:
+
+```
+sudo apt-get update
+sudo apt-get install cmake build-essential libeigen3-dev liblapacke-dev libsuitesparse-dev libgflags-dev libgoogle-glog-dev
+
+```
+
+
 
 Without Ceres-solver, an alternative fitter will be built instead, which is about 2-3 times slower. 
 
