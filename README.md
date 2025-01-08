@@ -78,6 +78,13 @@ Note: The exact steps may vary depending on your system configuration
 # WEB SERVER VERSION of DEEP Picker
 As an alternative to the above software, we also provide a web server version at http://spin.ccic.osu.edu/index.php/deep_picker,  which draws a contour plot of the input spectrum with all picked peaks indicated in the spectrum. This allows the visual assessment of the performance of DEEP picker. Note: the web server also includes a peak fitting function in addition to peak picking, which uses the peaks picked by DEEP Picker as starting points for the fitting of final peak positions, peak shapes, and amplitudes. This web server, which is most convenient both for the demonstration and the application of DEEP Picker, allows the users to download the picked and fitted peak lists and the reconstructed spectrum for further use in their NMR spectral analysis workflow.  
 
+# Run Deep Picker and Voigt Fitter with GUI (for 2D and pseudo-3D only)
+We recently developed a tool called COLMARView, an intuitive and efficient web-based platform for processing and visualizing 2D NMR spectra. The tool streamlines the workflow by integrating with Deep Picker and Voigt Fitter, enabling seamless functionality.
+
+With these integrations, results from Deep Picker, which facilitates automated peak picking, and Voigt Fitter, which performs peak fitting using the Voigt profile, can be directly visualized within COLMARView. This eliminates the need for additional software, providing users with a unified platform to analyze and interpret their data efficiently.
+
+To use, visit https://lidawei1975.github.io/colmarviewer/
+
 # Spectral processing of input spectra
 The following are the spectral processing steps that should be followed carefully as they are important for the performance of DEEP Picker.
 
