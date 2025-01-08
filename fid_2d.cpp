@@ -1,6 +1,6 @@
 #include <vector>
 #include <valarray>
-#icnlude <array>
+#include <array>
 #include <fstream>
 #include <iostream>
 
