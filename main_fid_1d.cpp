@@ -41,7 +41,7 @@ int main(int argc, char **argv)
     args3.push_back("output json file name for spectral information");
 
     args.push_back("-apod");
-    args2.push_back("kaiser 0.5 0.896 3.684");
+    args2.push_back("sp off 0.5 end 0.896 pow 3.684 elb 0.0 c 0.5");
     args3.push_back("apodization function name and parameters, separated by space(s).");
 
     args.push_back("-zf");

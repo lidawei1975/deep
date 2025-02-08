@@ -2,9 +2,20 @@
 #include <iostream>
 #include <sstream>
 #include <vector>
+#include <array>
+#include <deque>
+#include <cmath>
 
 #ifndef PEAK_MANIP
 #define PEAK_MANIP
+
+namespace peak_tools{
+    bool peak_reading_sparky(std::string fname,std::vector<std::array<double,2>> &peak_pos, std::vector<std::string> &peak_info);
+    void MinCostMatching(const std::vector<std::vector<int>> &cost, std::vector<int> &Lmate, std::vector<int> &Rmate);
+    bool is_assignment(std::string ass);
+    std::vector<std::deque<int>> breadth_first(std::vector<int> &neighbor, int n);
+};
+
 
 enum column_operation
 {
@@ -43,6 +54,8 @@ public:
     peak_manipulation();
     ~peak_manipulation();
 
+    inline int get_n_peaks(){return col_values.size();};
+
     /**
      * Read a peak file and save the values to col_names, col_formats, and col_values
     */
@@ -62,6 +75,11 @@ public:
      * Get mutiple column indexes by column names starts with a prefix
     */
     std::vector<int> get_column_indexes_by_prefix(const std::string);
+
+    /**
+     * Get DATA lines (lines starting with keyword DATA)
+    */
+    bool get_data_lines(std::vector<std::string>&);
 
     /**
      * Get a column by column index

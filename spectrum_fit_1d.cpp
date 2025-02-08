@@ -5,11 +5,24 @@
 #include <random>
 #include <limits>
 
+#ifdef LMMIN
+    #include "lmminimizer.h"
+#else
+    #include "ceres/ceres.h"
+    #include "glog/logging.h"
+    using ceres::CostFunction;
+    using ceres::AutoDiffCostFunction;
+    using ceres::NumericDiffCostFunction;
+    using ceres::Problem;
+    using ceres::Solver;
+    using ceres::Solve;
+#endif
 
 #include "kiss_fft.h"
 #include "json/json.h"
 #include "commandline.h"
-#include "spectrum_io_1d.h"
+#include "fid_1d.h"
+#include "cost_functors.h"
 #include "spectrum_fit_1d.h"
 
 #define CONVOLUTION_RANGE 20.0 
@@ -92,7 +105,7 @@ namespace ldw_math_1d
         for (int i = i0; i < i1; i++)
         {
             double t1 = x - i;
-            kernel->at(i - i0) = a / (1 + (2 * t1 / gammax) * (2 * t1 / gammax));
+            kernel->at(i - i0) = a / (1 + (t1 / gammax) * (t1 / gammax));
         }
         return true;
     };
@@ -119,349 +132,6 @@ namespace ldw_math_1d
     };
 }
 
-// Gaussain_1d
-mycostfunction_gaussian1d::~mycostfunction_gaussian1d(){};
-mycostfunction_gaussian1d::mycostfunction_gaussian1d(int n, double *z_)
-{
-    n_datapoint = n;
-    z = z_;
-};
-bool mycostfunction_gaussian1d::Evaluate(double const *const *xx, double *residual, double **jaco) const
-{
-    double a = xx[0][0];
-    double x0 = xx[1][0];
-    double sigmax = fabs(xx[2][0]);
-
-    if (jaco != NULL) // both residual errors and jaco are required.
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            double x_sigmax = (i - x0) / sigmax;
-            double g = exp((x0 - i) * x_sigmax);
-            double ag = a * g;
-
-            residual[i] = ag - z[i];
-            jaco[0][i] = g;                        // with respect to a
-            jaco[1][i] = ag * 2 * x_sigmax;        // x0
-            jaco[2][i] = ag * x_sigmax * x_sigmax; // sigmax
-        }
-    }
-    else // only require residual errors
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            residual[i] = a * exp(-(i - x0) * (i - x0) / sigmax) - z[i];
-        }
-    }
-    return true;
-};
-
-// lorentz 1d
-mycostfunction_lorentz1d::~mycostfunction_lorentz1d(){};
-mycostfunction_lorentz1d::mycostfunction_lorentz1d(int n, double *z_)
-{
-    n_datapoint = n;
-    z = z_;
-};
-bool mycostfunction_lorentz1d::Evaluate(double const *const *xx, double *residual, double **jaco) const
-{
-    double a = xx[0][0];
-    double x0 = xx[1][0];
-    double gamma = fabs(xx[2][0]);
-
-    if (jaco != NULL) // both residual errors and jaco are required.
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            double v = 1 / (1 + (2 * (i - x0) / gamma) * (2 * (i - x0) / gamma));
-            double v2 = v * v;
-            double gamma2 = gamma * gamma;
-            double av = a * v2 * 8;
-
-            residual[i] = a * v - z[i];
-            jaco[0][i] = v;                                             // with respect to a
-            jaco[1][i] = -av * (i - x0) / gamma2;                       // x0
-            jaco[2][i] = av * ((i - x0) * (i - x0)) / (gamma2 * gamma); // gammax
-        }
-    }
-    else // only require residual errors
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            residual[i] = a / (1 + (2 * (i - x0) / gamma) * (2 * (i - x0) / gamma)) - z[i];
-        }
-    }
-    return true;
-};
-
-
-/**
- * @brief for pseudo 2D voigt fitting, analytical derivative
- * Peak amplitude is defined as A = A0*exp(-g*g*D) where A0 and D are fitting parameters
- * while g is squared z gradient.
- */
-// voigt_1d
-mycostfunction_voigt1d_doesy::~mycostfunction_voigt1d_doesy(){};
-mycostfunction_voigt1d_doesy::mycostfunction_voigt1d_doesy(double t_,int n_datapoint_, double *z_)
-{
-    z_gradient_squared = t_; 
-    n_datapoint = n_datapoint_;
-    z = z_;
-};
-
-void mycostfunction_voigt1d_doesy::voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const
-{
-    double v, l;
-    double z_r = x0 / (sqrt(2) * sigma);
-    double z_i = gamma / (sqrt(2) * sigma);
-    double sigma2 = sigma * sigma;
-    double sigma3 = sigma * sigma2;
-
-    re_im_w_of_z(z_r, z_i, &v, &l);
-    *vv = v / sqrt(2 * M_PI * sigma2);
-
-    double t1 = z_i * l - z_r * v;
-    double t2 = z_r * l + z_i * v;
-
-    *r_x0 = t1 / (sigma2 * M_SQRT_PI);
-    *r_gamma = (t2 - M_1_SQRT_PI) / (sigma2 * M_SQRT_PI);
-    *r_sigma = -v / M_SQRT_2PI / sigma2 - t1 * x0 / sigma3 / M_SQRT_PI - (t2 - M_1_SQRT_PI) * gamma / sigma3 / M_SQRT_PI;
-
-    return;
-};
-
-void mycostfunction_voigt1d_doesy::voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const
-{
-    double v, l;
-    double z_r = x0 / (sqrt(2) * sigma);
-    double z_i = gamma / (sqrt(2) * sigma);
-    double sigma2 = sigma * sigma;
-
-    re_im_w_of_z(z_r, z_i, &v, &l);
-    *vv = v / sqrt(2 * M_PI * sigma2);
-    return;
-};
-
-bool mycostfunction_voigt1d_doesy::Evaluate(double const *const *xx, double *residual, double **jaco) const
-{
-    double a0 = xx[0][0]; //This is the amplitude at t=0
-    
-    double diff_sqrt = xx[4][0]; //This is SQRT of the diffusion coefficient. We fit the SQRT of the diffusion coefficient to avoid diffusion coefficient
-    double diff = diff_sqrt*diff_sqrt; //This is the diffusion coefficient. 
-    double a_scale=exp(-z_gradient_squared*diff); //This is the amplitude scale factor at t=t
-    double a = a0*a_scale; //This is the amplitude at t=t
-    double x0 = xx[1][0]; //This is the center position
-    double sigmax = fabs(xx[2][0]);
-    double gammax = fabs(xx[3][0]);
-
-    double vvx, r_x, r_sigmax, r_gammax;
-
-    voigt_helper(x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
-
-    if (jaco != NULL) // both residual errors and jaco are required.
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            voigt_helper(i - x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
-            residual[i] = a * vvx - z[i];
-            jaco[0][i] = vvx * a_scale;         //  dz/da=vvx and da/da0 = a_scale 
-            jaco[1][i] = -a * r_x;              // derivative with respect to x0
-            jaco[2][i] = a * r_sigmax;          // derivative with respect to sigmax
-            jaco[3][i] = a * r_gammax;          // derivative with respect to gammax
-            jaco[4][i] = -vvx * a0 * a_scale * z_gradient_squared * 2.0 * diff_sqrt;   // dz/da=vvx, da/dD = -a0*t*t*exp(-t*t*D), dD/dsqrtD =2*sqrtD
-        }
-    }
-    else // only require residual errors
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            voigt_helper(i - x0, sigmax, gammax, &vvx);
-            residual[i] = a * vvx - z[i];
-        }
-    }
-    return true;
-};
-
-
-/**
- * @brief voigt_1d cost funciton. Single peak fitting
- * 
- */
-mycostfunction_voigt1d::~mycostfunction_voigt1d(){};
-mycostfunction_voigt1d::mycostfunction_voigt1d(int n, double *z_)
-{
-    n_datapoint = n;
-    z = z_;
-};
-
-void mycostfunction_voigt1d::voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const
-{
-    double v, l;
-    double z_r = x0 / (sqrt(2) * sigma);
-    double z_i = gamma / (sqrt(2) * sigma);
-    double sigma2 = sigma * sigma;
-    double sigma3 = sigma * sigma2;
-
-    re_im_w_of_z(z_r, z_i, &v, &l);
-    *vv = v / sqrt(2 * M_PI * sigma2);
-
-    double t1 = z_i * l - z_r * v;
-    double t2 = z_r * l + z_i * v;
-
-    *r_x0 = t1 / (sigma2 * M_SQRT_PI);
-    *r_gamma = (t2 - M_1_SQRT_PI) / (sigma2 * M_SQRT_PI);
-    *r_sigma = -v / M_SQRT_2PI / sigma2 - t1 * x0 / sigma3 / M_SQRT_PI - (t2 - M_1_SQRT_PI) * gamma / sigma3 / M_SQRT_PI;
-
-    return;
-};
-
-void mycostfunction_voigt1d::voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const
-{
-    double v, l;
-    double z_r = x0 / (sqrt(2) * sigma);
-    double z_i = gamma / (sqrt(2) * sigma);
-    double sigma2 = sigma * sigma;
-
-    re_im_w_of_z(z_r, z_i, &v, &l);
-    *vv = v / sqrt(2 * M_PI * sigma2);
-    return;
-};
-
-bool mycostfunction_voigt1d::Evaluate(double const *const *xx, double *residual, double **jaco) const
-{
-    double a = xx[0][0];
-    double x0 = xx[1][0];
-    double sigmax = fabs(xx[2][0]);
-    double gammax = fabs(xx[3][0]);
-
-    double vvx, r_x, r_sigmax, r_gammax;
-
-    voigt_helper(x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
-
-    if (jaco != NULL) // both residual errors and jaco are required.
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            voigt_helper(i - x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
-            residual[i] = a * vvx - z[i];
-            jaco[0][i] = vvx;          // with respect to a
-            jaco[1][i] = -a * r_x;     // x0
-            jaco[2][i] = a * r_sigmax; // sigmax
-            jaco[3][i] = a * r_gammax; // gammax
-        }
-    }
-    else // only require residual errors
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            voigt_helper(i - x0, sigmax, gammax, &vvx);
-            residual[i] = a * vvx - z[i];
-        }
-    }
-    return true;
-};
-
-// voigt_1d, n peaks togather
-mycostfunction_nvoigt1d::~mycostfunction_nvoigt1d(){};
-mycostfunction_nvoigt1d::mycostfunction_nvoigt1d(int np_, int n, double *z_)
-{
-    np = np_;
-    n_datapoint = n;
-    z = z_;
-};
-
-void mycostfunction_nvoigt1d::voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const
-{
-    double v, l;
-    double z_r = x0 / (sqrt(2) * sigma);
-    double z_i = gamma / (sqrt(2) * sigma);
-    double sigma2 = sigma * sigma;
-    double sigma3 = sigma * sigma2;
-
-    re_im_w_of_z(z_r, z_i, &v, &l);
-    *vv = v / sqrt(2 * M_PI * sigma2);
-
-    double t1 = z_i * l - z_r * v;
-    double t2 = z_r * l + z_i * v;
-
-    *r_x0 = t1 / (sigma2 * M_SQRT_PI);
-    *r_gamma = (t2 - M_1_SQRT_PI) / (sigma2 * M_SQRT_PI);
-    *r_sigma = -v / M_SQRT_2PI / sigma2 - t1 * x0 / sigma3 / M_SQRT_PI - (t2 - M_1_SQRT_PI) * gamma / sigma3 / M_SQRT_PI;
-    return;
-};
-
-void mycostfunction_nvoigt1d::voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const
-{
-    double v, l;
-    double z_r = x0 / (sqrt(2) * sigma);
-    double z_i = gamma / (sqrt(2) * sigma);
-    double sigma2 = sigma * sigma;
-
-    re_im_w_of_z(z_r, z_i, &v, &l);
-    *vv = v / sqrt(2 * M_PI * sigma2);
-    return;
-};
-
-bool mycostfunction_nvoigt1d::Evaluate(double const *const *xx, double *residual, double **jaco) const
-{
-
-    double vvx, r_x, r_sigmax, r_gammax;
-    // voigt_helper(x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
-
-    if (jaco != NULL) // both residual errors and jaco are required.
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            residual[i] = -z[i];
-        }
-        for (int m = 0; m < np; m++)
-        {
-            /**
-             * xx is a 2D array, xx[0] is for the first peak, xx[1] is for the second peak, etc.
-             * xx[0][0,1,2,3] are peak intensity, peak position, peak sigma, peak gamma of the first peak
-            */
-            double a = xx[m][0];
-            double x0 = xx[m][1];
-            double sigmax = fabs(xx[m][2]);
-            double gammax = fabs(xx[m][3]);
-            for (int i = 0; i < n_datapoint; i++)
-            {
-                voigt_helper(i - x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
-                residual[i] += a * vvx;
-
-                /**
-                 * jacon is a 2D array. jaco[0] is for the first peak, jaco[1] is for the second peak, etc.
-                 * jaco[0]'s length is n_datapoint*n_fitting_paramter_of_peak_0
-                 * res[0] with respect to a,pos,sigma,gamma, followed by res[1] with respect to a,pos,sigma,gamma, etc.
-                */
-                jaco[m][i * 4 + 0] = vvx;          // with respect to a
-                jaco[m][i * 4 + 1] = -a * r_x;     // x0
-                jaco[m][i * 4 + 2] = a * r_sigmax; // sigmax
-                jaco[m][i * 4 + 3] = a * r_gammax; // gammax
-            }
-        }
-    }
-    else // only require residual errors
-    {
-        for (int i = 0; i < n_datapoint; i++)
-        {
-            residual[i] = -z[i];
-        }
-        for (int m = 0; m < np; m++)
-        {
-            double a = xx[m][0];
-            double x0 = xx[m][1];
-            double sigmax = fabs(xx[m][2]);
-            double gammax = fabs(xx[m][3]);
-            for (int i = 0; i < n_datapoint; i++)
-            {
-                voigt_helper(i - x0, sigmax, gammax, &vvx);
-                residual[i] += a * vvx;
-            }
-        }
-    }
-    return true;
-};
 
 // mixed guassian fitter
 gaussian_fit_1d::gaussian_fit_1d()
@@ -569,7 +239,7 @@ bool gaussian_fit_1d::gaussian_fit_init(std::vector<std::vector<float>> &d, std:
         for (int k = 0; k < p1.size(); k++)
         {
             s = 0.5346 * sigmax[k] * 2 + std::sqrt(0.2166 * 4 * gammax[k] * gammax[k] + sigmax[k] * sigmax[k] * 8 * 0.6931); // fwhh
-            gammax[k] = s;
+            gammax[k] = s * 0.5;
             sigmax[k] = 1e-10;
         }
     }
@@ -2321,7 +1991,7 @@ bool gaussian_fit_1d::lorentz_convolution_with_limit(int ndx, double a, double x
     for (int i = i0; i < i1; i++)
     {
         double t1 = x - i;
-        kernel->at(i - i0) = a / (1 + (2 * t1 / gammax) * (2 * t1 / gammax));
+        kernel->at(i - i0) = a / (1 + ( t1 / gammax) * ( t1 / gammax));
     }
     return true;
 };
@@ -2384,16 +2054,16 @@ bool spectrum_fit_1d::init_all_spectra(std::vector<std::string> fnames_,int n_st
 
     fnames = fnames_;
     int i = fnames.size() - 1;
-    if (spectrum_io_1d::read_spectrum(fnames[i],b_negative))
+    if (fid_1d::read_spectrum(fnames[i],b_negative))
     {
-        spects.push_back(spect);
+        spects.push_back(spectrum_real);
     }
 
     for (int i = fnames.size() - 2; i >= 0; i--)
     {
-        if (spectrum_io_1d::read_spectrum(fnames[i],b_negative))
+        if (fid_1d::read_spectrum(fnames[i],b_negative))
         {
-            spects.push_back(spect);
+            spects.push_back(spectrum_real);
         }
     }
     std::reverse(spects.begin(), spects.end());
@@ -2421,25 +2091,25 @@ bool spectrum_fit_1d::init_all_spectra(std::vector<std::string> fnames_,int n_st
 bool spectrum_fit_1d::peak_partition_1d_for_fit()
 {
     double boundary_cutoff = noise_level * user_scale2;
-    if (fabs(spect[0]) > boundary_cutoff)
+    if (fabs(spectrum_real[0]) > boundary_cutoff)
     {
         signa_boudaries.push_back(0);
     }
 
-    for (int j = 1; j < ndata; j++)
+    for (int j = 1; j < ndata_frq; j++)
     {
-        if (fabs(spect[j - 1]) <= boundary_cutoff && fabs(spect[j]) > boundary_cutoff)
+        if (fabs(spectrum_real[j - 1]) <= boundary_cutoff && fabs(spectrum_real[j]) > boundary_cutoff)
         {
             signa_boudaries.push_back(std::max(j - 10, 0));
         }
-        else if (fabs(spect[j - 1]) > boundary_cutoff && fabs(spect[j]) <= boundary_cutoff)
+        else if (fabs(spectrum_real[j - 1]) > boundary_cutoff && fabs(spectrum_real[j]) <= boundary_cutoff)
         {
-            noise_boudaries.push_back(std::min(j + 10, ndata));
+            noise_boudaries.push_back(std::min(j + 10, ndata_frq));
         }
     }
     if (noise_boudaries.size() < signa_boudaries.size())
     {
-        noise_boudaries.push_back(ndata);
+        noise_boudaries.push_back(ndata_frq);
     }
 
     bool b = true;
@@ -2472,7 +2142,7 @@ bool spectrum_fit_1d::peak_partition_1d_for_fit()
 bool spectrum_fit_1d::set_for_one_spectrum()
 {
     spects.clear();
-    spects.push_back(spect);
+    spects.push_back(spectrum_real);
     nspect = 1;
 
     return true;
@@ -2509,7 +2179,7 @@ bool spectrum_fit_1d::peak_fitting()
         int begin0 = begin;
         int stop0 = stop; // only mentioned in comment. Compiler will skip it anyway
 
-        int ndim = spect.size();
+        int ndim = spectrum_real.size();
         int left_patch = 0;
         int right_patch = 0;
         int n = stop - begin + 40;
@@ -2698,7 +2368,7 @@ bool spectrum_fit_1d::get_fitted_peaks(spectrum_1d_peaks &peaks)
     {
         for (int i = 0; i < fit_p_intensity.size(); i++)
         {
-            fitted_volume.push_back(fit_p_intensity[i] * fabs(fit_gammax[i]) * 0.5);
+            fitted_volume.push_back(fit_p_intensity[i] * fabs(fit_gammax[i]) * 3.14159265358979);
         }
         amplitudes = fit_p_intensity;
     }
@@ -2772,7 +2442,7 @@ bool spectrum_fit_1d::label_baseline_peaks()
     for(int i=0;i<fit_p1.size();i++)
     {
         int loc=int(round(fit_p1[i]));
-        spectrum_amplitudes.push_back(spect[loc]);
+        spectrum_amplitudes.push_back(spectrum_real[loc]);
     }
     
 
@@ -2824,7 +2494,7 @@ bool spectrum_fit_1d::label_baseline_peaks()
                 float lowest_spect_point = std::numeric_limits<float>::max();
                 for (int k = int(fit_p1[i]); k <= int(fit_p1[j]); k++)
                 {
-                    lowest_spect_point = std::min(lowest_spect_point, spect[k]);
+                    lowest_spect_point = std::min(lowest_spect_point, spectrum_real[k]);
                 }
 
                 /**
@@ -2909,7 +2579,7 @@ bool spectrum_fit_1d::output(std::string outfname,bool b_out_json,bool b_individ
         {
             for (int i = 0; i < fit_p_intensity.size(); i++)
             {
-                fitted_volume.push_back(fit_p_intensity[i] * fabs(fit_gammax[i]) * 0.5);
+                fitted_volume.push_back(fit_p_intensity[i] * fabs(fit_gammax[i]) * 3.14159265358979);
             }
             amplitudes = fit_p_intensity;
         }
@@ -2957,9 +2627,27 @@ bool spectrum_fit_1d::output(std::string outfname,bool b_out_json,bool b_individ
             fp = fopen((thead + tname2 + outfname).c_str(), "w");
         }
 
-        // fprintf(fp,"#x y ppm_x ppm_y intensity sigmax sigmay (gammx gammay) fitted_volume num_volume type group\n");
-        fprintf(fp, "VARS INDEX X_AXIS X_PPM XW HEIGHT DHEIGHT ASS INTEGRAL VOL SIMGAX GAMMAX CONFIDENCE NROUND BACKGROUND\n");
-        fprintf(fp, "FORMAT %%5d %%9.4f %%8.4f %%7.3f %%+e %%+e %%s %%+e %%+e %%f %%f %%f %%4d %%1D\n");
+        fprintf(fp, "VARS INDEX X_AXIS X_PPM XW HEIGHT DHEIGHT ASS INTEGRAL VOL SIMGAX GAMMAX CONFIDENCE NROUND BACKGROUND");
+        if (spects.size() > 1)
+        {
+            for (int i = 0; i < spects.size(); i++)
+            {
+                fprintf(fp, " Z_A%d", i);
+            }
+        }
+        fprintf(fp, "\n");
+
+        fprintf(fp, "FORMAT %%5d %%9.4f %%8.4f %%7.3f %%+e %%+e %%s %%+e %%+e %%f %%f %%f %%4d %%1d");
+        if (spects.size() > 1)
+        {
+            for (int i = 0; i < spects.size(); i++)
+            {
+                fprintf(fp, " %%7.4f");
+            }
+        }
+        fprintf(fp, "\n");
+
+
         for (unsigned int ii = 0; ii < ndx.size(); ii++)
         {
             int i = ndx[ii];
@@ -3027,22 +2715,22 @@ bool spectrum_fit_1d::write_recon(std::string folder_name)
             intens.push_back(fit_p_intensity_all_spectra[i][file_ndx]);
         }
 
-        std::vector<float> spe_recon(spect.size(), 0.0f);
+        std::vector<float> spe_recon(spectrum_real.size(), 0.0f);
         for (int i = 0; i < fit_p1.size(); i++)
         {
             std::vector<double> data;
             int i0, i1;
             if (peak_shape == voigt_type)
             {
-                ldw_math_1d::voigt_convolution(intens[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
+                ldw_math_1d::voigt_convolution(intens[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spectrum_real.size(), CONVOLUTION_RANGE);
             }
             else if (peak_shape == lorentz_type)
             {
-                ldw_math_1d::lorentz_convolution(intens[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
+                ldw_math_1d::lorentz_convolution(intens[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spectrum_real.size(), CONVOLUTION_RANGE);
             }
             else if (peak_shape == gaussian_type)
             {
-                ldw_math_1d::gaussian_convolution(intens[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
+                ldw_math_1d::gaussian_convolution(intens[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spectrum_real.size(), CONVOLUTION_RANGE);
             }
             // add data to spe_recon[i0:i1]
             for (int j = i0; j < i1; j++)
@@ -3056,7 +2744,7 @@ bool spectrum_fit_1d::write_recon(std::string folder_name)
         if(fp!=NULL)
         {
             // write header saved from input file
-            fwrite(header, sizeof(float), 512, fp);
+            fwrite(nmrpipe_header_data.data(), sizeof(float), 512, fp);
             // write recon spectrum
             fwrite(spe_recon.data(), sizeof(float), spe_recon.size(), fp);
             fclose(fp);
@@ -3070,10 +2758,10 @@ bool spectrum_fit_1d::write_recon(std::string folder_name)
         FILE *fp2 = fopen((folder_name + '/' + file_name + "_diff.ft1").c_str(), "w");
         if(fp2!=NULL)
         {
-            fwrite(header, sizeof(float), 512, fp);
-            for(int i=0;i<spect.size();i++)
+            fwrite(nmrpipe_header_data.data(), sizeof(float), 512, fp);
+            for(int i=0;i<spectrum_real.size();i++)
             {
-                spe_recon[i] = spe_recon[i] -spect[i] ;
+                spe_recon[i] = spe_recon[i] -spectrum_real[i] ;
             }
             fwrite(spe_recon.data(), sizeof(float), spe_recon.size(), fp);
             fclose(fp);
@@ -3089,13 +2777,13 @@ bool spectrum_fit_1d::output_json(std::string outfname,const std::vector<int> nd
     std::vector<double> spe_recon;
     std::vector<double> spe_recon_ppm;
 
-    for (int j = 0; j < ndata; j++)
+    for (int j = 0; j < ndata_frq; j++)
     {
         spe_recon_ppm.push_back(begin1 + j * step1);
     }
 
     spe_recon.clear();
-    spe_recon.resize(ndata, 0.0);
+    spe_recon.resize(ndata_frq, 0.0);
 
     for (int i = 0; i < fit_p1.size(); i++)
     {
@@ -3103,15 +2791,15 @@ bool spectrum_fit_1d::output_json(std::string outfname,const std::vector<int> nd
         int i0, i1;
         if (peak_shape == voigt_type)
         {
-            ldw_math_1d::voigt_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
+            ldw_math_1d::voigt_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spectrum_real.size(), CONVOLUTION_RANGE);
         }
         else if (peak_shape == lorentz_type)
         {
-            ldw_math_1d::lorentz_convolution(fit_p_intensity[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
+            ldw_math_1d::lorentz_convolution(fit_p_intensity[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spectrum_real.size(), CONVOLUTION_RANGE);
         }
         else if (peak_shape == gaussian_type)
         {
-            ldw_math_1d::gaussian_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spect.size(), CONVOLUTION_RANGE);
+            ldw_math_1d::gaussian_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spectrum_real.size(), CONVOLUTION_RANGE);
         }
         // add data to spe_recon[i0:i1]
         for (int j = i0; j < i1; j++)
@@ -3120,7 +2808,7 @@ bool spectrum_fit_1d::output_json(std::string outfname,const std::vector<int> nd
         }
     }
     Json::Value data;
-    for (int j = 0; j < ndata; j++)
+    for (int j = 0; j < ndata_frq; j++)
     {
         data[j][0] = spe_recon_ppm[j];
         data[j][1] = spe_recon[j];
@@ -3136,15 +2824,15 @@ bool spectrum_fit_1d::output_json(std::string outfname,const std::vector<int> nd
             int i0, i1;
             if (peak_shape == voigt_type)
             {
-                ldw_math_1d::voigt_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spect.size(), 3.0);
+                ldw_math_1d::voigt_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spectrum_real.size(), 3.0);
             }
             else if (peak_shape == lorentz_type)
             {
-                ldw_math_1d::lorentz_convolution(fit_p_intensity[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spect.size(), 3.0);
+                ldw_math_1d::lorentz_convolution(fit_p_intensity[i], fit_p1[i], fit_gammax[i], &data, i0, i1, spectrum_real.size(), 3.0);
             }
             else if (peak_shape == gaussian_type)
             {
-                ldw_math_1d::gaussian_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spect.size(), 3.0);
+                ldw_math_1d::gaussian_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spectrum_real.size(), 3.0);
             }
 
             for (int ii = i0; ii < i1; ii++)
@@ -3260,7 +2948,7 @@ bool spectrum_fit_1d::peak_reading(std::string infname)
      */
     for (int i = p_intensity.size() - 1; i >= 0; i--)
     {
-        if ((p1[i] < 1 || p1[i] > ndata - 2) || (b_negative == false && p_intensity[i] < 0.0))
+        if ((p1[i] < 1 || p1[i] > ndata_frq - 2) || (b_negative == false && p_intensity[i] < 0.0))
         {
             p1.erase(p1.begin() + i);
             p1_ppm.erase(p1_ppm.begin() + i);
@@ -3289,8 +2977,8 @@ bool spectrum_fit_1d::peak_reading(std::string infname)
             int n1 = int(p1[i] + 0.5) - 1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
             if (n1 < 0)
                 n1 = 0;
-            if (n1 > ndata - 1)
-                n1 = ndata - 1;
+            if (n1 > ndata_frq - 1)
+                n1 = ndata_frq - 1;
             temp.push_back(spects[n][n1]); // n1 is direct dimension location
         }
         p_intensity_all_spectra.push_back(temp);
@@ -3398,9 +3086,9 @@ bool spectrum_fit_1d::peak_reading_sparky(std::string fname)
         int n1 = int(p1[i] + 0.5) - 1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
         if (n1 < 0)
             n1 = 0;
-        if (n1 > ndata - 1)
-            n1 = ndata - 1;
-        p_intensity[i] = spect[n1];
+        if (n1 > ndata_frq - 1)
+            n1 = ndata_frq - 1;
+        p_intensity[i] = spectrum_real[n1];
     }
     return true;
 }
@@ -3538,9 +3226,9 @@ bool spectrum_fit_1d::peak_reading_pipe(std::string fname)
             int n1 = int(p1[i] + 0.5) - 1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
             if (n1 < 0)
                 n1 = 0;
-            if (n1 > ndata - 1)
-                n1 = ndata - 1;
-            p_intensity[i] = spect[n1]; // n1 is direct dimension; n2 is indirect
+            if (n1 > ndata_frq - 1)
+                n1 = ndata_frq - 1;
+            p_intensity[i] = spectrum_real[n1]; // n1 is direct dimension; n2 is indirect
         }
     }
 

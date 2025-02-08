@@ -38,7 +38,7 @@ void sortArr(std::vector<myType> &arr, std::vector<int> &ndx)
 
 /**
  * @brief constructor
- * Will call spectrum_io_1d constructor to initialize some class members for spectrum reading
+ * Will call fid_1d constructor to initialize some class members for spectrum reading
  * Will also call spectrum_fwhh_1d constructor to initialize DNN for fwhh estimation
  * Will also call phase_dnn constructor to initialize DNN for phase correction
 */
@@ -88,18 +88,18 @@ bool spectrum_phasing_1d::simple_peak_picking()
     p1.clear();
     p_intensity.clear();
 
-    for (int i = 103; i < ndata - 103; i++)
+    for (int i = 103; i < ndata_frq - 103; i++)
     {   
         /**
          * Skip possible water region. We don't want to pick water peak
          * Even when water_pos is not set, this will not cause problem because we have enough points to pick peaks
         */
-        if (i<ndata/2-ndata/32 || i>ndata/2+ndata/32)
+        if (i<ndata_frq/2-ndata_frq/32 || i>ndata_frq/2+ndata_frq/32)
         {
-            if (spect[i] > spect[i + 1] && spect[i] > spect[i + 2] && spect[i] > spect[i + 3] && spect[i] > spect[i - 1] && spect[i] > spect[i - 2] && spect[i] > spect[i - 3])
+            if (spectrum_real[i] > spectrum_real[i + 1] && spectrum_real[i] > spectrum_real[i + 2] && spectrum_real[i] > spectrum_real[i + 3] && spectrum_real[i] > spectrum_real[i - 1] && spectrum_real[i] > spectrum_real[i - 2] && spectrum_real[i] > spectrum_real[i - 3])
             {
                 p1.push_back(i);
-                p_intensity.push_back(spect[i]);
+                p_intensity.push_back(spectrum_real[i]);
             }
         }
     }
@@ -313,13 +313,13 @@ bool spectrum_phasing_1d::entropy_minimization_grid(double &best_phase_left,doub
      * reduce size to 4k to speed up.
     */
     std::vector<float> stribed_spect, stribed_spe_image;
-    int nstep = ndata/4096; //stribe to have only 4k points for entropy calculation
-    int n_skip=ndata/10; //exclude the first and last 10% of the spectrum
+    int nstep = ndata_frq/4096; //stribe to have only 4k points for entropy calculation
+    int n_skip=ndata_frq/10; //exclude the first and last 10% of the spectrum
 
-    for (int i = n_skip; i < spect.size()-n_skip; i+=nstep)
+    for (int i = n_skip; i < spectrum_real.size()-n_skip; i+=nstep)
     {
-        stribed_spect.push_back(spect[i]);
-        stribed_spe_image.push_back(spe_image[i]);
+        stribed_spect.push_back(spectrum_real[i]);
+        stribed_spe_image.push_back(spectrum_imag[i]);
     }
 
     std::vector<float> spe_real_phased;
@@ -340,7 +340,7 @@ bool spectrum_phasing_1d::entropy_minimization_grid(double &best_phase_left,doub
         }
     }
 
-    calculate_phased_spectrum(spect,spe_image, best_phase_left, best_phase_right, spe_real_phased, spe_image_phased);
+    calculate_phased_spectrum(spectrum_real,spectrum_imag, best_phase_left, best_phase_right, spe_real_phased, spe_image_phased);
 
     /**
      * if sum of spe_real_phased is negative. We need to flip the phase
@@ -393,13 +393,13 @@ bool spectrum_phasing_1d::entropy_minimization(double &phase_left, double &phase
     double derivative_step = 0.01; // step size in degree for derivative calculation. Analytical derivative is not used at this moment.
 
     std::vector<float> stribed_spect, stribed_spe_image;
-    int nstep = ndata/4096; //stribe to have only 4k points for entropy calculation
-    int n_skip=ndata/10; //exclude the first and last 10% of the spectrum
+    int nstep = ndata_frq/4096; //stribe to have only 4k points for entropy calculation
+    int n_skip=ndata_frq/10; //exclude the first and last 10% of the spectrum
 
-    for (int i = n_skip; i < spect.size()-n_skip; i+=nstep)
+    for (int i = n_skip; i < spectrum_real.size()-n_skip; i+=nstep)
     {
-        stribed_spect.push_back(spect[i]);
-        stribed_spe_image.push_back(spe_image[i]);
+        stribed_spect.push_back(spectrum_real[i]);
+        stribed_spe_image.push_back(spectrum_imag[i]);
     }
 
 
@@ -462,13 +462,13 @@ bool spectrum_phasing_1d::phase_spectrum(const double phase_left, const double p
 {
     // Actually updating the spectrum (spect and spe_image)
     std::vector<float> spe_real_phased, spe_image_phased;
-    calculate_phased_spectrum(spect, spe_image, phase_left, phase_right, spe_real_phased, spe_image_phased);
+    calculate_phased_spectrum(spectrum_real, spectrum_imag, phase_left, phase_right, spe_real_phased, spe_image_phased);
     /**
      * @brief copy the phased spectrum to class member variable
      *
      */
-    spect = spe_real_phased;
-    spe_image = spe_image_phased;
+    spectrum_real = spe_real_phased;
+    spectrum_imag = spe_image_phased;
 
     return true;
 };
@@ -482,7 +482,7 @@ bool spectrum_phasing_1d::phase_spectrum(const double phase_left, const double p
 */
 bool spectrum_phasing_1d::assess_two_end_phase_error(const int from, const int to, std::vector<float> &left_stds,std::vector<float> &right_stds) const
 {
-    int n_end_size=ndata/200; //ndata is the number of pixels in the spectrum    
+    int n_end_size=ndata_frq/200; //ndata_frq is the number of pixels in the spectrum    
     for (int j = from; j <= to; j++)
     {
         std::vector<float> left_end_at_phase, right_end_at_phase;
@@ -494,11 +494,11 @@ bool spectrum_phasing_1d::assess_two_end_phase_error(const int from, const int t
         float sin_phase = sin(phase);
         for(int i = 0; i < n_end_size; i++)
         {
-             left_end_at_phase.push_back(spect[i] * cos_phase + spe_image[i] * sin_phase);
+             left_end_at_phase.push_back(spectrum_real[i] * cos_phase + spectrum_imag[i] * sin_phase);
         }
-        for(int i=ndata-n_end_size;i<ndata;i++)
+        for(int i=ndata_frq-n_end_size;i<ndata_frq;i++)
         {
-            right_end_at_phase.push_back(spect[i] * cos_phase + spe_image[i] * sin_phase);
+            right_end_at_phase.push_back(spectrum_real[i] * cos_phase + spectrum_imag[i] * sin_phase);
         }
 
         /**
@@ -557,16 +557,16 @@ bool spectrum_phasing_1d::assess_phase_at_peaks(std::vector<int> &left_cross, st
     std::vector<std::vector<float>> spes_at_each_phase;
 
     spes_at_each_phase.clear();
-    spes_at_each_phase.resize(to - from + 1, std::vector<float>(spect.size()));
+    spes_at_each_phase.resize(to - from + 1, std::vector<float>(spectrum_real.size()));
 
     for (int j = from; j <= to; j++)
     {
         float phase = j * M_PI / 180 * 1;
         float cos_phase = cos(phase);
         float sin_phase = sin(phase);
-        for (int i = 0; i < spect.size(); i++)
+        for (int i = 0; i < spectrum_real.size(); i++)
         {
-            spes_at_each_phase[j - from][i] = spect[i] * cos_phase + spe_image[i] * sin_phase;
+            spes_at_each_phase[j - from][i] = spectrum_real[i] * cos_phase + spectrum_imag[i] * sin_phase;
         }
     }
 
@@ -834,16 +834,16 @@ bool spectrum_phasing_1d::auto_phase_correction()
 
     // if sum of spectrum is negative, flip the spectrum
     double sum = 0;
-    for (int i = 0; i < spect.size(); i++)
+    for (int i = 0; i < spectrum_real.size(); i++)
     {
-        sum += spect[i];
+        sum += spectrum_real[i];
     }
     if (sum < 0)
     {
-        for (int i = 0; i < spect.size(); i++)
+        for (int i = 0; i < spectrum_real.size(); i++)
         {
-            spect[i] = -spect[i];
-            spe_image[i] = -spe_image[i];
+            spectrum_real[i] = -spectrum_real[i];
+            spectrum_imag[i] = -spectrum_imag[i];
         }
     }
 
@@ -913,7 +913,7 @@ bool spectrum_phasing_1d::auto_phase_correction()
     /**
      * Set water peak at the middle of the spectrum
      */
-    water_pos = spect.size() / 2;
+    water_pos = spectrum_real.size() / 2;
 
     std::vector<int> left_cross;
     std::vector<int> right_cross;
@@ -1141,7 +1141,7 @@ bool spectrum_phasing_1d::auto_phase_correction()
         for(double phase3=-2.0; phase3<=2.0; phase3+=0.5)
         {
             std::vector<float> spe_real_phased, spe_image_phased;
-            calculate_phased_spectrum(spect, spe_image, phase3, phase3, spe_real_phased, spe_image_phased);
+            calculate_phased_spectrum(spectrum_real, spectrum_imag, phase3, phase3, spe_real_phased, spe_image_phased);
 
             /**
              * Get a baseline of spe_real_phased
@@ -1217,7 +1217,7 @@ double spectrum_phasing_1d::test_consistence_with_peak_based_method(const double
     for (int j = 0; j < npeak_tested; j++)
     {
         // calculate phase correction for each peak. Note: all input are intergers, so an explicit cast is needed
-        double phase_at_peak = left_end + double(right_end - left_end) * p1[j] / spect.size();
+        double phase_at_peak = left_end + double(right_end - left_end) * p1[j] / spectrum_real.size();
 
         if (left_cross[j] < 20) //informative.
         {
@@ -1306,13 +1306,13 @@ bool spectrum_phasing_1d::gd_optimization_from_cross(const int left_end, const f
         for (int j = 0; j < npeak_tested; j++)
         {
             // calculate phase correction for each peak
-            double phase_at_peak = phase_left + (phase_right - phase_left) * p1[j] / spect.size();
+            double phase_at_peak = phase_left + (phase_right - phase_left) * p1[j] / spectrum_real.size();
 
             /**
              * @brief Get derivative of phase_at_peak with respect to phase_left and phase_right
              */
-            double delta_phase_left = 1 - double(p1[j]) / spect.size();
-            double delta_phase_right = double(p1[j]) / spect.size();
+            double delta_phase_left = 1 - double(p1[j]) / spectrum_real.size();
+            double delta_phase_right = double(p1[j]) / spectrum_real.size();
 
             /**
              * @brief Notice meaning of delta_phase_left and delta_phase_right are now different
@@ -1406,10 +1406,10 @@ bool spectrum_phasing_1d::gd_optimization_from_cross(const int left_end, const f
 
 bool spectrum_phasing_1d::flip_spectrum()
 {
-    for (int i = 0; i < spect.size(); i++)
+    for (int i = 0; i < spectrum_real.size(); i++)
     {
-        spect[i] = -spect[i];
-        spe_image[i] = -spe_image[i];
+        spectrum_real[i] = -spectrum_real[i];
+        spectrum_imag[i] = -spectrum_imag[i];
     }
     return true;
 }
@@ -1417,9 +1417,9 @@ bool spectrum_phasing_1d::flip_spectrum()
 bool spectrum_phasing_1d::auto_flip_spectrum()
 {
     double sum = 0;
-    for (int i = 0; i < spect.size(); i++)
+    for (int i = 0; i < spectrum_real.size(); i++)
     {
-        sum += spect[i];
+        sum += spectrum_real[i];
     }
     if (sum < 0)
     {

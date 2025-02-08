@@ -112,25 +112,25 @@ bool spectrum_pick_1d::init_mod(int mod)
 bool spectrum_pick_1d::peak_partition_1d()
 {
     double boundary_cutoff = noise_level * user_scale2;
-    if (spect[0] > boundary_cutoff)
+    if (spectrum_real[0] > boundary_cutoff)
     {
         signa_boudaries.push_back(0);
     }
 
-    for (int j = 1; j < ndata; j++)
+    for (int j = 1; j < ndata_frq; j++)
     {
-        if (spect[j - 1] <= boundary_cutoff && spect[j] > boundary_cutoff)
+        if (spectrum_real[j - 1] <= boundary_cutoff && spectrum_real[j] > boundary_cutoff)
         {
             signa_boudaries.push_back(std::max(j - 10, 0));
         }
-        else if (spect[j - 1] > boundary_cutoff && spect[j] <= boundary_cutoff)
+        else if (spectrum_real[j - 1] > boundary_cutoff && spectrum_real[j] <= boundary_cutoff)
         {
-            noise_boudaries.push_back(std::min(j + 10, ndata));
+            noise_boudaries.push_back(std::min(j + 10, ndata_frq));
         }
     }
     if (noise_boudaries.size() < signa_boudaries.size())
     {
-        noise_boudaries.push_back(ndata);
+        noise_boudaries.push_back(ndata_frq);
     }
 
     bool b = true;
@@ -176,10 +176,10 @@ bool spectrum_pick_1d::peak_partition_step2()
         std::vector<float> peak_amplitudes;
         for (int k = begin + 2; k < stop - 2; k++)
         {
-            if (spect[k] > noise_level * user_scale && spect[k] > spect[k - 2] && spect[k] > spect[k - 1] && spect[k] > spect[k + 1] && spect[k] > spect[k + 2])
+            if (spectrum_real[k] > noise_level * user_scale && spectrum_real[k] > spectrum_real[k - 2] && spectrum_real[k] > spectrum_real[k - 1] && spectrum_real[k] > spectrum_real[k + 1] && spectrum_real[k] > spectrum_real[k + 2])
             {
                 peak_positions.push_back(k);
-                peak_amplitudes.push_back(spect[k]);
+                peak_amplitudes.push_back(spectrum_real[k]);
                 continue;
             }
         }
@@ -191,9 +191,9 @@ bool spectrum_pick_1d::peak_partition_step2()
             float v = peak_amplitudes[k];
             for (int m = peak_positions[k]; m < peak_positions[k + 1]; m++)
             {
-                if (spect[m] < v)
+                if (spectrum_real[m] < v)
                 {
-                    v = spect[m];
+                    v = spectrum_real[m];
                     p = m;
                 }
             }
@@ -232,7 +232,7 @@ bool spectrum_pick_1d::run_ann(bool b_neg)
 
         std::vector<float> t;
 
-        int ndim = spect.size();
+        int ndim = spectrum_real.size();
         int left_patch = 0;
         int right_patch = 0;
         int n = stop - begin + 40;
@@ -245,7 +245,7 @@ bool spectrum_pick_1d::run_ann(bool b_neg)
         std::vector<float> data;
         data.clear();
         data.resize(n, 0.0f);
-        std::copy(spect.begin() + begin, spect.begin() + stop, data.begin() + left_patch);
+        std::copy(spectrum_real.begin() + begin, spectrum_real.begin() + stop, data.begin() + left_patch);
 
         p1.predict(data);
         p1.predict_step2();
@@ -271,9 +271,9 @@ bool spectrum_pick_1d::run_ann(bool b_neg)
 
 bool spectrum_pick_1d::substract_baseline()
 {
-    for (int i = 0; i < ndata; i++)
+    for (int i = 0; i < ndata_frq; i++)
     {
-        spect[i] -= baseline[i];
+        spectrum_real[i] -= baseline[i];
     }
     return true;
 }
@@ -283,7 +283,7 @@ bool spectrum_pick_1d::spectrum_pick_1d_work(bool b_negative)
 {
     // substract_baseline();
     p1.set_noise_level(noise_level);
-    int ndim = spect.size();
+    int ndim = spectrum_real.size();
 
     /**
      * @brief clear signal and noise boundaries
@@ -307,9 +307,9 @@ bool spectrum_pick_1d::spectrum_pick_1d_work(bool b_negative)
     if (b_negative == true)
     {
         // for negative peaks, we need to flip the spectrum
-        for (int k = 0; k < spect.size(); k++)
+        for (int k = 0; k < spectrum_real.size(); k++)
         {
-            spect[k] = -spect[k];
+            spectrum_real[k] = -spectrum_real[k];
         }
         signa_boudaries.clear();
         noise_boudaries.clear();
@@ -322,9 +322,9 @@ bool spectrum_pick_1d::spectrum_pick_1d_work(bool b_negative)
         run_ann(true); // run ANN model to predict peaks on each final segment. Negative peaks
 
         // flip back
-        for (int k = 0; k < spect.size(); k++)
+        for (int k = 0; k < spectrum_real.size(); k++)
         {
-            spect[k] = -spect[k];
+            spectrum_real[k] = -spectrum_real[k];
         }
     }
 
@@ -418,16 +418,16 @@ bool spectrum_pick_1d::interpolate_spectrum(const double inter_step)
      * Now we need to interpolate the spectrum
      * ndata_new is the new size of the spectrum
      */
-    int ndata_new = int(std::round(ndata / inter_step));
+    int ndata_new = int(std::round(ndata_frq / inter_step));
 
     /**
      * define a cubic spline object, and calculate coefficients from old spectrum
      */
     cublic_spline cs,cs_for_image;
-    cs.calculate_coefficients(spect);
-    if(spe_image.size()>15)
+    cs.calculate_coefficients(spectrum_real);
+    if(spectrum_imag.size()>15)
     {
-        cs_for_image.calculate_coefficients(spe_image);
+        cs_for_image.calculate_coefficients(spectrum_imag);
     }
 
     /**
@@ -438,14 +438,14 @@ bool spectrum_pick_1d::interpolate_spectrum(const double inter_step)
     /**
      * Now we can calculate new spectrum
      * x is the new x axis, x[0]=0.0, x[1]=inter_step, x[2]=2*inter_step, ...
-     * old axis is from 0 to ndata-1.
+     * old axis is from 0 to ndata_frq-1.
      */
     for (int k = 0; k < ndata_new; k++)
     {
         spect_new.push_back(cs.calculate_value(k * inter_step));
     }
 
-    if(spe_image.size()>15)
+    if(spectrum_imag.size()>15)
     {
         for (int k = 0; k < ndata_new; k++)
         {
@@ -456,22 +456,22 @@ bool spectrum_pick_1d::interpolate_spectrum(const double inter_step)
     /**
      * update member variables
      */
-    spect = spect_new;
-    spe_image = spe_image_new;
+    spectrum_real = spect_new;
+    spectrum_imag = spe_image_new;
     
-    ndata = ndata_new;                  
+    ndata_frq = ndata_new;                  
     step1 = inter_step * step1; // unit of step1 is ppm, not points
 
     std::cout<<"After cubic spline interpolation, ";
     std::cout<<"Estimated FWHH is "<<get_median_peak_width()<<" pixel. ";
-    std::cout<<"spectrum size is "<<ndata<<" and step1 is "<<step1<<" ppm"<<std::endl;
+    std::cout<<"spectrum size is "<<ndata_frq<<" and step1 is "<<step1<<" ppm"<<std::endl;
 
     return true;
 }
 
 /**
  * @brief adjust ppp of spectrum to a given value, using cubic spline interpolation
- * This function will change member variable spect,spe_image,step1,xdim (alias ndata)
+ * This function will change member variable spect,spe_image,step1,xdim (alias ndata_frq)
  * begin1,stop1 will not be changed
  */
 bool spectrum_pick_1d::adjust_ppp_of_spectrum(const double ppp)

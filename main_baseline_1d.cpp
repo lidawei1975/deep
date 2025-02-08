@@ -21,7 +21,7 @@
 #include "json/json.h"
 #include "ldw_math.h"
 #include "commandline.h"
-#include "spectrum_io_1d.h"
+#include "fid_1d.h"
 #include "spectrum_baseline_1d.h"
 
 

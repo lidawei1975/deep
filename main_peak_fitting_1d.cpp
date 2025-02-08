@@ -18,7 +18,7 @@ using ceres::Solve;
 
 #include "json/json.h"
 #include "commandline.h"
-#include "spectrum_io_1d.h"
+#include "fid_1d.h"
 #include "spectrum_fit_1d.h"
 
 

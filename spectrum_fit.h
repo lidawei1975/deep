@@ -6,11 +6,12 @@ extern "C"
 };
 
 
-#include "spectrum_io.h"
+#include "fid_2d.h"
 
 struct shared_data_2d
 {
   static int n_verbose; //0: minimal, 1: normal
+  static double error_scale; //scale of error in MC based error estimation
 };
 
 #ifndef FIT_TYPE
@@ -96,6 +97,7 @@ private:
   bool multi_spectra_run_single_peak();
 
   bool generate_random_noise(int m, int n, int m2, int n2, std::vector<std::vector<float>> &);
+  bool generate_theoretical_spectra(std::vector<std::vector<double>> &theorical_surface);
 
   bool get_pair_overlap(const int m, const int n, double &, int &) const;
   std::vector<std::pair<int, int>> get_possible_excess_peaks();
@@ -151,7 +153,7 @@ public:
   void set_peak_paras(double x, double y, double noise, double height, double near, double xppm, double yppm, double cutoff);
 };
 
-class spectrum_fit : public spectrum_io, public shared_data_2d
+class spectrum_fit : public fid_2d, public shared_data_2d
 {
 private:
   std::vector<std::string> fnames;
@@ -193,7 +195,7 @@ private:
   bool peak_reading_json(std::string);
 
 public:
-  std::vector<float *> spects; // In peak fitting, float * spect (defined in spectrum_io) will still be used for first spectrum
+  std::vector<std::vector<float>> spects;
   std::vector<int> group;      // peak groups, overlapped peaks are grouped together
   std::vector<int> nround;     // how many round to get converged fitting?
   std::vector<double> err;     // fitting RMSD

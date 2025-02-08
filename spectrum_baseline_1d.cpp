@@ -22,7 +22,7 @@
 #include "json/json.h"
 #include "ldw_math.h"
 #include "commandline.h"
-#include "spectrum_io_1d.h"
+#include "fid_1d.h"
 #include "spectrum_baseline_1d.h"
 
 // #define LDW_DEBUG 
@@ -64,12 +64,12 @@ bool spectrum_baseline_1d::work(double a0_,double b0_,int n_water,int flag,std::
      * segment type, 1: normal, 0: water,excluded
     */
     segment_type.clear();
-    segment_type.resize(ndata,1);
+    segment_type.resize(ndata_frq,1);
 
     /**
      * Even without water region, exclusion of the center of the spectrum has no harm
     */
-    for(int n=ndata/2-n_water;n<ndata/2+n_water;n++)
+    for(int n=ndata_frq/2-n_water;n<ndata_frq/2+n_water;n++)
     {
         segment_type[n]=0; //water
     }
@@ -81,21 +81,21 @@ bool spectrum_baseline_1d::work(double a0_,double b0_,int n_water,int flag,std::
     int max_pos = -1;
    
     double sum=0.0;
-    for (int k = 0; k < ndata; k+=1)
+    for (int k = 0; k < ndata_frq; k+=1)
     {
-        if (fabs(spect[k]) > max_spe)
+        if (fabs(spectrum_real[k]) > max_spe)
         {
-            max_spe = fabs(spect[k]);
+            max_spe = fabs(spectrum_real[k]);
             max_pos = k;
         }
-        sum+=spect[k];
+        sum+=spectrum_real[k];
     }
-    sum/=ndata;
+    sum/=ndata_frq;
 
     spect_normalized.clear();
-    for (int i = 0; i < ndata; i+=1)
+    for (int i = 0; i < ndata_frq; i+=1)
     {
-        spect_normalized.push_back(spect[i]/max_spe);
+        spect_normalized.push_back(spectrum_real[i]/max_spe);
     }
 
 
@@ -119,7 +119,7 @@ bool spectrum_baseline_1d::work(double a0_,double b0_,int n_water,int flag,std::
     /**
      * restore baseline to original scale
     */
-    for(int i=0;i<ndata;i++)
+    for(int i=0;i<ndata_frq;i++)
     {
         baseline[i]*=max_spe;
     }
@@ -169,9 +169,9 @@ bool spectrum_baseline_1d::work(double a0_,double b0_,int n_water,int flag,std::
     /**
      * subtract baseline from spect
     */
-    for(int i=0;i<ndata;i++)
+    for(int i=0;i<ndata_frq;i++)
     {
-        spect[i]-=baseline[i];
+        spectrum_real[i]-=baseline[i];
     }
 
     return true;
@@ -588,26 +588,26 @@ bool spectrum_baseline_1d::read_baseline(std::string infname)
      * if too short, append zeros to baseline
      * if too long, truncate baseline. print warning message
     */
-    if(baseline.size()<ndata)
+    if(baseline.size()<ndata_frq)
     {
         std::cout<<"Warning: baseline size is smaller than spectrum size. Append zeros to baseline."<<std::endl;
-        for(int i=baseline.size();i<ndata;i++)
+        for(int i=baseline.size();i<ndata_frq;i++)
         {
             baseline.push_back(0.0);
         }
     }
-    else if(baseline.size()>ndata)
+    else if(baseline.size()>ndata_frq)
     {
         std::cout<<"Warning: baseline size is larger than spectrum size. Truncate baseline."<<std::endl;
-        baseline.resize(ndata);
+        baseline.resize(ndata_frq);
     }
 
     /**
      * subtract baseline from spect
     */
-    for(int i=0;i<ndata;i++)
+    for(int i=0;i<ndata_frq;i++)
     {
-        spect[i]-=baseline[i];
+        spectrum_real[i]-=baseline[i];
     }
 
     return true;

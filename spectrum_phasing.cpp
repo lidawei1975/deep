@@ -189,13 +189,20 @@ namespace phase_2d_helper
 
 /**
  * constructor
- * Will call spectrum_io_1d constructor
+ * Will call fid_1d constructor
  * spectrum_fwhh constructor: initialize fwhh dnn
  * phase_dnn constructor: initialize phase correction dnn
  */
 
 spectrum_phasing::spectrum_phasing()
 {
+    b_user_phase_correction = false;
+    b_user_phase_correction_indirect = false;
+
+    final_p0_indirect = 0.0;
+    final_p1_indirect = 0.0;
+    final_p0_direct = 0.0;
+    final_p1_direct = 0.0;
 }
 
 spectrum_phasing::~spectrum_phasing()
@@ -387,30 +394,46 @@ bool spectrum_phasing::entropy_based_p0_p1_correction(int ndim1, int ndim2,
  * Run phase correction on the spectrum according to the user input
  * @param p0: phase correction degree 0-th order
  * @param p1: phase correction degree 1-st order
- * @param p0_indirect: phase correction degree 0-th order along indirect dimension
- * @param p1_indirect: phase correction degree 1-st order along indirect dimension
  */
-bool spectrum_phasing::set_user_phase_correction(double p0_direct, double p1_direct, double p0_indirect, double p1_indirect)
+bool spectrum_phasing::set_user_phase_correction(double p0_direct, double p1_direct)
 {
-    /**
-     * Apply phase correction along indirect dimension.
-     */
-    phase_correction_worker(ydim, xdim, p0_indirect /** P0 */, p1_indirect /** P1*/, false, spectrum_real_real, spectrum_real_imag, nullptr, nullptr);
-    phase_correction_worker(ydim, xdim, p0_indirect /** P0 */, p1_indirect /** P1*/, false, spectrum_imag_real, spectrum_imag_imag, nullptr, nullptr);
-
     /**
      * Apply phase correction along direct dimension.
      */
-    phase_correction_worker(ydim, xdim, p0_direct /** P0 */, p1_direct /** P1*/, true, spectrum_real_real, spectrum_imag_real, nullptr, nullptr);
-    phase_correction_worker(ydim, xdim, p0_direct /** P0 */, p1_direct /** P1*/, true, spectrum_real_imag, spectrum_imag_imag, nullptr, nullptr);
+    phase_correction_worker(ndata_frq_indirect, ndata_frq, p0_direct /** P0 */, p1_direct /** P1*/, true, spectrum_real_real.data(), spectrum_real_imag.data(), nullptr, nullptr);
+    phase_correction_worker(ndata_frq_indirect, ndata_frq, p0_direct /** P0 */, p1_direct /** P1*/, true, spectrum_imag_real.data(), spectrum_imag_imag.data(), nullptr, nullptr);
 
     /**
      * In case user want to save the final phase correction values
      */
     final_p0_direct = p0_direct;
     final_p1_direct = p1_direct;
+
+    b_user_phase_correction = true;
+
+    return true;
+}
+
+/**
+ * Run phase correction on the spectrum according to the user input
+ * @param p0_indirect: phase correction degree 0-th order along indirect dimension
+ * @param p1_indirect: phase correction degree 1-st order along indirect dimension
+*/
+bool spectrum_phasing::set_user_phase_correction_indirect(double p0_indirect, double p1_indirect)
+{
+    /**
+     * Apply phase correction along indirect dimension.
+     */
+    phase_correction_worker(ndata_frq_indirect, ndata_frq, p0_indirect /** P0 */, p1_indirect /** P1*/, false, spectrum_real_real.data(), spectrum_imag_real.data(), nullptr, nullptr);
+    phase_correction_worker(ndata_frq_indirect, ndata_frq, p0_indirect /** P0 */, p1_indirect /** P1*/, false, spectrum_real_imag.data(), spectrum_imag_imag.data(), nullptr, nullptr);
+
+    /**
+     * In case user want to save the final phase correction values
+     */
     final_p0_indirect = p0_indirect;
     final_p1_indirect = p1_indirect;
+
+    b_user_phase_correction_indirect = true;
 
     return true;
 }
@@ -432,11 +455,11 @@ bool spectrum_phasing::save_phase_correction_result(std::string filename) const
  * User segment by segment variance method to estimate the noise level of the spectrum.
  * size of spectrum is ndim1 * ndim2. dim2 is major dimension.
  */
-float spectrum_phasing::estimate_noise_level(int ydim, int xdim, float *spect) const
+float spectrum_phasing::estimate_noise_level(int ydim, int ndata_frq, float *spect) const
 {
-    std::cout << "In noise estimation, xdim*ydim is " << xdim * ydim << std::endl;
+    std::cout << "In noise estimation, ndata_frq*ydim is " << ndata_frq * ydim << std::endl;
 
-    int n_segment_x = xdim / 32;
+    int n_segment_x = ndata_frq / 32;
     int n_segment_y = ydim / 32;
 
     std::vector<float> variances;      // variance of each segment
@@ -454,7 +477,7 @@ float spectrum_phasing::estimate_noise_level(int ydim, int xdim, float *spect) c
             {
                 for (int n = 0; n < 32; n++)
                 {
-                    t.push_back(spect[(j * 32 + m) * xdim + i * 32 + n]);
+                    t.push_back(spect[(j * 32 + m) * ndata_frq + i * 32 + n]);
                 }
             }
 
@@ -524,12 +547,17 @@ float spectrum_phasing::estimate_noise_level(int ydim, int xdim, float *spect) c
  */
 bool spectrum_phasing::auto_phase_correction_v2()
 {
+    if(b_user_phase_correction && b_user_phase_correction_indirect)
+    {
+        std::cout << "Both direct and indirect phase correction are set by user. Skip auto phase correction" << std::endl;
+        return true;
+    }
 
     /**
      * Get a combined spectrum SQRT(real^2+imag^2) to find location of strong signal peaks
      */
     std::vector<float> combined_spectrum;
-    for (int i = 0; i < xdim * ydim; i++)
+    for (int i = 0; i < ndata_frq * ndata_frq_indirect; i++)
     {
         combined_spectrum.push_back(sqrt(spectrum_real_real[i] * spectrum_real_real[i] + spectrum_real_imag[i] * spectrum_real_imag[i] + spectrum_imag_real[i] * spectrum_imag_real[i] + spectrum_imag_imag[i] * spectrum_imag_imag[i]));
     }
@@ -540,11 +568,11 @@ bool spectrum_phasing::auto_phase_correction_v2()
      * For debug, save combined spectrum to file
      */
     std::ofstream fout("combined_spectrum.txt");
-    for (int i = 0; i < ydim; i++)
+    for (int i = 0; i < ndata_frq_indirect; i++)
     {
-        for (int j = 0; j < xdim; j++)
+        for (int j = 0; j < ndata_frq; j++)
         {
-            fout << combined_spectrum[j + i * xdim] << " ";
+            fout << combined_spectrum[j + i * ndata_frq] << " ";
         }
         fout << std::endl;
     }
@@ -555,7 +583,7 @@ bool spectrum_phasing::auto_phase_correction_v2()
      * Estimate noise level of the spectrum
      */
     std::cout << "Estimating noise level of the combined spectrum" << std::endl;
-    float estimate_noise_level_combined_spectrum = estimate_noise_level(ydim, xdim, combined_spectrum.data());
+    float estimate_noise_level_combined_spectrum = estimate_noise_level(ndata_frq_indirect, ndata_frq, combined_spectrum.data());
     std::cout << std::endl; // function will print noise level to screen
 
     /**
@@ -568,40 +596,40 @@ bool spectrum_phasing::auto_phase_correction_v2()
     /**
      * To avoid "possible" water signal, we exclude the central 6% of the spectrum along direct dimension
      */
-    int xdim_exclude_half = int(xdim * 0.05);
+    int xdim_exclude_half = int(ndata_frq * 0.05);
 
-    for (int i = 2; i < xdim - 2; i++)
+    for (int i = 2; i < ndata_frq - 2; i++)
     {
         /**
          * Exclude the central 6% of the spectrum along direct dimension
          */
-        if (i > xdim / 2 - xdim_exclude_half && i < xdim / 2 + xdim_exclude_half)
+        if (i > ndata_frq / 2 - xdim_exclude_half && i < ndata_frq / 2 + xdim_exclude_half)
         {
             continue;
         }
 
-        for (int j = 2; j < ydim - 2; j++)
+        for (int j = 2; j < ndata_frq_indirect - 2; j++)
         {
             /**
              * Peak is defined as data point that is larger than all its 8 neighbors
              */
-            if (combined_spectrum[i + j * xdim] > combined_spectrum[i - 1 + (j - 1) * xdim] &&
-                combined_spectrum[i + j * xdim] > combined_spectrum[i + (j - 1) * xdim] &&
-                combined_spectrum[i + j * xdim] > combined_spectrum[i + 1 + (j - 1) * xdim] &&
-                combined_spectrum[i + j * xdim] > combined_spectrum[i - 1 + j * xdim] &&
-                combined_spectrum[i + j * xdim] > combined_spectrum[i + 1 + j * xdim] &&
-                combined_spectrum[i + j * xdim] > combined_spectrum[i - 1 + (j + 1) * xdim] &&
-                combined_spectrum[i + j * xdim] > combined_spectrum[i + (j + 1) * xdim] &&
-                combined_spectrum[i + j * xdim] > combined_spectrum[i + 1 + (j + 1) * xdim] &&
-                combined_spectrum[i + j * xdim] > estimate_noise_level_combined_spectrum * 10.0f /** threshold */
+            if (combined_spectrum[i + j * ndata_frq] > combined_spectrum[i - 1 + (j - 1) * ndata_frq] &&
+                combined_spectrum[i + j * ndata_frq] > combined_spectrum[i + (j - 1) * ndata_frq] &&
+                combined_spectrum[i + j * ndata_frq] > combined_spectrum[i + 1 + (j - 1) * ndata_frq] &&
+                combined_spectrum[i + j * ndata_frq] > combined_spectrum[i - 1 + j * ndata_frq] &&
+                combined_spectrum[i + j * ndata_frq] > combined_spectrum[i + 1 + j * ndata_frq] &&
+                combined_spectrum[i + j * ndata_frq] > combined_spectrum[i - 1 + (j + 1) * ndata_frq] &&
+                combined_spectrum[i + j * ndata_frq] > combined_spectrum[i + (j + 1) * ndata_frq] &&
+                combined_spectrum[i + j * ndata_frq] > combined_spectrum[i + 1 + (j + 1) * ndata_frq] &&
+                combined_spectrum[i + j * ndata_frq] > estimate_noise_level_combined_spectrum * 10.0f /** threshold */
             )
             {
                 px.push_back(i);
                 py.push_back(j);
-                p_intensity.push_back(combined_spectrum[i + j * xdim]);
-                if (combined_spectrum[i + j * xdim] > max_intensity)
+                p_intensity.push_back(combined_spectrum[i + j * ndata_frq]);
+                if (combined_spectrum[i + j * ndata_frq] > max_intensity)
                 {
-                    max_intensity = combined_spectrum[i + j * xdim];
+                    max_intensity = combined_spectrum[i + j * ndata_frq];
                 }
             }
         }
@@ -614,13 +642,13 @@ bool spectrum_phasing::auto_phase_correction_v2()
     phase_2d_helper::sortArr(p_intensity, ndx_sort, true /** b_descend*/);
 
     /**
-     * Define a sorted peak list that is near the diagonal line (abs(px/xdim-py/ydim)<=0.01)
+     * Define a sorted peak list that is near the diagonal line (abs(px/ndata_frq-py/ydim)<=0.01)
      */
     std::vector<int> px_sort_on_diagonal, py_sort_on_diagonal;
     std::vector<float> p_intensity_sort_on_diagonal;
 
     /**
-     * Define a sorted peak list that is not near the diagonal line (abs(px/xdim-py/ydim)>0.01)
+     * Define a sorted peak list that is not near the diagonal line (abs(px/ndata_frq-py/ydim)>0.01)
      */
     std::vector<int> px_sort_off_diagonal, py_sort_off_diagonal;
     std::vector<float> p_intensity_sort_off_diagonal;
@@ -630,7 +658,7 @@ bool spectrum_phasing::auto_phase_correction_v2()
         /**
          * If peak is near the diagonal line, insert it to diagonal peak list
          */
-        if (abs((float)px[ndx_sort[i]] / xdim - (float)py[ndx_sort[i]] / ydim) <= 0.01)
+        if (abs((float)px[ndx_sort[i]] / ndata_frq - (float)py[ndx_sort[i]] / ndata_frq_indirect) <= 0.01)
         {
             /**
              * Only keep top 100 peaks
@@ -717,15 +745,15 @@ bool spectrum_phasing::auto_phase_correction_v2()
      * So, we will select 5 from 0-0.25, 5 from 0.25-0.5, 5 from 0.5-0.75, 5 from 0.75-1.0 of [0,x_dim]
      * Do the same for py_sort_unique
      */
-    px_sort_unique = phase_2d_helper::selected_subset_uniformly(px_sort_unique, 5, 4, xdim);
-    py_sort_unique = phase_2d_helper::selected_subset_uniformly(py_sort_unique, 5, 4, ydim);
+    px_sort_unique = phase_2d_helper::selected_subset_uniformly(px_sort_unique, 5, 4, ndata_frq);
+    py_sort_unique = phase_2d_helper::selected_subset_uniformly(py_sort_unique, 5, 4, ndata_frq_indirect);
 
     /**
-     * Debug code. remove px_sort_unique that is > xdim/2
+     * Debug code. remove px_sort_unique that is > ndata_frq/2
      */
     // for (int i = px_sort_unique.size() - 1; i >= 0; i--)
     // {
-    //     if (px_sort_unique[i] > xdim / 2)
+    //     if (px_sort_unique[i] > ndata_frq / 2)
     //     {
     //         px_sort_unique.erase(px_sort_unique.begin() + i);
     //     }
@@ -770,20 +798,31 @@ bool spectrum_phasing::auto_phase_correction_v2()
         {-90.0f, 0.0f},
         {-90.0f, 180.0f},
         {90.0f, 180.0f},
-        {-90.0f, -180.0f}};
+        {-90.0f, -180.0f}
+    };
+
+    if(b_user_phase_correction_indirect)
+    {
+        possible_indirect_p0_p1_list.clear();
+        /**
+         * Because we alreay applied user defined phase correction along indirect dimension, addtional phase correction is 0 (no phase correction)
+         */
+        possible_indirect_p0_p1_list.push_back({0, 0});
+    }
 
     /**
      * Define a temporary spectrum to hold the indirect dimension only phase corrected spectrum
      */
-    float *spectrum_real_real_test = new float[xdim * ydim];
-    float *spectrum_real_imag_test = new float[xdim * ydim];
-    float *spectrum_imag_real_test = new float[xdim * ydim];
-    float *spectrum_imag_imag_test = new float[xdim * ydim];
+    float *spectrum_real_real_test = new float[ndata_frq * ndata_frq_indirect];
+    float *spectrum_real_imag_test = new float[ndata_frq * ndata_frq_indirect];
+    float *spectrum_imag_real_test = new float[ndata_frq * ndata_frq_indirect];
+    float *spectrum_imag_imag_test = new float[ndata_frq * ndata_frq_indirect];
 
-    float *spectrum_real_real_test2 = new float[xdim * ydim];
-    float *spectrum_imag_real_test2 = new float[xdim * ydim];
-    float *spectrum_real_real_test2_transposed = new float[px_sort_unique.size() * ydim];
+    float *spectrum_real_real_test2 = new float[ndata_frq * ndata_frq_indirect];
+    float *spectrum_imag_real_test2 = new float[ndata_frq * ndata_frq_indirect];
+    float *spectrum_real_real_test2_transposed = new float[px_sort_unique.size() * ndata_frq_indirect];
 
+    int begin,end; //direct dimension search range for each possible indirect dimension P0,P1 pair
     /**
      * Loop over all possible P0,P1 pairs
      */
@@ -793,19 +832,26 @@ bool spectrum_phasing::auto_phase_correction_v2()
         /**
          * Apply indirect dimension phase correction, save new spectrum to spectrum_real_real_test, spectrum_real_imag_test, spectrum_imag_real_test, spectrum_imag_imag_test
          */
-        phase_correction_worker(ydim, xdim, possible_indirect_p0_p1_list[i].first /** P0 */, possible_indirect_p0_p1_list[i].second /** P1*/, false /**along indirect*/, spectrum_real_real, spectrum_real_imag, spectrum_real_real_test, spectrum_real_imag_test);
-        phase_correction_worker(ydim, xdim, possible_indirect_p0_p1_list[i].first /** P0 */, possible_indirect_p0_p1_list[i].second /** P1*/, false /**along indirect*/, spectrum_imag_real, spectrum_imag_imag, spectrum_imag_real_test, spectrum_imag_imag_test);
+        phase_correction_worker(ndata_frq_indirect, ndata_frq, possible_indirect_p0_p1_list[i].first /** P0 */, possible_indirect_p0_p1_list[i].second /** P1*/, false /**along indirect*/, spectrum_real_real.data(), spectrum_imag_real.data(), spectrum_real_real_test, spectrum_real_imag_test);
+        phase_correction_worker(ndata_frq_indirect, ndata_frq, possible_indirect_p0_p1_list[i].first /** P0 */, possible_indirect_p0_p1_list[i].second /** P1*/, false /**along indirect*/, spectrum_real_imag.data(), spectrum_imag_imag.data(), spectrum_imag_real_test, spectrum_imag_imag_test);
         /**
-         * now varing P0 from [-180 to 180), step size 10.
+         * now varing P0 from [-180 to 180), step size 10 if b_user_phase_correction_direct is false
          */
-        for (int j = -18; j < 18; j++)
+        begin = -18;
+        end = 18;
+        if(b_user_phase_correction)
+        {
+            begin = 0;
+            end = 1;
+        }
+        for (int j = begin; j < end; j++)
         {
             /**
              * direct dimension phase correction, save new spectrum to spectrum_real_real_test2, spectrum_imag_real_test2
              */
             float p0 = j * 10.0;
             // double t1=get_wall_time();
-            phase_correction_worker(ydim, xdim, p0, 0.0 /**p1*/, true /**along direct dim*/, spectrum_real_real_test, spectrum_imag_real_test, spectrum_real_real_test2, spectrum_imag_real_test2);
+            phase_correction_worker(ndata_frq_indirect, ndata_frq, p0, 0.0 /**p1*/, true /**along direct dim*/, spectrum_real_real_test, spectrum_imag_real_test, spectrum_real_real_test2, spectrum_imag_real_test2);
             // double t2=get_wall_time();
             // std::cout<<"Spend "<<t2-t1<<" seconds to run phase correction along direct dimension"<<std::endl;
             /**
@@ -813,9 +859,9 @@ bool spectrum_phasing::auto_phase_correction_v2()
              */
             for (int k = 0; k < px_sort_unique.size(); k++)
             {
-                for (int m = 0; m < ydim; m++)
+                for (int m = 0; m < ndata_frq_indirect; m++)
                 {
-                    spectrum_real_real_test2_transposed[m + k * ydim] = spectrum_real_real_test2[px_sort_unique[k] + m * xdim];
+                    spectrum_real_real_test2_transposed[m + k * ndata_frq_indirect] = spectrum_real_real_test2[px_sort_unique[k] + m * ndata_frq];
                 }
             }
 
@@ -825,14 +871,14 @@ bool spectrum_phasing::auto_phase_correction_v2()
              */
             for (int k = 0; k < nrow; k++)
             {
-                entropy += phase_2d_helper::calculate_entropy_of_spe(spectrum_real_real_test2 + py_sort_unique[k] * xdim, xdim, xdim_exclude_half);
+                entropy += phase_2d_helper::calculate_entropy_of_spe(spectrum_real_real_test2 + py_sort_unique[k] * ndata_frq, ndata_frq, xdim_exclude_half);
             }
             /**
              * now calcualte entropy using spectrum_real_real_test2_transposed, for all columns at px_sort_unique
              */
             for (int k = 0; k < ncol; k++)
             {
-                entropy += phase_2d_helper::calculate_entropy_of_spe(spectrum_real_real_test2_transposed + k * ydim, ydim);
+                entropy += phase_2d_helper::calculate_entropy_of_spe(spectrum_real_real_test2_transposed + k * ndata_frq_indirect, ndata_frq_indirect);
             }
 
             std::cout << "P0: " << p0 << " entropy: " << entropy << " at indirec P0,P1 pair: " << possible_indirect_p0_p1_list[i].first << " " << possible_indirect_p0_p1_list[i].second << std::endl;
@@ -858,13 +904,13 @@ bool spectrum_phasing::auto_phase_correction_v2()
         }
     }
     /**
-     * Now we know the best indirect dimension P0,P1 pair is possible_indirect_p0_p1_list[min_entropy_index/36]
-     * and the best direct dimension P0 is p0s[min_entropy_index%36]
+     * Now we know the best indirect dimension P0,P1 pair is possible_indirect_p0_p1_list[min_entropy_index/(end-begin)]
+     * and the best direct dimension P0 is p0s[min_entropy_index%(end-begin)]
      * Note that int division is used here
      * We then run direct dimension phase correction at fine interval and with P1 varied
      */
-    int best_indirect_p0_p1_index = min_entropy_index / 36;
-    int best_direct_p0_index = min_entropy_index % 36;
+    int best_indirect_p0_p1_index = min_entropy_index / (end-begin);
+    int best_direct_p0_index = min_entropy_index % (end-begin);
 
     indirect_p0 = possible_indirect_p0_p1_list[best_indirect_p0_p1_index].first;
     indirect_p1 = possible_indirect_p0_p1_list[best_indirect_p0_p1_index].second;
@@ -877,8 +923,8 @@ bool spectrum_phasing::auto_phase_correction_v2()
     /**
      * Update final phase correction values
      */
-    final_p0_indirect = indirect_p0;
-    final_p1_indirect = indirect_p1;
+    final_p0_indirect += indirect_p0;
+    final_p1_indirect += indirect_p1;
 
     /**
      * Release memory
@@ -895,170 +941,173 @@ bool spectrum_phasing::auto_phase_correction_v2()
      * Do phase correction along indirect dimension using best indirect dimension P0,P1 pair
      * Notice we updated member varibles spectrum_real_real, spectrum_real_imag, spectrum_imag_real, spectrum_imag_imag
      */
-    phase_correction_worker(ydim, xdim, indirect_p0 /** P0 */, indirect_p1 /** P1*/, false, spectrum_real_real, spectrum_real_imag, nullptr, nullptr);
-    phase_correction_worker(ydim, xdim, indirect_p0 /** P0 */, indirect_p1 /** P1*/, false, spectrum_imag_real, spectrum_imag_imag, nullptr, nullptr);
+    phase_correction_worker(ndata_frq_indirect, ndata_frq, indirect_p0 /** P0 */, indirect_p1 /** P1*/, false, spectrum_real_real.data(), spectrum_imag_real.data(), nullptr, nullptr);
+    phase_correction_worker(ndata_frq_indirect, ndata_frq, indirect_p0 /** P0 */, indirect_p1 /** P1*/, false, spectrum_real_imag.data(), spectrum_imag_imag.data(), nullptr, nullptr);
 
     /**
-     * Now we need run phase correction along direct dimension.
+     * Now we need run phase correction along direct dimension if b_user_phase_correction is false
      * We do this on selected rows only
      */
-    std::vector<float> spectrum_real_real_selected(nrow * xdim), spectrum_image_real_selected(nrow * xdim);
-    for (int i = 0; i < nrow; i++)
+    if(b_user_phase_correction==false)
     {
-        for (int j = 0; j < xdim; j++)
+        std::vector<float> spectrum_real_real_selected(nrow * ndata_frq), spectrum_real_image_selected(nrow * ndata_frq);
+        for (int i = 0; i < nrow; i++)
         {
-            spectrum_real_real_selected[i * xdim + j] = spectrum_real_real[py_sort_unique[i] * xdim + j];
-            spectrum_image_real_selected[i * xdim + j] = spectrum_imag_real[py_sort_unique[i] * xdim + j];
+            for (int j = 0; j < ndata_frq; j++)
+            {
+                spectrum_real_real_selected[i * ndata_frq + j] = spectrum_real_real[py_sort_unique[i] * ndata_frq + j];
+                spectrum_real_image_selected[i * ndata_frq + j] = spectrum_real_imag[py_sort_unique[i] * ndata_frq + j];
+            }
         }
-    }
 
-    /**
-     * Rough tune of P0, from -180 to 180, step size 5
-     */
+        /**
+         * Rough tune of P0, from -180 to 180, step size 5
+         */
 
-    std::vector<float> p1s;
+        std::vector<float> p1s;
 
-    p0s.clear();
-    entropies.clear();
+        p0s.clear();
+        entropies.clear();
 
-    entropy_based_p0_correction(nrow, xdim, 20 /** nstep*/, 2.0 /** step_size*/, p0_direct /** P0 center*/,
-                                spectrum_real_real_selected.data(), spectrum_image_real_selected.data(),
-                                p0s, entropies);
-    p0_direct = p0s[0];
-    min_entropy = entropies[0];
-    for (int i = 1; i < p0s.size(); i++)
-    {
-        if (entropies[i] < min_entropy)
+        entropy_based_p0_correction(nrow, ndata_frq, 20 /** nstep*/, 2.0 /** step_size*/, p0_direct /** P0 center*/,
+                                    spectrum_real_real_selected.data(), spectrum_real_image_selected.data(),
+                                    p0s, entropies);
+        p0_direct = p0s[0];
+        min_entropy = entropies[0];
+        for (int i = 1; i < p0s.size(); i++)
         {
-            p0_direct = p0s[i];
-            min_entropy = entropies[i];
+            if (entropies[i] < min_entropy)
+            {
+                p0_direct = p0s[i];
+                min_entropy = entropies[i];
+            }
         }
-    }
-    std::cout << "Step 1, P0 direct: " << p0_direct << std::endl;
+        std::cout << "Step 1, P0 direct: " << p0_direct << std::endl;
 
-    /**
-     * At this time, we finished indirect dimension phase correction
-     * and we have a roughly tuned direct dimension P0_direct
-     * Rough tune of P0: from -50 to 50 at 5 degree step size
-     * and P1: from -50 to 50 at 5 degree step size
-     */
-    float p1_direct = 0.0f;
-    p0s.clear();
-    p1s.clear();
-    entropies.clear();
+        /**
+         * At this time, we finished indirect dimension phase correction
+         * and we have a roughly tuned direct dimension P0_direct
+         * Rough tune of P0: from -50 to 50 at 5 degree step size
+         * and P1: from -50 to 50 at 5 degree step size
+         */
+        float p1_direct = 0.0f;
+        p0s.clear();
+        p1s.clear();
+        entropies.clear();
 
-    entropy_based_p0_p1_correction(nrow, xdim, 10 /** nstep*/, 2.0 /** step_size*/, p0_direct /** P0 center*/,
-                                   20 /** nstep*/, 5.0 /** step_size*/, p1_direct /** P1 center*/,
-                                   spectrum_real_real_selected.data(), spectrum_image_real_selected.data(),
-                                   p0s, p1s, entropies);
-    p0_direct = p0s[0];
-    p1_direct = p1s[0];
-    min_entropy = entropies[0];
-    for (int i = 1; i < p0s.size(); i++)
-    {
-        if (entropies[i] < min_entropy)
+        entropy_based_p0_p1_correction(nrow, ndata_frq, 10 /** nstep*/, 2.0 /** step_size*/, p0_direct /** P0 center*/,
+                                    20 /** nstep*/, 5.0 /** step_size*/, p1_direct /** P1 center*/,
+                                    spectrum_real_real_selected.data(), spectrum_real_image_selected.data(),
+                                    p0s, p1s, entropies);
+        p0_direct = p0s[0];
+        p1_direct = p1s[0];
+        min_entropy = entropies[0];
+        for (int i = 1; i < p0s.size(); i++)
         {
-            p0_direct = p0s[i];
-            p1_direct = p1s[i];
-            min_entropy = entropies[i];
+            if (entropies[i] < min_entropy)
+            {
+                p0_direct = p0s[i];
+                p1_direct = p1s[i];
+                min_entropy = entropies[i];
+            }
         }
-    }
-    /**
-     * Make sure p0_direct is in the range of -180 to 180
-     */
-    while (p0_direct >= 180.0)
-    {
-        p0_direct -= 360.0;
-    }
-    while (p0_direct < -180.0)
-    {
-        p0_direct += 360.0;
-    }
-    std::cout << "Step 2, P0 direct: " << p0_direct << " P1 direct: " << p1_direct << std::endl;
-
-    /**
-     * Fine tune P0, around the rough tuned P0, -10 to 10, step size 0.5
-     * and P1, around the rough tuned P1, -10 to 10, step size 0.5
-     */
-    p0s.clear();
-    p1s.clear();
-    entropies.clear();
-    entropy_based_p0_p1_correction(nrow, xdim, 10 /** nstep*/, 1.0 /** step_size*/, p0_direct /** P0 center*/,
-                                   20 /** nstep*/, 2.0 /** step_size*/, p1_direct /** P1 center*/,
-                                   spectrum_real_real_selected.data(), spectrum_image_real_selected.data(),
-                                   p0s, p1s, entropies);
-    p0_direct = p0s[0];
-    p1_direct = p1s[0];
-    min_entropy = entropies[0];
-    for (int i = 1; i < p0s.size(); i++)
-    {
-        if (entropies[i] < min_entropy)
+        /**
+         * Make sure p0_direct is in the range of -180 to 180
+         */
+        while (p0_direct >= 180.0)
         {
-            p0_direct = p0s[i];
-            p1_direct = p1s[i];
-            min_entropy = entropies[i];
+            p0_direct -= 360.0;
         }
-    }
-    /**
-     * Make sure p0_direct is in the range of -180 to 180
-     */
-    while (p0_direct >= 180.0)
-    {
-        p0_direct -= 360.0;
-    }
-    while (p0_direct < -180.0)
-    {
-        p0_direct += 360.0;
-    }
-    std::cout << "Step 3, P0 direct: " << p0_direct << " P1 direct: " << p1_direct << std::endl;
-
-    /**
-     * Fine tune P0, around the rough tuned P0, -10 to 10, step size 0.5
-     * and P1, around the rough tuned P1, -10 to 10, step size 0.5
-     */
-    p0s.clear();
-    p1s.clear();
-    entropies.clear();
-    entropy_based_p0_p1_correction(nrow, xdim, 10 /** nstep*/, 0.5 /** step_size*/, p0_direct /** P0 center*/,
-                                   20 /** nstep*/, 1.0 /** step_size*/, p1_direct /** P1 center*/,
-                                   spectrum_real_real_selected.data(), spectrum_image_real_selected.data(),
-                                   p0s, p1s, entropies);
-    p0_direct = p0s[0];
-    p1_direct = p1s[0];
-    min_entropy = entropies[0];
-    for (int i = 1; i < p0s.size(); i++)
-    {
-        if (entropies[i] < min_entropy)
+        while (p0_direct < -180.0)
         {
-            p0_direct = p0s[i];
-            p1_direct = p1s[i];
-            min_entropy = entropies[i];
+            p0_direct += 360.0;
         }
-    }
-    /**
-     * Make sure p0_direct is in the range of -180 to 180
-     */
-    while (p0_direct >= 180.0)
-    {
-        p0_direct -= 360.0;
-    }
-    while (p0_direct < -180.0)
-    {
-        p0_direct += 360.0;
-    }
-    std::cout << "Step 4, P0 direct: " << p0_direct << " P1 direct: " << p1_direct << std::endl;
+        std::cout << "Step 2, P0 direct: " << p0_direct << " P1 direct: " << p1_direct << std::endl;
 
-    /**
-     * Apply phase correction along direct dimension.
-     */
-    phase_correction_worker(ydim, xdim, p0_direct /** P0 */, p1_direct /** P1*/, true, spectrum_real_real, spectrum_imag_real, nullptr, nullptr);
-    phase_correction_worker(ydim, xdim, p0_direct /** P0 */, p1_direct /** P1*/, true, spectrum_real_imag, spectrum_imag_imag, nullptr, nullptr);
+        /**
+         * Fine tune P0, around the rough tuned P0, -10 to 10, step size 0.5
+         * and P1, around the rough tuned P1, -10 to 10, step size 0.5
+         */
+        p0s.clear();
+        p1s.clear();
+        entropies.clear();
+        entropy_based_p0_p1_correction(nrow, ndata_frq, 10 /** nstep*/, 1.0 /** step_size*/, p0_direct /** P0 center*/,
+                                    20 /** nstep*/, 2.0 /** step_size*/, p1_direct /** P1 center*/,
+                                    spectrum_real_real_selected.data(), spectrum_real_image_selected.data(),
+                                    p0s, p1s, entropies);
+        p0_direct = p0s[0];
+        p1_direct = p1s[0];
+        min_entropy = entropies[0];
+        for (int i = 1; i < p0s.size(); i++)
+        {
+            if (entropies[i] < min_entropy)
+            {
+                p0_direct = p0s[i];
+                p1_direct = p1s[i];
+                min_entropy = entropies[i];
+            }
+        }
+        /**
+         * Make sure p0_direct is in the range of -180 to 180
+         */
+        while (p0_direct >= 180.0)
+        {
+            p0_direct -= 360.0;
+        }
+        while (p0_direct < -180.0)
+        {
+            p0_direct += 360.0;
+        }
+        std::cout << "Step 3, P0 direct: " << p0_direct << " P1 direct: " << p1_direct << std::endl;
 
-    /**
-     * Update final phase correction values
-     */
-    final_p0_direct = p0_direct;
-    final_p1_direct = p1_direct;
+        /**
+         * Fine tune P0, around the rough tuned P0, -10 to 10, step size 0.5
+         * and P1, around the rough tuned P1, -10 to 10, step size 0.5
+         */
+        p0s.clear();
+        p1s.clear();
+        entropies.clear();
+        entropy_based_p0_p1_correction(nrow, ndata_frq, 10 /** nstep*/, 0.5 /** step_size*/, p0_direct /** P0 center*/,
+                                    20 /** nstep*/, 1.0 /** step_size*/, p1_direct /** P1 center*/,
+                                    spectrum_real_real_selected.data(), spectrum_real_image_selected.data(),
+                                    p0s, p1s, entropies);
+        p0_direct = p0s[0];
+        p1_direct = p1s[0];
+        min_entropy = entropies[0];
+        for (int i = 1; i < p0s.size(); i++)
+        {
+            if (entropies[i] < min_entropy)
+            {
+                p0_direct = p0s[i];
+                p1_direct = p1s[i];
+                min_entropy = entropies[i];
+            }
+        }
+        /**
+         * Make sure p0_direct is in the range of -180 to 180
+         */
+        while (p0_direct >= 180.0)
+        {
+            p0_direct -= 360.0;
+        }
+        while (p0_direct < -180.0)
+        {
+            p0_direct += 360.0;
+        }
+        std::cout << "Step 4, P0 direct: " << p0_direct << " P1 direct: " << p1_direct << std::endl;
+
+        /**
+         * Apply phase correction along direct dimension.
+         */
+        phase_correction_worker(ndata_frq_indirect, ndata_frq, p0_direct /** P0 */, p1_direct /** P1*/, true, spectrum_real_real.data(), spectrum_real_imag.data(), nullptr, nullptr);
+        phase_correction_worker(ndata_frq_indirect, ndata_frq, p0_direct /** P0 */, p1_direct /** P1*/, true, spectrum_imag_real.data(), spectrum_imag_imag.data(), nullptr, nullptr);
+
+        /**
+         * Update final phase correction values
+         */
+        final_p0_direct = p0_direct;
+        final_p1_direct = p1_direct;
+    }
 
     return true;
 }

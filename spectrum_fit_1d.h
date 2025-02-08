@@ -4,7 +4,7 @@ extern "C"
   void re_im_w_of_z(double x, double y, double *r, double *i); // re_im_w_of_z
 };
 
-#include "spectrum_io_1d.h"
+#include "fid_1d.h"
 
 #ifndef LDW_PARA
 #define LDW_PARA
@@ -35,109 +35,6 @@ using ceres::DynamicNumericDiffCostFunction;
 using ceres::Problem;
 using ceres::Solve;
 using ceres::Solver;
-
-/**
- * @brief for 1D voigt fitting, analytical derivative
- * fit multiple peaks simultaneously
- */
-class mycostfunction_nvoigt1d : public ceres::CostFunction
-{
-
-private:
-  int np;          // number of peaks
-  int n_datapoint; // size of x(y,z)
-  double *z;       // x,y -> coor, z-> spectra data
-
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
-
-public:
-  ~mycostfunction_nvoigt1d();
-  mycostfunction_nvoigt1d(int, int, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-};
-
-/**
- * @brief for 1D voigt fitting, analytical derivative
- * fit one peak
- */
-class mycostfunction_voigt1d : public ceres::CostFunction
-{
-
-private:
-  int n_datapoint; // size of x(y,z)
-  double *z;       // x,y -> coor, z-> spectra data
-
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
-
-public:
-  ~mycostfunction_voigt1d();
-  mycostfunction_voigt1d(int, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-};
-
-/**
- * @brief for pseudo 2D voigt fitting, analytical derivative
- * Peak amplitude is defined as A = A0*exp(-t*t*D) where A0 and D are fitting parameters
- * while t=[0,1,2,3,...,n-1] is the time delay
- */
-class mycostfunction_voigt1d_doesy : public ceres::CostFunction
-{
-
-private:
-  double z_gradient_squared;           // time delay. t=0,1,2,3,...,n-1
-  int n_datapoint; // size of z(x)
-  double *z;       // x -> coor, z-> spectra data
-
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
-  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
-
-public:
-  ~mycostfunction_voigt1d_doesy();
-  mycostfunction_voigt1d_doesy(double, int, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-};
-
-// for 1D lorentz fitting, analytical derivative
-class mycostfunction_lorentz1d : public ceres::CostFunction
-{
-
-private:
-  int n_datapoint; // size of x(y,z)
-  double *z;       // x -> coor, z-> spectra data
-
-public:
-  ~mycostfunction_lorentz1d();
-  mycostfunction_lorentz1d(int, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-};
-
-// for 1D Gaussian fitting, analytical derivative
-class mycostfunction_gaussian1d : public ceres::CostFunction
-{
-
-private:
-  int n_datapoint; // size of x(y,z)
-  double *z;       // x -> coor, z-> spectra data
-
-public:
-  ~mycostfunction_gaussian1d();
-  mycostfunction_gaussian1d(int, double *);
-  bool Evaluate(double const *const *, double *, double **) const;
-  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
-  inline void set_n_residuals(int n) { set_num_residuals(n); };
-};
-
-
 
 class gaussian_fit_1d: public shared_data_1d
 {
@@ -233,7 +130,7 @@ public:
   void set_up(fit_type, int, double, double, double,bool,double);
 };
 
-class spectrum_fit_1d : public spectrum_io_1d
+class spectrum_fit_1d : public fid_1d
 {
 private:
 

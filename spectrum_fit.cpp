@@ -1831,12 +1831,52 @@ bool gaussian_fit::run(int flag_first)
     return b;
 };
 
+/**
+ * Use fitted peaks: a,x,y,sigmax,sigmay,gammax,gammay to generate theoretical spectra, same size as surface
+ */
+bool gaussian_fit::generate_theoretical_spectra(std::vector<std::vector<double>> &theorical_surface)
+{
+    int npeak=a.size();
+    int nspectra=surface.size();
+
+    for(int i=0;i<nspectra;i++)
+    {
+        for(int j=0;j<npeak;j++)
+        {
+            int i0,i1,j0,j1;
+            std::vector<double> kernel;
+            if(peak_shape==gaussian_type)
+            {
+                gaussain_convolution_within_region(j,a[j][i],x[j],y[j],sigmax[j],sigmay[j],i0,i1,j0,j1,&kernel,3.0);
+            }
+            else if(peak_shape==voigt_type)
+            {
+                voigt_convolution_within_region(j,a[j][i],x[j],y[j],sigmax[j],sigmay[j],gammax[j],gammay[j],i0,i1,j0,j1,&kernel,3.0);
+            }
+            else if(peak_shape==voigt_lorentz_type)
+            {
+                voigt_lorentz_convolution_within_region(j,a[j][i],x[j],y[j],sigmax[j],sigmay[j],gammax[j],gammay[j],i0,i1,j0,j1,&kernel,3.0,3.0);
+            }
+            for(int m=i0;m<i1;m++)
+            {
+                for(int n=j0;n<j1;n++)
+                {
+                    theorical_surface[i][m*ydim+n]+=kernel[(m-i0)*(j1-j0)+n-j0];
+                }
+            }
+        }
+    }
+
+
+    return true;
+}
+
 
 bool gaussian_fit::run_with_error_estimation(int zf1,int zf2,int n_error_round)
 {
     std::vector<double> good_x,good_y,good_sigmax,good_sigmay,good_gammax,good_gammay,good_error;
     std::vector<std::vector<double>> good_a,good_num_sum;
-    std::vector<std::vector<double>> good_surface;
+    std::vector<std::vector<double>> good_surface(surface.size(),std::vector<double>(xdim*ydim,0.0));
     int good_nround;
     
 
@@ -1855,8 +1895,15 @@ bool gaussian_fit::run_with_error_estimation(int zf1,int zf2,int n_error_round)
     good_gammay=gammay;
     good_num_sum=num_sum;
     good_error=err;
-    good_surface=surface;
+    
     good_nround=nround;
+
+    /**
+     * Use fitted peaks: a,x,y,sigmax,sigmay,gammax,gammay to generate theoretical spectra, same size as surface
+     * Previous: good_surface=surface. Seems give me very similar result.
+    */
+    // good_surface=surface;
+    generate_theoretical_spectra(good_surface);
 
     //add random noise
     for(int m=0;m<n_error_round;m++)
@@ -1877,7 +1924,7 @@ bool gaussian_fit::run_with_error_estimation(int zf1,int zf2,int n_error_round)
             {
                 for(int j=0;j<ydim;j++)
                 {
-                    surface[n][i*ydim+j]=good_surface[n][i*ydim+j]+noise_spectrum[i][j]*noise_level;
+                    surface[n][i*ydim+j]=good_surface[n][i*ydim+j]+noise_spectrum[i][j]*noise_level*error_scale;
                 }
             }
         }
@@ -2271,6 +2318,14 @@ int gaussian_fit::test_excess_peaks(int i_peak,int j_peak)
         heighti=fabs(a[i_peak][0]);
         heightj=fabs(a[j_peak][0]);
     }
+
+    /**
+     * Make sure fwhhxi,fwhhxi, fwhhyi,fwhhyj are at least 3.0
+    */
+    fwhhxi=std::max(fwhhxi,3.0);
+    fwhhxj=std::max(fwhhxj,3.0);
+    fwhhyi=std::max(fwhhyi,3.0);
+    fwhhyj=std::max(fwhhyj,3.0);
        
     int i0=std::min(int(round(x[i_peak]))-fwhhxi,int(round(x[j_peak]))-fwhhxj);   
     int i1=std::max(int(round(x[i_peak]))+fwhhxi,int(round(x[j_peak]))+fwhhxj);  
@@ -2741,7 +2796,7 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
 
             if (peak_shape == gaussian_type)
             {
-                if (fabs(sigmax.at(i_peak)) < 0.2 || fabs(sigmay.at(i_peak)) < 0.2 || fabs(sigmax.at(i_peak)) > 60.0 || fabs(sigmay.at(i_peak)) >60.0 )
+                if (fabs(sigmax.at(i_peak)) < 0.5 || fabs(sigmay.at(i_peak)) < 0.5 || fabs(sigmax.at(i_peak)) > 60.0 || fabs(sigmay.at(i_peak)) >60.0 )
                 {
                     if(n_verbose>0){
                         std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because x=" << current_x +i0 << " y=" << current_y +j0<< " a=" << a[i_peak][0] << " simgax=" << sigmax.at(i_peak) << " sigmay=" << sigmay.at(i_peak) << " totalz=" << total_z << std::endl;
@@ -2752,7 +2807,7 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
             }
             else  if (peak_shape == voigt_type)
             {
-                if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.2 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) < 0.2 || fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) >100.0 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) >100.0)
+                if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.5 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) < 0.5 || fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) >100.0 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) >100.0)
                 {
                     if(n_verbose>0){
                         std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because " << current_x + i0 << " " << current_y + j0 << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << gammax.at(i_peak) << " " << sigmay.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
@@ -3590,29 +3645,31 @@ spectrum_fit::~spectrum_fit()
 bool spectrum_fit::init_all_spectra(std::vector<std::string> fnames_)
 {
     fnames=fnames_;
-    int i = fnames.size() - 1;
-    if (spectrum_io::init(fnames[i]),1)
+   
+    for (int i = 1; i < fnames.size(); i++)
     {
-        spects.push_back(spect);
-    }
-
-    for (int i = fnames.size() - 2; i >= 0; i--)
-    {
-        if(spectrum_io::init(fnames[i],0))
+        if(fid_2d::init(fnames[i],0))
         {
-            spects.push_back(spect);
+            spects.push_back(spectrum_real_real);
         }
-    }
-    std::reverse(spects.begin(),spects.end());
-    nspect=spects.size();
-    if(nspect>0)
+    }   
+
+    fid_2d::init(fnames[0],0);
+    spects.insert(spects.begin(), spectrum_real_real);
+    
+    /**
+     * Reset spect to the first spectrum
+    */
+    if(spects.size()>0)
     {
+        nspect=spects.size();
         return true;
     }
     else
     {
         return false;
     }
+
 };
 
 
@@ -3677,8 +3734,8 @@ bool spectrum_fit::peak_partition()
     std::cout<<std::endl;
     std::cout<<std::endl;
 
-    peak_map.resize(xdim*ydim,-1);
-    peak_map2.resize(xdim*ydim,0);
+    peak_map.resize(ndata_frq*ndata_frq_indirect,-1);
+    peak_map2.resize(ndata_frq*ndata_frq_indirect,0);
     // pos_x_correction=new double[p1.size()];
     // pos_y_correction=new double[p1.size()];
     
@@ -3686,11 +3743,11 @@ bool spectrum_fit::peak_partition()
     {
         int xx=(int)(p1.at(i)+0.5);
         int yy=(int)(p2.at(i)+0.5);
-        if(xx>=xdim || xx<0 || yy<0 || yy>=ydim)
+        if(xx>=ndata_frq || xx<0 || yy<0 || yy>=ndata_frq_indirect)
         {
             std::cout<<"Sth is wrong with the coordinates. in peak_parttition."<<std::endl;
         }
-        peak_map[xx*ydim+yy]=i;
+        peak_map[xx*ndata_frq_indirect+yy]=i;
         // pos_x_correction[i]=p1.at(i)-xx;
         // pos_y_correction[i]=p2.at(i)-yy;
     }
@@ -3704,39 +3761,39 @@ bool spectrum_fit::peak_partition()
         int yto=int(p2.at(i)+wy*d_range+0.5)+1;
 
         if(xfrom<0) xfrom=0;
-        if(xto>xdim) xto=xdim;
+        if(xto>ndata_frq) xto=ndata_frq;
         if(yfrom<0) yfrom=0;
-        if(yto>ydim) yto=ydim;
+        if(yto>ndata_frq_indirect) yto=ndata_frq_indirect;
         for(int m=xfrom;m<xto;m++)
         {
             for(int n=yfrom;n<yto;n++)
             {
-                if(m>=xdim || m<0 || n<0 || n>=ydim)
+                if(m>=ndata_frq || m<0 || n<0 || n>=ndata_frq_indirect)
                 {
                     std::cout<<"Sth is wrong with the coordinates. in peak_parttition."<<std::endl;
                 }
-                peak_map2[m*ydim+n]=1;
+                peak_map2[m*ndata_frq_indirect+n]=1;
             }
         }
     }
 
     double lowest_level=noise_level*user_scale2;
     std::vector< std::vector<int> > used;
-    b.resize(ydim);
-    s.resize(ydim);
-    used.resize(ydim);
+    b.resize(ndata_frq_indirect);
+    s.resize(ndata_frq_indirect);
+    used.resize(ndata_frq_indirect);
 
-    for(int j=0;j<ydim;j++)
+    for(int j=0;j<ndata_frq_indirect;j++)
     {
-        if(spect[j*xdim+0]>=lowest_level && peak_map2[j]==1) b[j].push_back(0);
-        for(int i=1;i<xdim;i++)
+        if(spect[j*ndata_frq+0]>=lowest_level && peak_map2[j]==1) b[j].push_back(0);
+        for(int i=1;i<ndata_frq;i++)
         {
-            if((fabs(spect[j*xdim+i-1])< lowest_level || peak_map2[j+(i-1)*ydim]==0) && (fabs(spect[j*xdim+i])>=lowest_level && peak_map2[j+i*ydim]==1)) b[j].push_back(i);
-            if((fabs(spect[j*xdim+i-1])>=lowest_level && peak_map2[j+(i-1)*ydim]==1) && (fabs(spect[j*xdim+i]) <lowest_level || peak_map2[j+i*ydim]==0)) s[j].push_back(i);
+            if((fabs(spect[j*ndata_frq+i-1])< lowest_level || peak_map2[j+(i-1)*ndata_frq_indirect]==0) && (fabs(spect[j*ndata_frq+i])>=lowest_level && peak_map2[j+i*ndata_frq_indirect]==1)) b[j].push_back(i);
+            if((fabs(spect[j*ndata_frq+i-1])>=lowest_level && peak_map2[j+(i-1)*ndata_frq_indirect]==1) && (fabs(spect[j*ndata_frq+i]) <lowest_level || peak_map2[j+i*ndata_frq_indirect]==0)) s[j].push_back(i);
             // if(spect[j*xdim+i-1]<lowest_level  && spect[j*xdim+i]>=lowest_level ) b[j].push_back(i);
             // if(spect[j*xdim+i-1]>=lowest_level && spect[j*xdim+i]<lowest_level ) s[j].push_back(i);
         }
-        if(s[j].size()<b[j].size()) s[j].push_back(xdim);
+        if(s[j].size()<b[j].size()) s[j].push_back(ndata_frq);
         for(int i=0;i<s[j].size();i++) used[j].push_back(0);
     }
 
@@ -3756,7 +3813,7 @@ bool spectrum_fit::peak_partition()
     std::deque< std::pair<int,int> > work;
     int position;
 
-    for(int j=0;j<ydim;j++)
+    for(int j=0;j<ndata_frq_indirect;j++)
     {
         for(int i=0;i<used[j].size();i++)
         {
@@ -3770,7 +3827,7 @@ bool spectrum_fit::peak_partition()
                 {
                     std::pair<int,int> c=work[position];
                     position++;
-                    for(int jj=std::max(0,c.first-1);jj<std::min(ydim,c.first+2);jj++)
+                    for(int jj=std::max(0,c.first-1);jj<std::min(ndata_frq_indirect,c.first+2);jj++)
                     {
                         if(jj==c.first) continue;
                         for(int ii=0;ii<used[jj].size();ii++)
@@ -3857,13 +3914,13 @@ bool spectrum_fit::prepare_fit()
                 {
                     std::cout<<"Spect_part MEMOR ERROR !!!!!!!!!!!!!!!!!!!!!!!!"<<std::endl;
                 }
-                if(kk+j*xdim<0 || kk+j*xdim>=xdim*ydim) std::cout<<"Spect MEMOR ERROR !!!!!!!!!!!!!!!!!!!!!!!!"<<std::endl;
+                if(kk+j*ndata_frq<0 || kk+j*ndata_frq>=ndata_frq*ndata_frq_indirect) std::cout<<"Spect MEMOR ERROR !!!!!!!!!!!!!!!!!!!!!!!!"<<std::endl;
               
                 for(int k=0;k<nspect;k++)
                 {
-                    spect_parts[k][(kk-min1)*(max2-min2)+j-min2]=spects[k][kk+j*xdim];
+                    spect_parts[k][(kk-min1)*(max2-min2)+j-min2]=spects[k][kk+j*ndata_frq];
                 }
-                int peak_ndx=peak_map[kk*ydim+j];
+                int peak_ndx=peak_map[kk*ndata_frq_indirect+j];
                 //std::cout<<"kk="<<kk<<" j="<<j<<" peak_ndx="<<peak_ndx<<std::endl;
                 if(peak_ndx>=0)
                 {
@@ -4212,15 +4269,15 @@ bool spectrum_fit::generate_recon_and_diff_spectrum(std::string folder_name)
 
         if (peak_shape==voigt_type)
         {
-            ldw_math_spectrum_fit::generate_spectrum_voigt(intens, sigmax, sigmay, gammax, gammay, p1, p2, spe, xdim, ydim);
+            ldw_math_spectrum_fit::generate_spectrum_voigt(intens, sigmax, sigmay, gammax, gammay, p1, p2, spe, ndata_frq, ndata_frq_indirect);
         }
         else if (peak_shape==gaussian_type)
         {
-            ldw_math_spectrum_fit::generate_spectrum_gaussian(intens, sigmax, sigmay, p1, p2, spe, xdim, ydim);
+            ldw_math_spectrum_fit::generate_spectrum_gaussian(intens, sigmax, sigmay, p1, p2, spe, ndata_frq, ndata_frq_indirect);
         }
         else if(peak_shape==voigt_lorentz_type)
         {
-            ldw_math_spectrum_fit::generate_spectrum_voigt_lorentz(intens, sigmax, gammax, gammay, p1, p2, spe, xdim, ydim);
+            ldw_math_spectrum_fit::generate_spectrum_voigt_lorentz(intens, sigmax, gammax, gammay, p1, p2, spe, ndata_frq, ndata_frq_indirect);
         }
         else
         {
@@ -4253,7 +4310,7 @@ bool spectrum_fit::generate_recon_and_diff_spectrum(std::string folder_name)
             t.clear();
             for(int j=0;j<spe[i].size();j++)
             {
-                t.push_back(spects[file_ndx][i*xdim+j]-spe[i][j]);
+                t.push_back(spects[file_ndx][i*ndata_frq+j]-spe[i][j]);
             }
             spe_float.push_back(t);
         }
@@ -4405,8 +4462,8 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
                 else fp = fopen((file_names[m].substr(0,file_names[m].length()-4)+"_err_"+std::to_string(c)+".tab").c_str(), "w");
 
                 //folding information 
-                fprintf(fp,"DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n",xdim,begin1,stop1);
-                fprintf(fp,"DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n",ydim,begin2,stop2);
+                fprintf(fp,"DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n",ndata_frq,begin1,stop1);
+                fprintf(fp,"DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n",ndata_frq_indirect,begin2,stop2);
 
                 if (peak_shape == voigt_type || peak_shape == exact_type || peak_shape == voigt_lorentz_type)
 
@@ -4644,7 +4701,7 @@ bool spectrum_fit::peak_reading(std::string infname)
     //remove out of range peaks
     for(int i=p_intensity.size()-1;i>=0;i--)
     {
-        if(p1[i]<1 || p1[i]>xdim-2 || p2[i]<1 || p2[i]>ydim-2)
+        if(p1[i]<1 || p1[i]>ndata_frq-2 || p2[i]<1 || p2[i]>ndata_frq_indirect-2)
         {
             p1.erase(p1.begin()+i);
             p2.erase(p2.begin()+i);
@@ -4670,7 +4727,7 @@ bool spectrum_fit::peak_reading(std::string infname)
 
     for(int i=0;i<p_intensity.size();i++)
     {
-        int ntemp=int(round(p1[i]))+int(round(p2[i]))*xdim;
+        int ntemp=int(round(p1[i]))+int(round(p2[i]))*ndata_frq;
         if(p_intensity[i]/spects[0][ntemp]<0.5)
         {
             peak_cannot_move_flag[i]=1; //peak can't move because of low reliability    
@@ -4686,9 +4743,9 @@ bool spectrum_fit::peak_reading(std::string infname)
         {
             int n1=int(p1[i]+0.5)-1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
             int n2=int(p2[i]+0.5)-1;
-            if(n1<0) n1=0; if(n1>xdim-1) n1=xdim-1;
-            if(n2<0) n2=0; if(n2>ydim-1) n2=ydim-1; //water proof
-            temp.push_back(spects[n][n2*xdim+n1]); //n1 is direct dimension; n2 is indirect
+            if(n1<0) n1=0; if(n1>ndata_frq-1) n1=ndata_frq-1;
+            if(n2<0) n2=0; if(n2>ndata_frq_indirect-1) n2=ndata_frq_indirect-1; //water proof
+            temp.push_back(spects[n][n2*ndata_frq+n1]); //n1 is direct dimension; n2 is indirect
         }
         p_intensity_all_spectra.push_back(temp); 
     }
@@ -4812,13 +4869,13 @@ bool spectrum_fit::peak_reading_sparky(std::string fname)
 
         if (n1 < 0)
             n1 = 0;
-        if (n1 > xdim - 1)
-            n1 = xdim - 1;
+        if (n1 > ndata_frq - 1)
+            n1 = ndata_frq - 1;
         if (n2 < 0)
             n2 = 0;
-        if (n2 > ydim - 1)
-            n2 = ydim - 1;                      //water proof
-        p_intensity[i] = spect[n2 * xdim + n1]; //n1 is direct dimension; n2 is indirect
+        if (n2 > ndata_frq_indirect - 1)
+            n2 = ndata_frq_indirect - 1;                      //water proof
+        p_intensity[i] = spect[n2 * ndata_frq + n1]; //n1 is direct dimension; n2 is indirect
     }
 
     return true;
@@ -4958,9 +5015,9 @@ bool spectrum_fit::peak_reading_pipe(std::string fname)
         {
             int n1=int(p1[i]+0.5)-1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
             int n2=int(p2[i]+0.5)-1;
-            if(n1<0) n1=0; if(n1>xdim-1) n1=xdim-1;
-            if(n2<0) n2=0; if(n2>ydim-1) n2=ydim-1; //water proof
-            p_intensity[i]=spect[n2*xdim+n1]; //n1 is direct dimension; n2 is indirect
+            if(n1<0) n1=0; if(n1>ndata_frq-1) n1=ndata_frq-1;
+            if(n2<0) n2=0; if(n2>ndata_frq_indirect-1) n2=ndata_frq_indirect-1; //water proof
+            p_intensity[i]=spect[n2*ndata_frq+n1]; //n1 is direct dimension; n2 is indirect
         }
     }
 

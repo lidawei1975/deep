@@ -4,6 +4,7 @@
 
 #include <vector>
 #include <map>
+#include <iostream>
 
 enum FID_DATA_COMPLEXITY
 {
@@ -23,7 +24,9 @@ enum FID_DATA_TYPE
 enum FID_APODIZATION_TYPE
 {
     FID_APODIZATION_NONE = 0,
-    FID_APODIZATION_KAISER = 1    
+    FID_APODIZATION_SP = 1,
+    FID_APODIZATION_EM = 2,
+    FID_APODIZATION_GM = 3,
 };
 
 
@@ -31,12 +34,39 @@ namespace nmrPipe
 {
     bool nmrpipe_header_to_dictionary(float * nmrpipe_header_data,std::map<std::string,std::string> & dict_string,std::map<std::string, float> & dict_float);
     bool nmrpipe_dictionary_to_header(float * nmrpipe_header_data,const std::map<std::string,std::string> &dict_string,const std::map<std::string, float> & dict_float);
-    bool create_empty_nmrpipe_header(std::map<std::string,std::string> & dict_string,std::map<std::string, float> &dict_float);
+    bool create_default_nmrpipe_dictionary(std::map<std::string,std::string> & dict_string,std::map<std::string, float> &dict_float);
 };
 
 namespace fid_1d_helper
 {
     size_t split(const std::string &txt, std::vector<std::string> &strs, char ch);
+};
+
+struct spectrum_1d_peaks
+{
+    std::vector<double> a;          //peak intensity 
+    std::vector<double> x;          //peak coordinates
+    std::vector<double> ppm;        //peak coordinates in ppm
+    std::vector<double> sigmax;     //Gaussian peak shape parameter. IMPORTANT: in Gaussian fit, this is actually 2*sigma*sigma
+    std::vector<double> gammax;     //Lorentzian peak shape parameter
+    std::vector<double> volume;    //peak volume
+    std::vector<double> confidence; //confidence level of peak
+};
+
+struct shared_data_1d
+{
+  static int n_verbose; //0: minimal output, 1: normal output
+  static bool b_dosy;  // true: doesy fitting, false: normal fitting
+    /**
+   * Z_gradient is used in pseudo 2D DOSY fitting only
+  */
+  static std::vector<double> z_gradients;
+};
+
+
+namespace ldw_math_spectrum_1d
+{
+    bool SplitFilename(const std::string &str, std::string &path_name, std::string &file_name, std::string &file_name_ext);
 };
 
 class apodization{
@@ -50,8 +80,10 @@ private:
     float p5;
     float p6;
 
+    double spectral_width; //spectral width in Hz
 
-    std::vector<float> sps;
+
+    std::vector<float> apodization_values;
 
 public:
     apodization();
@@ -59,8 +91,16 @@ public:
     apodization(FID_APODIZATION_TYPE apodization_type, double p1,double p2,double p3,double p4,double p5,double p6);
     ~apodization();
 
+    /**
+     * Requied for EM and GM, and non-zero elb in SP
+    */
+    inline bool set_sw(double sw){
+        spectral_width=sw;
+        return true;
+    }; 
+
     bool set_n(int); //set ndata
-    bool run_apodization(float *,int) const;
+    bool run_apodization(float *,int,bool b_complex=true) const;
 
     inline bool set_first_point(float v){
         /**
@@ -68,7 +108,7 @@ public:
          * return false if the window function is not defined yet
          * (this function should be called after set_n)
         */
-        if(sps.size()==0){
+        if(apodization_values.size()==0){
             std::cerr<<"Error: window function is not defined yet. Please call set_n first."<<std::endl;
             return true;
         }
@@ -76,9 +116,15 @@ public:
          * @brief set_first_point: set the first point of the window function
          * then return true
         */
-        sps[0]=v;
+        apodization_values[0]=v;
         return true;
-    }
+    };
+    /**
+     * return a read only copy of apodization_values
+    */
+    inline std::vector<float> get_apodization_values() const{
+        return apodization_values;
+    };
 
 };
 
@@ -111,7 +157,7 @@ public :
 };
 
 
-class fid_1d : public fid_base
+class fid_1d : public fid_base, public shared_data_1d
 {
 protected:
 
@@ -140,18 +186,23 @@ protected:
     double spectral_width; //spectral width
     double observed_frequency; //observed frequency
     double carrier_frequency; //carrier frequency
+    double origin;
     double receiver_gain; //receiver gain. pipe doesn't use this value
 
     apodization *apod;
 
     /**
-     * ndata_bruker: number of data points in the fid file, using Bruker convention. 
-     * ndata: number of data points in the fid file, using our convention.
+     * @ndata_bruker: number of data points in the fid file, using Bruker convention. 
+     * @ndata: number of data points in the fid file, using our convention.
+     * @ndata_original: number of data points in the fid file, using our convention, before padding zeros
+     * ndata(and ndata_bruker) is used to read the fid file
+     * while ndata_original is used to define the size of apo window function
      * For complex data, ndata_bruker=ndata*2
      * For real data, ndata_bruker=ndata
     */
     int ndata_bruker; 
     int ndata; 
+    int ndata_original;
     int nspectra; //number of spectra (in pseudo 2D NMR, nspectra>1, in 1D NMR, nspectra=1)
 
     double grpdly; //group delay for Bruker digitizer filter
@@ -169,6 +220,26 @@ protected:
     */
     bool create_nmrpipe_dictionary(bool b_frq,std::map<std::string, std::string> &nmrpipe_dict_string,std::map<std::string, float> &nmrpipe_dict_float) const;
 
+    double user_scale,user_scale2;
+    double noise_level;
+    int mod_selection;
+
+    std::vector<float> baseline;
+
+    std::vector<int> signa_boudaries;
+    std::vector<int> noise_boudaries; // peak partition,used by both picker and fitter
+
+    double begin1, step1, stop1; // ppm information
+    std::string input_spectrum_fname;
+
+    bool read_spectrum_ldw(std::string);
+    bool read_spectrum_txt(std::string);
+    bool read_spectrum_ft(std::string);
+    bool read_spectrum_json(std::string);
+    bool read_spectrum_csv(std::string);
+
+    bool write_spectrum_json(std::string); // save spectrum
+    bool write_spectrum_txt(std::string);  // write spectrum in txt format, header is copied from reading but spectrum might be changed
 
 public:
     fid_1d();
@@ -223,11 +294,34 @@ public:
     bool write_json(std::string file_name);
 
     /**
-     * get header and the frequency domain data, for spectrum_io_1d to use
+     * get header and the frequency domain data, for fid_1d to use
     */
     std::vector<float> get_spectrum_header(void) const;
     std::vector<float> get_spectrum_real(void) const;
     std::vector<float> get_spectrum_imag(void) const;
+
+        bool est_noise_level_mad(); //for phased, baseline corrected spectrum only
+
+    bool est_noise_level(); //general purpose noise estimation
+ 
+    bool init(double,double,double);
+
+    /**
+     * read frq domain spectrum from a file
+    */
+    bool read_spectrum(std::string,bool b_negative=true);
+
+    /**
+     * read frq domain spectrum from three vectors (buffers) in pipe format
+    */
+    bool direct_set_spectrum_from_nmrpipe(const std::vector<float> &header, const std::vector<float> &real, const std::vector<float> &imag);
+    /**
+     * Like a simple reading from text file with only real data and ppm information
+    */
+    bool set_spectrum_from_data(const std::vector<float> &data, const double begin, const double step, const double stop);
+    bool release_spectrum(); //to save memory after peaks picking.
+    bool write_spectrum(std::string); //write spectrum. Format is determined by file extension.
+    const std::vector<float> & get_spectrum() const;
 };
 
 #endif

@@ -1,12 +1,12 @@
 
 
-#include "spectrum_io.h"
+#include "fid_2d.h"
 #include "fwhh_dnn.h"
 
 #ifndef SPEC_FWHH_1D
 #define SPEC_FWHH_1D
 
-class spectrum_fwhh: public spectrum_io
+class spectrum_fwhh: public fid_2d
 {
 private:
     std::vector<int> fwhh_pos_direct, fwhh_pos_indirect;

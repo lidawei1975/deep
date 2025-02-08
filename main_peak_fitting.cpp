@@ -2,6 +2,7 @@
 #include <vector>
 #include <valarray>
 #include <fstream>
+#include <deque>
 #include "ceres/ceres.h"
 #include "glog/logging.h"
 #include "omp.h"
@@ -11,6 +12,7 @@
 #include "spectrum_fit.h"
 
 int shared_data_2d::n_verbose=1;
+double shared_data_2d::error_scale=1.0; 
 
 #include "DeepConfig.h"
 
@@ -89,6 +91,10 @@ int main(int argc, char **argv)
     args2.push_back("0");
     args3.push_back("Round of addtional fitting with artifact noise for the estimation of fitting errors");
 
+    args.push_back("-error-scale");
+    args2.push_back("1.0");
+    args3.push_back("Scale factor in MC based error estimation. Set 1.0 for true est and non 1.0 for testing effect of noise level");
+
     args.push_back("-zf1");
     args2.push_back("1");
     args3.push_back("Time of zero filling along direct dimension. Skipped if -n_err is less than 5");
@@ -125,6 +131,7 @@ int main(int argc, char **argv)
     wx=atof(cmdline.query("-wx").c_str());
     wy=atof(cmdline.query("-wy").c_str());
     too_near_cutoff=0.1;
+    shared_data_2d::error_scale=std::stod(cmdline.query("-error-scale"));
 
     shared_data_2d::n_verbose=atoi(cmdline.query("-v").c_str());
 

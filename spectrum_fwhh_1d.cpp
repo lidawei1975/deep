@@ -40,18 +40,18 @@ float spectrum_fwhh_1d::get_median_peak_width()
 
     /**
      * Run peaks picking on spect, exclude 50 points from each end
-     * To deal with possible water region distortion, also exclude +-ndata/32 points from the center
+     * To deal with possible water region distortion, also exclude +-ndata_frq/32 points from the center
     */
     std::vector<int> peak_locations;
     std::vector<float> peak_heights;
-    for (int i = 51; i < spect.size() - 51; i++)
+    for (int i = 51; i < spectrum_real.size() - 51; i++)
     {
-        if (i<ndata/2-ndata/32 || i>ndata/2+ndata/32)
+        if (i<ndata_frq/2-ndata_frq/32 || i>ndata_frq/2+ndata_frq/32)
         {
-            if (spect[i] > spect[i - 1] && spect[i] > spect[i - 2] && spect[i] > spect[i + 1] && spect[i] > spect[i + 2])
+            if (spectrum_real[i] > spectrum_real[i - 1] && spectrum_real[i] > spectrum_real[i - 2] && spectrum_real[i] > spectrum_real[i + 1] && spectrum_real[i] > spectrum_real[i + 2])
             {
                 peak_locations.push_back(i);
-                peak_heights.push_back(spect[i]);
+                peak_heights.push_back(spectrum_real[i]);
             }
         }
     }
@@ -77,13 +77,13 @@ float spectrum_fwhh_1d::get_median_peak_width()
             std::vector<float> spectrum_part; // spectrum part to run fwhh on
             for (int j = peak_loc - 50 * stride; j <= peak_loc + 50 * stride; j+=stride)
             {
-                if(j<0 || j>=spect.size())
+                if(j<0 || j>=spectrum_real.size())
                 {
                     spectrum_part.push_back(0.0f); // pad with zeros
                 }
                 else
                 {
-                    spectrum_part.push_back(std::max(0.0f,spect[j]));
+                    spectrum_part.push_back(std::max(0.0f,spectrum_real[j]));
                 }
             }
             //normalize spectrum part

@@ -114,18 +114,18 @@ bool spectrum_simple_pick::normal_peak_picking()
     p_type.clear();
 
     int ncurrent=0;
-    for (unsigned int i = 0 + 1; i < xdim - 1; i++)
+    for (unsigned int i = 0 + 1; i < ndata_frq - 1; i++)
     {
-        for (unsigned int j = 0 + 1; j < ydim - 1; j++)
+        for (unsigned int j = 0 + 1; j < ndata_frq_indirect - 1; j++)
         {
 
-            if (spect[i+j*xdim] > spect[i+(j-1)*xdim] && spect[i+j*xdim] > spect[i+(j+1)*xdim] && spect[i+j*xdim] > spect[(i-1)+j*xdim] && spect[i+j*xdim] > spect[(i+1)+j*xdim] && spect[i+j*xdim]>min_intensity)
+            if (spect[i+j*ndata_frq] > spect[i+(j-1)*ndata_frq] && spect[i+j*ndata_frq] > spect[i+(j+1)*ndata_frq] && spect[i+j*ndata_frq] > spect[(i-1)+j*ndata_frq] && spect[i+j*ndata_frq] > spect[(i+1)+j*ndata_frq] && spect[i+j*ndata_frq]>min_intensity)
             {   
                 int ndiag=0;
-                if(spect[i+j*xdim] > spect[(i+1)+(j-1)*xdim]) ndiag++; 
-                if(spect[i+j*xdim] > spect[(i-1)+(j-1)*xdim]) ndiag++; 
-                if(spect[i+j*xdim] > spect[(i+1)+(j+1)*xdim]) ndiag++; 
-                if(spect[i+j*xdim] > spect[(i-1)+(j+1)*xdim]) ndiag++; 
+                if(spect[i+j*ndata_frq] > spect[(i+1)+(j-1)*ndata_frq]) ndiag++; 
+                if(spect[i+j*ndata_frq] > spect[(i-1)+(j-1)*ndata_frq]) ndiag++; 
+                if(spect[i+j*ndata_frq] > spect[(i+1)+(j+1)*ndata_frq]) ndiag++; 
+                if(spect[i+j*ndata_frq] > spect[(i-1)+(j+1)*ndata_frq]) ndiag++; 
                 if(ndiag>=peak_diag)
                 {
                     p1.push_back(i); //index is from 0  direct dimension
@@ -141,19 +141,19 @@ bool spectrum_simple_pick::normal_peak_picking()
 
     if(b_negative==true)
     {
-        for (unsigned int i = 0 + 1; i < xdim - 1; i++)
+        for (unsigned int i = 0 + 1; i < ndata_frq - 1; i++)
         {
-            for (unsigned int j = 0 + 1; j < ydim - 1; j++)
+            for (unsigned int j = 0 + 1; j < ndata_frq_indirect - 1; j++)
             {
-                if (spect[i+j*xdim] < spect[i+(j-1)*xdim] && spect[i+j*xdim] < spect[i+(j+1)*xdim] 
-                && spect[i+j*xdim] < spect[(i-1)+j*xdim] && spect[i+j*xdim] < spect[(i+1)+j*xdim] 
-                && spect[i+j*xdim]<-min_intensity)
+                if (spect[i+j*ndata_frq] < spect[i+(j-1)*ndata_frq] && spect[i+j*ndata_frq] < spect[i+(j+1)*ndata_frq] 
+                && spect[i+j*ndata_frq] < spect[(i-1)+j*ndata_frq] && spect[i+j*ndata_frq] < spect[(i+1)+j*ndata_frq] 
+                && spect[i+j*ndata_frq]<-min_intensity)
                 {
                     int ndiag=0;
-                    if(spect[i+j*xdim] < spect[(i+1)+(j-1)*xdim]) ndiag++;
-                    if(spect[i+j*xdim] < spect[(i-1)+(j-1)*xdim]) ndiag++;
-                    if(spect[i+j*xdim] < spect[(i+1)+(j+1)*xdim]) ndiag++;
-                    if(spect[i+j*xdim] < spect[(i-1)+(j+1)*xdim]) ndiag++;
+                    if(spect[i+j*ndata_frq] < spect[(i+1)+(j-1)*ndata_frq]) ndiag++;
+                    if(spect[i+j*ndata_frq] < spect[(i-1)+(j-1)*ndata_frq]) ndiag++;
+                    if(spect[i+j*ndata_frq] < spect[(i+1)+(j+1)*ndata_frq]) ndiag++;
+                    if(spect[i+j*ndata_frq] < spect[(i-1)+(j+1)*ndata_frq]) ndiag++;
                     
                     if(ndiag>=peak_diag)
                     {
@@ -181,17 +181,17 @@ bool spectrum_simple_pick::shoulder_peak_picking()
     std::cout << "In shoulder peaks pikcing, nshoulder is " << nshoulder1 << " and " << nshoulder2 << std::endl;
 
     std::vector<std::vector<int>> peak_map;
-    peak_map.resize(ydim);
-    for (unsigned int i = 0; i < ydim; i++)
-        peak_map[i].resize(xdim, 0);
+    peak_map.resize(ndata_frq_indirect);
+    for (unsigned int i = 0; i < ndata_frq_indirect; i++)
+        peak_map[i].resize(ndata_frq, 0);
 
     for (unsigned int i = 0; i < p1.size(); i++)
     {
         int k1 = p1[i];
         int k2 = p2[i];
-        for (int m = std::max(k1 - nshoulder1, 0); m <= std::min(k1 + nshoulder1, xdim - 1); m++)
+        for (int m = std::max(k1 - nshoulder1, 0); m <= std::min(k1 + nshoulder1, ndata_frq - 1); m++)
         {
-            for (int n = std::max(k2 - nshoulder2, 0); n <= std::min(k2 + nshoulder2, ydim - 1); n++)
+            for (int n = std::max(k2 - nshoulder2, 0); n <= std::min(k2 + nshoulder2, ndata_frq_indirect - 1); n++)
             {
 
                 peak_map[n][m] = 1;
@@ -205,11 +205,11 @@ bool spectrum_simple_pick::shoulder_peak_picking()
     double tem = std::max(median_width_x, median_width_y);
     tem = sqrt(median_width_x * median_width_y);
     laplacing_of_gaussian_convolution(shoulder, tem);
-    for (unsigned int i = 0 + 1; i < xdim - 1; i++)
+    for (unsigned int i = 0 + 1; i < ndata_frq - 1; i++)
     {
-        for (unsigned int j = 0 + 1; j < ydim - 1; j++)
+        for (unsigned int j = 0 + 1; j < ndata_frq_indirect - 1; j++)
         {
-            if (shoulder[j][i] > shoulder[j - 1][i] && shoulder[j][i] > shoulder[j + 1][i] && shoulder[j][i] > shoulder[j][i - 1] && shoulder[j][i] > shoulder[j][i + 1] && spect[i + j * xdim] > min_intensity && peak_map[j][i] == 0)
+            if (shoulder[j][i] > shoulder[j - 1][i] && shoulder[j][i] > shoulder[j + 1][i] && shoulder[j][i] > shoulder[j][i - 1] && shoulder[j][i] > shoulder[j][i + 1] && spect[i + j * ndata_frq] > min_intensity && peak_map[j][i] == 0)
             {
                 int ndiag = 0;
                 if (shoulder[j][i] > shoulder[j - 1][i + 1])
@@ -235,11 +235,11 @@ bool spectrum_simple_pick::shoulder_peak_picking()
 
     if(b_negative==true)
     {
-        for (unsigned int i = 0 + 1; i < xdim - 1; i++)
+        for (unsigned int i = 0 + 1; i < ndata_frq - 1; i++)
         {
-            for (unsigned int j = 0 + 1; j < ydim - 1; j++)
+            for (unsigned int j = 0 + 1; j < ndata_frq_indirect - 1; j++)
             {
-                if (shoulder[j][i] < shoulder[j - 1][i] && shoulder[j][i] < shoulder[j + 1][i] && shoulder[j][i] < shoulder[j][i - 1] && shoulder[j][i] < shoulder[j][i + 1] && spect[i + j * xdim] < -min_intensity && peak_map[j][i] == 0)
+                if (shoulder[j][i] < shoulder[j - 1][i] && shoulder[j][i] < shoulder[j + 1][i] && shoulder[j][i] < shoulder[j][i - 1] && shoulder[j][i] < shoulder[j][i + 1] && spect[i + j * ndata_frq] < -min_intensity && peak_map[j][i] == 0)
                 {
                     int ndiag = 0;
                     if (shoulder[j][i] < shoulder[j - 1][i + 1])
@@ -275,16 +275,16 @@ bool spectrum_simple_pick::laplacing_of_gaussian_convolution(std::vector< std::v
 
     std::vector<std::vector<double> > lap=ldw_math::laplacian_of_gaussian(n,sigma);
 
-    s.resize(ydim);
-    for (unsigned int i = 0; i < ydim; i++)
-        s[i].resize(xdim,0.0);
+    s.resize(ndata_frq_indirect);
+    for (unsigned int i = 0; i < ndata_frq_indirect; i++)
+        s[i].resize(ndata_frq,0.0);
 
 
-    for(unsigned int i=n;i<xdim-n;i++)
+    for(unsigned int i=n;i<ndata_frq-n;i++)
     {
-        for(unsigned int j=n;j<ydim-n;j++)
+        for(unsigned int j=n;j<ndata_frq_indirect-n;j++)
         {
-            double t=spect[i+j*xdim];
+            double t=spect[i+j*ndata_frq];
 
             for(int mm=-n;mm<=n;mm++)
             {
@@ -317,18 +317,18 @@ bool spectrum_simple_pick::sub_pixel_0()
         {
             float result[5];
 
-            result[0]=0.5*spect[i-1+j*xdim]-spect[i+j*xdim]+0.5*spect[i+1+j*xdim];
-            result[1]=-0.5*spect[i-1+j*xdim]+0.5*spect[i+1+j*xdim];
-            result[2]=0.5*spect[i+(j-1)*xdim]-spect[i+j*xdim]+0.5*spect[i+(j+1)*xdim];
-            result[3]=-0.5*spect[i+(j-1)*xdim]+0.5*spect[i+(j+1)*xdim];
-            result[4]=spect[i+j*xdim];
+            result[0]=0.5*spect[i-1+j*ndata_frq]-spect[i+j*ndata_frq]+0.5*spect[i+1+j*ndata_frq];
+            result[1]=-0.5*spect[i-1+j*ndata_frq]+0.5*spect[i+1+j*ndata_frq];
+            result[2]=0.5*spect[i+(j-1)*ndata_frq]-spect[i+j*ndata_frq]+0.5*spect[i+(j+1)*ndata_frq];
+            result[3]=-0.5*spect[i+(j-1)*ndata_frq]+0.5*spect[i+(j+1)*ndata_frq];
+            result[4]=spect[i+j*ndata_frq];
 
             float xc=i-result[1]/(2*result[0]);
             float yc=j-result[3]/(2*result[2]);
             float a=result[4]-result[1]*result[1]/(result[0]*4)-result[3]*result[3]/(result[2]*4);
             float estx,esty;
 
-            estimate_sigma(i-xc,j-yc,spect[i+(j-1)*xdim],spect[i-1+j*xdim],spect[i+j*xdim],spect[i+1+j*xdim],spect[i+(j+1)*xdim],a,estx,esty);
+            estimate_sigma(i-xc,j-yc,spect[i+(j-1)*ndata_frq],spect[i-1+j*ndata_frq],spect[i+j*ndata_frq],spect[i+1+j*ndata_frq],spect[i+(j+1)*ndata_frq],a,estx,esty);
 
             //estx and esty is actually 2*sigma*sigma
 
@@ -437,18 +437,18 @@ bool spectrum_simple_pick::sub_pixel()
         {
             float result[5];
 
-            result[0]=0.5*spect[i-1+j*xdim]-spect[i+j*xdim]+0.5*spect[i+1+j*xdim];
-            result[1]=-0.5*spect[i-1+j*xdim]+0.5*spect[i+1+j*xdim];
-            result[2]=0.5*spect[i+(j-1)*xdim]-spect[i+j*xdim]+0.5*spect[i+(j+1)*xdim];
-            result[3]=-0.5*spect[i+(j-1)*xdim]+0.5*spect[i+(j+1)*xdim];
-            result[4]=spect[i+j*xdim];
+            result[0]=0.5*spect[i-1+j*ndata_frq]-spect[i+j*ndata_frq]+0.5*spect[i+1+j*ndata_frq];
+            result[1]=-0.5*spect[i-1+j*ndata_frq]+0.5*spect[i+1+j*ndata_frq];
+            result[2]=0.5*spect[i+(j-1)*ndata_frq]-spect[i+j*ndata_frq]+0.5*spect[i+(j+1)*ndata_frq];
+            result[3]=-0.5*spect[i+(j-1)*ndata_frq]+0.5*spect[i+(j+1)*ndata_frq];
+            result[4]=spect[i+j*ndata_frq];
 
             float xc=i-result[1]/(2*result[0]);
             float yc=j-result[3]/(2*result[2]);
             float a=result[4]-result[1]*result[1]/(result[0]*4)-result[3]*result[3]/(result[2]*4);
             float estx,esty;
 
-            estimate_sigma(i-xc,j-yc,spect[i+(j-1)*xdim],spect[i-1+j*xdim],spect[i+j*xdim],spect[i+1+j*xdim],spect[i+(j+1)*xdim],a,estx,esty);
+            estimate_sigma(i-xc,j-yc,spect[i+(j-1)*ndata_frq],spect[i-1+j*ndata_frq],spect[i+j*ndata_frq],spect[i+1+j*ndata_frq],spect[i+(j+1)*ndata_frq],a,estx,esty);
 
             //estx and esty is actually 2*sigma*sigma
 
@@ -477,13 +477,16 @@ bool spectrum_simple_pick::sub_pixel()
 
 
 
-bool spectrum_simple_pick::simple_peak_picking(bool b_negative_)
+bool spectrum_simple_pick::simple_peak_picking(bool b_negative_,bool b_shoulder_)
 {
     b_negative=b_negative_;
 
     normal_peak_picking(); 
     sub_pixel_0();
-    shoulder_peak_picking();
+    if(b_shoulder_ == true)
+    {
+        shoulder_peak_picking();
+    }
     sub_pixel();
     
     get_mean_width_from_picking(); //median_width_x = 2.355*sigma, at this time, sigmax and sigmay is actually 2*sigma*sigma
@@ -513,7 +516,7 @@ bool spectrum_simple_pick::simple_peak_picking(bool b_negative_)
         }
         if(abs(p_type[i])==2)
         {
-            p_intensity[i]=spect[int(p1[i])+int(p2[i])*xdim];
+            p_intensity[i]=spect[int(p1[i])+int(p2[i])*ndata_frq];
             sigmax[i]=wid_x;
             sigmay[i]=wid_y;
         }
@@ -564,8 +567,8 @@ bool spectrum_simple_pick::print_peaks_picking(std::string outfname)
         {
             //.tab file for nmrDraw
             FILE *fp = fopen(file_names[m].c_str(), "w");
-            fprintf(fp,"DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n",xdim,begin1,stop1);
-            fprintf(fp,"DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n",ydim,begin2,stop2);
+            fprintf(fp,"DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n",ndata_frq,begin1,stop1);
+            fprintf(fp,"DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n",ndata_frq_indirect,begin2,stop2);
             fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT ASS CONFIDENCE POINTER\n");
             fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%10.6f %%10.6f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%s %%4.2f %%3s\n");
             for (unsigned int ii = 0; ii < ndx.size(); ii++)

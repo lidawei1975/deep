@@ -46,7 +46,7 @@ bool spectrum_fwhh::get_median_peak_width(float &median_width_direct, float &med
      * spect is defined as float * in spectrum_io class
      */
     float max_intensity = 0.0f;
-    for (int i = 0; i < xdim*ydim; i++)
+    for (int i = 0; i < ndata_frq*ndata_frq_indirect; i++)
     {
         max_intensity = std::max(max_intensity, spect[i]);
     }
@@ -73,27 +73,27 @@ bool spectrum_fwhh::get_median_peak_width(float &median_width_direct, float &med
      * Data is stored in row major order, so, i is the direct dimension, j is the indirect dimension
     */
 
-    for (unsigned int i = 0 + 50; i < xdim - 50; i++) //skip peaks too close to the spectral edge, because DNN requires 50 points on each side
+    for (unsigned int i = 0 + 50; i < ndata_frq - 50; i++) //skip peaks too close to the spectral edge, because DNN requires 50 points on each side
     {
-        for (unsigned int j = 0 + 50; j < ydim - 50; j++)
+        for (unsigned int j = 0 + 50; j < ndata_frq_indirect - 50; j++)
         {
 
-            if (spect[i + j * xdim] > spect[i + (j - 1) * xdim] && spect[i + j * xdim] > spect[i + (j + 1) * xdim] && spect[i + j * xdim] > spect[(i - 1) + j * xdim] && spect[i + j * xdim] > spect[(i + 1) + j * xdim] && spect[i + j * xdim] > min_intensity)
+            if (spect[i + j * ndata_frq] > spect[i + (j - 1) * ndata_frq] && spect[i + j * ndata_frq] > spect[i + (j + 1) * ndata_frq] && spect[i + j * ndata_frq] > spect[(i - 1) + j * ndata_frq] && spect[i + j * ndata_frq] > spect[(i + 1) + j * ndata_frq] && spect[i + j * ndata_frq] > min_intensity)
             {
                 int ndiag = 0;
-                if (spect[i + j * xdim] > spect[(i + 1) + (j - 1) * xdim])
+                if (spect[i + j * ndata_frq] > spect[(i + 1) + (j - 1) * ndata_frq])
                     ndiag++;
-                if (spect[i + j * xdim] > spect[(i - 1) + (j - 1) * xdim])
+                if (spect[i + j * ndata_frq] > spect[(i - 1) + (j - 1) * ndata_frq])
                     ndiag++;
-                if (spect[i + j * xdim] > spect[(i + 1) + (j + 1) * xdim])
+                if (spect[i + j * ndata_frq] > spect[(i + 1) + (j + 1) * ndata_frq])
                     ndiag++;
-                if (spect[i + j * xdim] > spect[(i - 1) + (j + 1) * xdim])
+                if (spect[i + j * ndata_frq] > spect[(i - 1) + (j + 1) * ndata_frq])
                     ndiag++;
                 if (ndiag >= 4)
                 {
                     fwhh_p1.push_back(i); // index is from 0  direct dimension
                     fwhh_p2.push_back(j);
-                    fwhh_p_intensity.push_back(spect[i + j * xdim]);
+                    fwhh_p_intensity.push_back(spect[i + j * ndata_frq]);
                 }
             }
         }
@@ -136,14 +136,14 @@ bool spectrum_fwhh::get_median_peak_width(float &median_width_direct, float &med
             std::vector<float> spectrum_part; // spectrum part to run fwhh on
             for (int j = peak_loc_direct - 50 * stride; j <= peak_loc_direct + 50 * stride; j += stride)
             {
-                if (j < 0 || j >= xdim)
+                if (j < 0 || j >= ndata_frq)
                 {
                     spectrum_part.push_back(0.0f); // pad with zeros, not optimal, but works for the DNN
                 }
                 else
                 {
                     //Data is stored in row major order
-                    spectrum_part.push_back(std::max(0.0f, spect[j+ peak_loc_indirect * xdim]));
+                    spectrum_part.push_back(std::max(0.0f, spect[j+ peak_loc_indirect * ndata_frq]));
                 }
             }
 
@@ -199,14 +199,14 @@ bool spectrum_fwhh::get_median_peak_width(float &median_width_direct, float &med
             std::vector<float> spectrum_part;
             for (int j = peak_loc_indirect - 50 * stride; j <= peak_loc_indirect + 50 * stride; j += stride)
             {
-                if (j < 0 || j >= ydim)
+                if (j < 0 || j >= ndata_frq_indirect)
                 {
                     spectrum_part.push_back(0.0f);
                 }
                 else
                 {
                     //Data is stored in row major order
-                    spectrum_part.push_back(std::max(0.0f, spect[peak_loc_direct + j * xdim]));
+                    spectrum_part.push_back(std::max(0.0f, spect[peak_loc_direct + j * ndata_frq]));
                 }
             }
 

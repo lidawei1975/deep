@@ -1,18 +1,19 @@
 #include <array>
 
-#include "spectrum_fwhh.h" //spectrum_io_1d is included in spectrum_fwhh_1d.h
+#include "spectrum_fwhh.h" //fid_1d is included in spectrum_fwhh_1d.h
 #include "phase_dnn.h"
 
 #ifndef SPECTRUM_PHASING_H
 #define SPECTRUM_PHASING_H
 
-class spectrum_phasing : public spectrum_io // spectrum_fwhh_1d is a derived class of spectrum_io_1d
+class spectrum_phasing : public fid_2d // spectrum_fwhh_1d is a derived class of fid_1d
 {
 private:
     /**
      * The following 4 variables are used to store the final phase correction values.
     */
     float final_p0_direct, final_p1_direct, final_p0_indirect, final_p1_indirect;
+    bool b_user_phase_correction, b_user_phase_correction_indirect; // whether user phase correction is set
 
 
 protected:
@@ -47,7 +48,8 @@ public:
     ~spectrum_phasing();
 
     bool auto_phase_correction_v2();
-    bool set_user_phase_correction(double p0_direct, double p1_direct, double p0_indirect, double p1_indirect);
+    bool set_user_phase_correction(double p0_direct, double p1_direct);
+    bool set_user_phase_correction_indirect(double p0_indirect, double p1_indirect);
     bool save_phase_correction_result(std::string fname) const;
 };
 

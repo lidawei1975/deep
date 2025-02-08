@@ -1,6 +1,251 @@
 
 #include "peak_manipulation.h"
 
+namespace peak_tools
+{
+    bool peak_reading_sparky(std::string fname, std::vector<std::array<double, 2>> &peak_pos, std::vector<std::string> &peak_info)
+    {
+        std::string line, p;
+        std::vector<std::string> ps;
+        std::stringstream iss;
+
+        int xpos = -1;
+        int ypos = -1;
+        int ass = -1;
+
+        std::ifstream fin(fname);
+
+        if (!fin)
+            return false;
+
+        bool b_data = false;
+        while (getline(fin, line))
+        {
+            iss.clear();
+            iss.str(line);
+            ps.clear();
+            while (iss >> p)
+            {
+                ps.push_back(p);
+            }
+            if (ps.size() < 3)
+                continue; // empty line??
+
+            if (ps[0] == "Assignment" || ps[0] == "w2" || ps[0] == "w1")
+            {
+                for (int i = 0; i < ps.size(); i++)
+                {
+                    if (ps[i] == "w2")
+                    {
+                        xpos = i;
+                    } // in sparky, w2 is direct dimension
+                    else if (ps[i] == "w1")
+                    {
+                        ypos = i;
+                    }
+                    else if (ps[i] == "Assignment")
+                    {
+                        ass = i;
+                    }
+                }
+                b_data = true;
+                continue;
+            }
+
+            if (b_data == true)
+            {
+                std::array<double, 2> t;
+                t[0] = stod(ps[xpos]);
+                t[1] = stod(ps[ypos]);
+                peak_pos.push_back(t);
+                peak_info.push_back(ps[ass]);
+            }
+        }
+        return true;
+    };
+
+    bool is_assignment(std::string ass)
+    {
+        if (ass.find("?") == 0 || ass.find("Peak") == 0 || ass.find("peak") == 0 || ass.find("None") == 0 || ass.find("none") == 0 || ass.find("X") || ass.find("x") == 0)
+        {
+            return false;
+        }
+        else
+        {
+            return true;
+        }
+    };
+
+    void MinCostMatching(const std::vector<std::vector<int>> &cost, std::vector<int> &Lmate, std::vector<int> &Rmate)
+    {
+        int n = int(cost.size());
+
+        // construct dual feasible solution
+        std::vector<int> u(n);
+        std::vector<int> v(n);
+        for (int i = 0; i < n; i++)
+        {
+            u[i] = cost[i][0];
+            for (int j = 1; j < n; j++)
+                u[i] = std::min(u[i], cost[i][j]);
+        }
+        for (int j = 0; j < n; j++)
+        {
+            v[j] = cost[0][j] - u[0];
+            for (int i = 1; i < n; i++)
+                v[j] = std::min(v[j], cost[i][j] - u[i]);
+        }
+
+        // construct primal solution satisfying complementary slackness
+        Lmate = std::vector<int>(n, -1);
+        Rmate = std::vector<int>(n, -1);
+        int mated = 0;
+        for (int i = 0; i < n; i++)
+        {
+            for (int j = 0; j < n; j++)
+            {
+                if (Rmate[j] != -1)
+                    continue;
+                if (std::fabs(cost[i][j] - u[i] - v[j]) < 1e-10)
+                {
+                    Lmate[i] = j;
+                    Rmate[j] = i;
+                    mated++;
+                    break;
+                }
+            }
+        }
+
+        std::vector<int> dist(n);
+        std::vector<int> dad(n);
+        std::vector<int> seen(n);
+
+        // repeat until primal solution is feasible
+        while (mated < n)
+        {
+
+            // find an unmatched left node
+            int s = 0;
+            while (Lmate[s] != -1)
+                s++;
+
+            // initialize Dijkstra
+            fill(dad.begin(), dad.end(), -1);
+            fill(seen.begin(), seen.end(), 0);
+            for (int k = 0; k < n; k++)
+                dist[k] = cost[s][k] - u[s] - v[k];
+
+            int j = 0;
+            while (true)
+            {
+
+                // find closest
+                j = -1;
+                for (int k = 0; k < n; k++)
+                {
+                    if (seen[k])
+                        continue;
+                    if (j == -1 || dist[k] < dist[j])
+                        j = k;
+                }
+                seen[j] = 1;
+
+                // termination condition
+                if (Rmate[j] == -1)
+                    break;
+
+                // relax neighbors
+                const int i = Rmate[j];
+                for (int k = 0; k < n; k++)
+                {
+                    if (seen[k])
+                        continue;
+                    const double new_dist = dist[j] + cost[i][k] - u[i] - v[k];
+                    if (dist[k] > new_dist)
+                    {
+                        dist[k] = new_dist;
+                        dad[k] = j;
+                    }
+                }
+            }
+
+            // update dual variables
+            for (int k = 0; k < n; k++)
+            {
+                if (k == j || !seen[k])
+                    continue;
+                const int i = Rmate[k];
+                v[k] += dist[k] - dist[j];
+                u[i] -= dist[k] - dist[j];
+            }
+            u[s] += dist[j];
+
+            // augment along path
+            while (dad[j] >= 0)
+            {
+                const int d = dad[j];
+                Rmate[j] = Rmate[d];
+                Lmate[Rmate[j]] = j;
+                j = d;
+            }
+            Rmate[j] = s;
+            Lmate[s] = j;
+
+            mated++;
+        }
+    };
+
+    std::vector<std::deque<int>> breadth_first(std::vector<int> &neighbor, int n)
+    {
+        std::vector<std::deque<int>> clusters;
+        std::deque<int> work, work2;
+        std::vector<int> used;
+
+        used.resize(n, 0);
+
+        for (int i = 0; i < n; i++)
+        {
+            if (used.at(i) != 0)
+            {
+                continue;
+            }
+
+            used.at(i) = 1;
+            work.clear();
+            work2.clear();
+            work.push_back(i);
+            work2.push_back(i);
+
+            while (!work.empty())
+            {
+                int c = work.at(0);
+                work.pop_front();
+
+                for (int j = 0; j < n; j++)
+                {
+                    if (j == c || used.at(j) != 0)
+                    {
+                        continue;
+                    }
+                    if (neighbor[j * n + c] == 1)
+                    {
+                        #pragma omp critical
+                        {
+                            work.push_back(j);
+                            work2.push_back(j);
+                        }
+                        used.at(j) = 1;
+                    }
+                }
+            }
+            if (work2.size() >= 1)
+            {
+                clusters.push_back(work2);
+            }
+        }
+        return clusters;
+    };
+}
 
 peak_manipulation::peak_manipulation() {};
 peak_manipulation::~peak_manipulation() {};
@@ -105,6 +350,21 @@ bool peak_manipulation::write_file(const std::string fname)
         fprintf(fout, "%s\n", header[i].c_str());
     }
 
+    /**
+     * Change D to d in col_formats (%4D -> %4d)
+     * Capital D means something else, it is a bug in our DP and VF printing code.
+    */
+    for (int i = 0; i < col_formats.size(); i++)
+    {
+        for (int j = 0; j < col_formats[i].size(); j++)
+        {
+            if (col_formats[i][j] == 'D')
+            {
+                col_formats[i][j] = 'd';
+            }
+        }
+    }
+
     fprintf(fout, "VARS ");
     for (int i = 0; i < col_names.size(); i++)
     {
@@ -192,6 +452,22 @@ std::vector<int> peak_manipulation::get_column_indexes_by_prefix(const std::stri
 };
 
 /**
+ * Get lines in header that start with DATA
+*/
+bool peak_manipulation::get_data_lines(std::vector<std::string> &data_lines)
+{
+    for (int i = 0; i < header.size(); i++)
+    {
+        if (header[i].substr(0, 4) == "DATA")
+        {
+            data_lines.push_back(header[i]);
+        }
+    }
+    return true;
+};
+
+
+/**
  * Get a column by column index
  */
 bool peak_manipulation::get_column(int index, std::vector<std::string> &v)
@@ -249,7 +525,7 @@ bool peak_manipulation::operate_on_column(int index, enum column_operation opt, 
  */
 bool peak_manipulation::operate_on_column(int index, enum column_operation opt, const std::string col_name, std::string col_format, const std::vector<std::string> &v)
 {
-    if(index<0 || index>col_names.size() || (opt!=column_operation::DELETE && opt!=column_operation::INSERT))
+    if(index<0 || index>col_names.size() || (opt!=column_operation::DELETE && opt!=column_operation::INSERT && opt!=column_operation::REPLACE))
     {
         return false;
     }
@@ -261,6 +537,9 @@ bool peak_manipulation::operate_on_column(int index, enum column_operation opt, 
     
     if(opt==column_operation::DELETE)
     {
+        /**
+         * New col_name and col_format are ignored
+        */
         col_names.erase(col_names.begin()+index);
         col_formats.erase(col_formats.begin()+index);
         for(int i=0;i<col_values.size();i++)
@@ -275,6 +554,17 @@ bool peak_manipulation::operate_on_column(int index, enum column_operation opt, 
         for(int i=0;i<col_values.size();i++)
         {
             col_values[i].insert(col_values[i].begin()+index, v[i]);
+        }
+    }
+    else if(opt==column_operation::REPLACE)
+    {
+        /**
+         * For replace, we do not change the column name and format
+         * col_name and col_format are ignored
+        */
+        for(int i=0;i<col_values.size();i++)
+        {
+            col_values[i][index]=v[i];
         }
     }
     return true;

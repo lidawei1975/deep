@@ -179,7 +179,7 @@ int main(int argc, char **argv)
         std::cout<<"Apply zero filling factor: " << n_zf << std::endl;
 
 
-        fid.run_fft_and_rm_bruker_filter(); //this step will also call remove_bruker_digitizer_filter()
+        fid.full_process(); //this step will also call remove_bruker_digitizer_filter()
         std::cout<<"Run FFT and remove Bruker digitizer filter." << std::endl;
 
 

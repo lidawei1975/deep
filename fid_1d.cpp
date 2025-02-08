@@ -2,6 +2,7 @@
 #include <valarray>
 #include <fstream>
 #include <iostream>
+#include <limits>
 
 /**
  * Below two lines are required to check whether folder or file exists
@@ -13,6 +14,67 @@
 
 #include "json/json.h"
 #include "fid_1d.h"
+
+/**
+ * These are shared varibles between db_match_1d and pattern_match_1d and spectrum_pick_1d
+*/
+int shared_data_1d::n_verbose=0; 
+bool shared_data_1d::b_dosy=false;
+std::vector<double> shared_data_1d::z_gradients;
+
+namespace ldw_math_spectrum_1d
+{
+    bool SplitFilename(const std::string &str, std::string &path_name, std::string &file_name, std::string &file_name_ext)
+    {
+        bool b = false;
+        std::string file_name_full;
+        std::size_t found = str.find_last_of("/\\");
+        if (found != std::string::npos)
+        {
+            path_name = str.substr(0, found);
+            file_name_full = str.substr(found + 1);
+            b = true;
+        }
+        else
+        {
+            path_name = ".";
+            file_name_full = str;
+        }
+
+        // std::cout<<"file_name_full is "<<file_name_full<<std::endl;
+
+        found = file_name_full.find_last_of(".");
+        if (found != std::string::npos)
+        {
+            file_name = file_name_full.substr(0, found);
+            file_name_ext = file_name_full.substr(found + 1);
+            b = true;
+        }
+        else
+        {
+            file_name_ext = "";
+            file_name = file_name_full;
+        }
+
+        // std::cout<<"path is "<<path_name<<std::endl;
+        // std::cout<<"file_name is "<<file_name<<std::endl;
+        // std::cout<<"file_name_ext is "<<file_name_ext<<std::endl;
+
+        return b;
+    };
+
+    bool trim(std::string &str)
+    {
+        if (str.empty())
+        {
+            return false;
+        }
+
+        str.erase(0, str.find_first_not_of(" "));
+        str.erase(str.find_last_not_of(" ") + 1);
+        return true;
+    }
+};
 
 namespace fid_1d_helper
 {
@@ -67,9 +129,161 @@ namespace nmrPipe
      * Value: parameter index in the nmrPipe header (nmrpipe_header_data). Need to convert to int (0 to 511)
      */
     std::map<std::string, std::string> nmrpipe_dictionary = {
-        {"FDF4CENTER", "82"}, {"FDF2P0", "109"}, {"FDF2P1", "110"}, {"FDF1P1", "246"}, {"FDF2X1", "257"}, {"FDF1P0", "245"}, {"FDF3AQSIGN", "476"}, {"FDDISPMAX", "251"}, {"FDF4FTFLAG", "31"}, {"FDF3X1", "261"}, {"FDRANK", "180"}, {"FDF2C1", "418"}, {"FDF2QUADFLAG", "56"}, {"FDSLICECOUNT", "443"}, {"FDFILECOUNT", "442"}, {"FDMIN", "248"}, {"FDF3OBS", "10"}, {"FDF4APODQ2", "407"}, {"FDF4APODQ1", "406"}, {"FDF3FTSIZE", "200"}, {"FDF1LB", "243"}, {"FDF4C1", "409"}, {"FDF4QUADFLAG", "54"}, {"FDF1SW", "229"}, {"FDTRANSPOSED", "221"}, {"FDSECS", "285"}, {"FDF1APOD", "428"}, {"FDF2APODCODE", "413"}, {"FDPIPECOUNT", "75"}, {"FDOPERNAME", "464"}, {"FDF3LABEL", "20"}, {"FDPEAKBLOCK", "362"}, {"FDREALSIZE", "97"}, {"FDF4SIZE", "32"}, {"FDF4SW", "29"}, {"FDF4ORIG", "30"}, {"FDF3XN", "262"}, {"FDF1OBS", "218"}, {"FDDISPMIN", "252"}, {"FDF2XN", "258"}, {"FDF3P1", "61"}, {"FDF3P0", "60"}, {"FDF1ORIG", "249"}, {"FDF2FTFLAG", "220"}, {"FDF1TDSIZE", "387"}, {"FDLASTPLANE", "78"}, {"FDF1ZF", "437"}, {"FDF4FTSIZE", "201"}, {"FDF3C1", "404"}, {"FDFLTFORMAT", "1"}, {"FDF4CAR", "69"}, {"FDF1FTFLAG", "222"}, {"FDF2OFFPPM", "480"}, {"FDF1LABEL", "18"}, {"FDSIZE", "99"}, {"FDYEAR", "296"}, {"FDF1C1", "423"}, {"FDUSER3", "72"}, {"FDF1FTSIZE", "98"}, {"FDMINS", "284"}, {"FDSCALEFLAG", "250"}, {"FDF3TDSIZE", "388"}, {"FDTITLE", "297"}, {"FDPARTITION", "65"}, {"FDF3FTFLAG", "13"}, {"FDF2APODQ1", "415"}, {"FD2DVIRGIN", "399"}, {"FDF2APODQ3", "417"}, {"FDF2APODQ2", "416"}, {"FD2DPHASE", "256"}, {"FDMAX", "247"}, {"FDF3SW", "11"}, {"FDF4TDSIZE", "389"}, {"FDPIPEFLAG", "57"}, {"FDDAY", "295"}, {"FDF2UNITS", "152"}, {"FDF4APODQ3", "408"}, {"FDFIRSTPLANE", "77"}, {"FDF3SIZE", "15"}, {"FDF3ZF", "438"}, {"FDDIMORDER", "24"}, {"FDF3ORIG", "12"}, {"FD1DBLOCK", "365"}, {"FDF1AQSIGN", "475"}, {"FDF2OBS", "119"}, {"FDF1XN", "260"}, {"FDF4UNITS", "59"}, {"FDDIMCOUNT", "9"}, {"FDF4XN", "264"}, {"FDUSER2", "71"}, {"FDF4APODCODE", "405"}, {"FDUSER1", "70"}, {"FDMCFLAG", "135"}, {"FDFLTORDER", "2"}, {"FDUSER5", "74"}, {"FDCOMMENT", "312"}, {"FDF3QUADFLAG", "51"}, {"FDUSER4", "73"}, {"FDTEMPERATURE", "157"}, {"FDF2APOD", "95"}, {"FDMONTH", "294"}, {"FDF4OFFPPM", "483"}, {"FDF3OFFPPM", "482"}, {"FDF3CAR", "68"}, {"FDF4P0", "62"}, {"FDF4P1", "63"}, {"FDF1OFFPPM", "481"}, {"FDF4APOD", "53"}, {"FDF4X1", "263"}, {"FDLASTBLOCK", "359"}, {"FDPLANELOC", "14"}, {"FDF2FTSIZE", "96"}, {"FDUSERNAME", "290"}, {"FDF1X1", "259"}, {"FDF3CENTER", "81"}, {"FDF1CAR", "67"}, {"FDMAGIC", "0"}, {"FDF2ORIG", "101"}, {"FDSPECNUM", "219"}, {"FDF2LABEL", "16"}, {"FDF2AQSIGN", "64"}, {"FDF1UNITS", "234"}, {"FDF2LB", "111"}, {"FDF4AQSIGN", "477"}, {"FDF4ZF", "439"}, {"FDTAU", "199"}, {"FDF4LABEL", "22"}, {"FDNOISE", "153"}, {"FDF3APOD", "50"}, {"FDF1APODCODE", "414"}, {"FDF2SW", "100"}, {"FDF4OBS", "28"}, {"FDQUADFLAG", "106"}, {"FDF2TDSIZE", "386"}, {"FDHISTBLOCK", "364"}, {"FDSRCNAME", "286"}, {"FDBASEBLOCK", "361"}, {"FDF1APODQ2", "421"}, {"FDF1APODQ3", "422"}, {"FDF1APODQ1", "420"}, {"FDF1QUADFLAG", "55"}, {"FDF3UNITS", "58"}, {"FDF2ZF", "108"}, {"FDCONTBLOCK", "360"}, {"FDDIMORDER4", "27"}, {"FDDIMORDER3", "26"}, {"FDDIMORDER2", "25"}, {"FDDIMORDER1", "24"}, {"FDF2CAR", "66"}, {"FDF3APODCODE", "400"}, {"FDHOURS", "283"}, {"FDF1CENTER", "80"}, {"FDF3APODQ1", "401"}, {"FDF3APODQ2", "402"}, {"FDF3APODQ3", "403"}, {"FDBMAPBLOCK", "363"}, {"FDF2CENTER", "79"},
-        {"FDUSER1","70"},{"FDUSER2","71"},{"FDUSER3","72"},{"FDUSER4","73"},{"FDUSER5","74"},{"FDUSER6","76"}   
-        };
+        {"FDBASEBLOCK", "361"},
+        {"FDBMAPBLOCK", "363"},
+        {"FDCOMMENT", "312"},
+        {"FDCONTBLOCK", "360"},
+        {"FDDAY", "295"},
+        {"FDDIMCOUNT", "9"},
+        {"FDDIMORDER1", "24"},
+        {"FDDIMORDER2", "25"},
+        {"FDDIMORDER3", "26"},
+        {"FDDIMORDER4", "27"},
+        {"FDF2AQSIGN", "64"},
+        {"FDF2APOD", "95"},
+        {"FDF2APODCODE", "413"},
+        {"FDF2APODQ1", "415"},
+        {"FDF2APODQ2", "416"},
+        {"FDF2APODQ3", "417"},
+        {"FDF2CAR", "66"},
+        {"FDF2CENTER", "79"},
+        {"FDF2C1", "418"},
+        {"FDF2FTFLAG", "220"},
+        {"FDF2FTSIZE", "96"},
+        {"FDF2LABEL", "16"},
+        {"FDF2LB", "111"},
+        {"FDF2OBS", "119"},
+        {"FDF2OFFPPM", "480"},
+        {"FDF2ORIG", "101"},
+        {"FDF2P0", "109"},
+        {"FDF2P1", "110"},
+        {"FDF2QUADFLAG", "56"},
+        {"FDF2SW", "100"},
+        {"FDF2TDSIZE", "386"},
+        {"FDF2UNITS", "152"},
+        {"FDF2X1", "257"},
+        {"FDF2XN", "258"},
+        {"FDF2ZF", "108"},
+        {"FDF3APOD", "50"},
+        {"FDF3APODCODE", "400"},
+        {"FDF3APODQ1", "401"},
+        {"FDF3APODQ2", "402"},
+        {"FDF3APODQ3", "403"},
+        {"FDF3AQSIGN", "476"},
+        {"FDF3CAR", "68"},
+        {"FDF3CENTER", "81"},
+        {"FDF3C1", "404"},
+        {"FDF3FTFLAG", "13"},
+        {"FDF3FTSIZE", "200"},
+        {"FDF3LABEL", "20"},
+        {"FDF3OBS", "10"},
+        {"FDF3OFFPPM", "482"},
+        {"FDF3ORIG", "12"},
+        {"FDF3P0", "60"},
+        {"FDF3P1", "61"},
+        {"FDF3QUADFLAG", "51"},
+        {"FDF3SIZE", "15"},
+        {"FDF3SW", "11"},
+        {"FDF3TDSIZE", "388"},
+        {"FDF3UNITS", "58"},
+        {"FDF3X1", "261"},
+        {"FDF3XN", "262"},
+        {"FDF3ZF", "438"},
+        {"FDF4APOD", "53"},
+        {"FDF4APODCODE", "405"},
+        {"FDF4APODQ1", "406"},
+        {"FDF4APODQ2", "407"},
+        {"FDF4APODQ3", "408"},
+        {"FDF4AQSIGN", "477"},
+        {"FDF4CAR", "69"},
+        {"FDF4CENTER", "82"},
+        {"FDF4C1", "409"},
+        {"FDF4FTFLAG", "31"},
+        {"FDF4FTSIZE", "201"},
+        {"FDF4LABEL", "22"},
+        {"FDF4OBS", "28"},
+        {"FDF4OFFPPM", "483"},
+        {"FDF4ORIG", "30"},
+        {"FDF4P0", "62"},
+        {"FDF4P1", "63"},
+        {"FDF4QUADFLAG", "54"},
+        {"FDF4SIZE", "32"},
+        {"FDF4SW", "29"},
+        {"FDF4TDSIZE", "389"},
+        {"FDF4UNITS", "59"},
+        {"FDF4X1", "263"},
+        {"FDF4XN", "264"},
+        {"FDF4ZF", "439"},
+        {"FDFILECOUNT", "442"},
+        {"FDFIRSTPLANE", "77"},
+        {"FDFLTFORMAT", "1"},
+        {"FDFLTORDER", "2"},
+        {"FDFMIN", "248"},
+        {"FDHISTBLOCK", "364"},
+        {"FDHOURS", "283"},
+        {"FDLASTBLOCK", "359"},
+        {"FDLASTPLANE", "78"},
+        {"FDMAGIC", "0"},
+        {"FDMCFLAG", "135"},
+        {"FDMAX", "247"},
+        {"FDMIN", "248"},
+        {"FDMINS", "284"},
+        {"FDMONTH", "294"},
+        {"FDNOISE", "153"},
+        {"FDOPERNAME", "464"},
+        {"FDPARTITION", "65"},
+        {"FDPEAKBLOCK", "362"},
+        {"FDPIPECOUNT", "75"},
+        {"FDPIPEFLAG", "57"},
+        {"FDPLANELOC", "14"},
+        {"FDQUADFLAG", "106"},
+        {"FDRANK", "180"},
+        {"FDREALSIZE", "97"},
+        {"FDSCALEFLAG", "250"},
+        {"FDSECS", "285"},
+        {"FDSIZE", "99"},
+        {"FDSLICECOUNT", "443"},
+        {"FDSPECNUM", "219"},
+        {"FDSRCNAME", "286"},
+        {"FDTEMPERATURE", "157"},
+        {"FDTITLE", "297"},
+        {"FDTRANSPOSED", "221"},
+        {"FDUSER1", "70"},
+        {"FDUSER2", "71"},
+        {"FDUSER3", "72"},
+        {"FDUSER4", "73"},
+        {"FDUSER5", "74"},
+        {"FDUSER6", "76"},
+        {"FDUSERNAME", "290"},
+        {"FDYEAR", "296"},
+        {"FDF1APOD", "428"},
+        {"FDF1APODCODE", "414"},
+        {"FDF1APODQ1", "420"},
+        {"FDF1APODQ2", "421"},
+        {"FDF1APODQ3", "422"},
+        {"FDF1AQSIGN", "475"},
+        {"FDF1CAR", "67"},
+        {"FDF1CENTER", "80"},
+        {"FDF1C1", "423"},
+        {"FDF1FTFLAG", "222"},
+        {"FDF1FTSIZE", "98"},
+        {"FDF1LABEL", "18"},
+        {"FDF1LB", "243"},
+        {"FDF1OBS", "218"},
+        {"FDF1OFFPPM", "481"},
+        {"FDF1ORIG", "249"},
+        {"FDF1P0", "245"},
+        {"FDF1P1", "246"},
+        {"FDF1QUADFLAG", "55"},
+        {"FDF1SW", "229"},
+        {"FDF1TDSIZE", "387"},
+        {"FDF1UNITS", "234"},
+        {"FDF1X1", "259"},
+        {"FDF1XN", "260"},
+        {"FDF1ZF", "437"}
+    };
+
+
 
     /**
      * @brief nmrpipe_header_to_dictionary: convert the nmrPipe header to two dictionaries:
@@ -116,7 +330,7 @@ namespace nmrPipe
         return true;
     }
 
-    bool create_empty_nmrpipe_header(std::map<std::string, std::string> &dict_string, std::map<std::string, float> &dict_float)
+    bool create_default_nmrpipe_dictionary(std::map<std::string, std::string> &dict_string, std::map<std::string, float> &dict_float)
     {
         std::vector<float> nmrpipe_header_data(512, 0.0f);
         nmrpipe_header_to_dictionary(nmrpipe_header_data.data(), dict_string, dict_float);
@@ -186,23 +400,23 @@ namespace nmrPipe
          */
         std::string FDF2LABEL = dict_string.at("FDF2LABEL");
         std::string FDF1LABEL = dict_string.at("FDF1LABEL");
-        // std::string FDF3LABEL = dict_string.at("FDF3LABEL");
-        // std::string FDF4LABEL = dict_string.at("FDF4LABEL");
-        // std::string FDSRCNAME = dict_string.at("FDSRCNAME");
-        // std::string FDUSERNAME = dict_string.at("FDUSERNAME");
-        // std::string FDTITLE = dict_string.at("FDTITLE");
-        // std::string FDCOMMENT = dict_string.at("FDCOMMENT");
-        // std::string FDOPERNAME = dict_string.at("FDOPERNAME");
+        std::string FDF3LABEL = dict_string.at("FDF3LABEL");
+        std::string FDF4LABEL = dict_string.at("FDF4LABEL");
+        std::string FDSRCNAME = dict_string.at("FDSRCNAME");
+        std::string FDUSERNAME = dict_string.at("FDUSERNAME");
+        std::string FDTITLE = dict_string.at("FDTITLE");
+        std::string FDCOMMENT = dict_string.at("FDCOMMENT");
+        std::string FDOPERNAME = dict_string.at("FDOPERNAME");
 
         std::copy(FDF2LABEL.begin(), FDF2LABEL.end(), nmrpipe_header_data_as_char + 16 * 4);
         std::copy(FDF1LABEL.begin(), FDF1LABEL.end(), nmrpipe_header_data_as_char + 18 * 4);
-        // std::copy(FDF3LABEL.begin(), FDF3LABEL.end(), nmrpipe_header_data_as_char+20*4);
-        // std::copy(FDF4LABEL.begin(), FDF4LABEL.end(), nmrpipe_header_data_as_char+22*4);
-        // std::copy(FDSRCNAME.begin(), FDSRCNAME.end(), nmrpipe_header_data_as_char+286*4);
-        // std::copy(FDUSERNAME.begin(), FDUSERNAME.end(), nmrpipe_header_data_as_char+290*4);
-        // std::copy(FDTITLE.begin(), FDTITLE.end(), nmrpipe_header_data_as_char+297*4);
-        // std::copy(FDCOMMENT.begin(), FDCOMMENT.end(), nmrpipe_header_data_as_char+312*4);
-        // std::copy(FDOPERNAME.begin(), FDOPERNAME.end(), nmrpipe_header_data_as_char+464*4);
+        std::copy(FDF3LABEL.begin(), FDF3LABEL.end(), nmrpipe_header_data_as_char+20*4);
+        std::copy(FDF4LABEL.begin(), FDF4LABEL.end(), nmrpipe_header_data_as_char+22*4);
+        std::copy(FDSRCNAME.begin(), FDSRCNAME.end(), nmrpipe_header_data_as_char+286*4);
+        std::copy(FDUSERNAME.begin(), FDUSERNAME.end(), nmrpipe_header_data_as_char+290*4);
+        std::copy(FDTITLE.begin(), FDTITLE.end(), nmrpipe_header_data_as_char+297*4);
+        std::copy(FDCOMMENT.begin(), FDCOMMENT.end(), nmrpipe_header_data_as_char+312*4);
+        std::copy(FDOPERNAME.begin(), FDOPERNAME.end(), nmrpipe_header_data_as_char+464*4);
 
         return true;
     }
@@ -220,12 +434,17 @@ apodization::apodization()
     p4 = 0.0;
     p5 = 0.0;
     p6 = 0.0;
-    sps.clear();
+    /**
+     * Set default spectral width to maximum, so that apodizaiton will be 1.0 const (no apodization)
+     * when spectral width is not set
+    */
+    spectral_width = std::numeric_limits<double>::max();
+    apodization_values.clear();
 }
 
 apodization::apodization(std::string apodization_string)
 {
-    sps.clear();
+    apodization_values.clear();
     /**
      * Convert to all lower case
      */
@@ -240,22 +459,56 @@ apodization::apodization(std::string apodization_string)
      */
     if (n_fileds > 0)
     {
-        if (apodization_string_split[0] == "kaiser")
-        {
-            if (n_fileds != 4)
+        /**
+         * SP: Adjustable Sine Window. Follow nmrPipe nomenclature
+        */
+        if (apodization_string_split[0] == "sp") 
+        {   
+            /**
+             * Example string "sp off 0.5 end 0.896 pow 3.684 elb 0.0 c 0.5"
+             * sp: apodization function name, must be sp for adjustable sine window
+             * off: offset, default is 0.5 p1
+             * end: end, default is 0.95 p2
+             * pow: power, default is 2.0 p3
+             * elb: exponential widen, default is 0.0 p4
+             * c: first point rescale factor, default is 0.5 p5
+             */
             {
-                std::cerr << "Error: apodization function kaiser requires 3 parameters." << std::endl;
-                return;
-            }
-            else
-            {
-                apodization_type = FID_APODIZATION_KAISER;
-                p1 = std::stod(apodization_string_split[1]);
-                p2 = std::stod(apodization_string_split[2]);
-                p3 = std::stod(apodization_string_split[3]);
+                apodization_type = FID_APODIZATION_SP;
+                /**
+                 * Set up default values. p6 is not used
+                 */
+                p1 = 0.5;
+                p2 = 0.95;
+                p3 = 2.0;
                 p4 = 0.0;
-                p5 = 0.0;
-                p6 = 0.0;
+                p5 = 0.5;
+                /**
+                 * Check the input string and set up the values. 
+                 */
+                for(int i=1;i<apodization_string_split.size();i+=2)
+                {
+                    if(apodization_string_split[i]=="off")
+                    {
+                        p1 = std::stod(apodization_string_split[i+1]);
+                    }
+                    else if(apodization_string_split[i]=="end")
+                    {
+                        p2 = std::stod(apodization_string_split[i+1]);
+                    }
+                    else if(apodization_string_split[i]=="pow")
+                    {
+                        p3 = std::stod(apodization_string_split[i+1]);
+                    }
+                    else if(apodization_string_split[i]=="elb")
+                    {
+                        p4 = std::stod(apodization_string_split[i+1]);
+                    }
+                    else if(apodization_string_split[i]=="c")
+                    {
+                        p5 = std::stod(apodization_string_split[i+1]);
+                    }
+                }
             }
         }
         else if (apodization_string_split[0] == "none" || apodization_string_split[0] == "null" || apodization_string_split[0] == "n" || apodization_string_split[0] == "no")
@@ -271,15 +524,15 @@ apodization::apodization(std::string apodization_string)
         }
         else
         {
-            std::cerr << "Error: apodization function name must be kaiser or none." << std::endl;
+            std::cerr << "Error: apodization function name must be sp or none." << std::endl;
             return;
         }
     }
 }
 
-apodization::apodization(FID_APODIZATION_TYPE apodization_type_, double p1_, double p2_, double p3_, double p4_, double p5_, double p6_)
+apodization::apodization(FID_APODIZATION_TYPE apodization_type_, double p1_, double p2_, double p3_, double p4_, double p5_, double p6_=0.0)
 {
-    sps.clear();
+    apodization_values.clear();
     apodization_type = apodization_type_;
     p1 = p1_;
     p2 = p2_;
@@ -291,45 +544,53 @@ apodization::apodization(FID_APODIZATION_TYPE apodization_type_, double p1_, dou
 
 apodization::~apodization()
 {
-    sps.clear();
+    apodization_values.clear();
 }
 
-bool apodization::set_n(int ndata)
+/**
+ * Generate adjustable sine window function
+ * @param ndata_: number of valid time domain data points (padding should not been included)
+*/
+bool apodization::set_n(int ndata_)
 {
     /**
-     * Set up sps
+     * Set up apodization_values. For SP, formular is
+     * SP[i] = sin( (PI*off + PI*(end-off)*i/(tSize-1) )^pow
+     * the EM part is
+     * EM[i] = exp( -PI*i*lb/sw )
      */
-    sps.clear(); // clear sps first in case it has been set up before
-    sps.push_back(0.5); // special case for first point
-    for (int j = 1; j < ndata; j++)
+    apodization_values.clear(); // clear apodization_values first in case it has been set up before
+    /**
+     * special case for first point: 
+     * Can be overwritten by calling set_first_point() after set_n()
+    */
+    apodization_values.push_back(p5);
+    for (int j = 1; j < ndata_; j++)
     {
-        sps.push_back(pow(sin(M_PI * p1 + M_PI * p2 / 2.0 / ndata * j), p3));
+        double em = exp(-M_PI * j * p4 / spectral_width);
+        double shifted_sine = pow(sin(M_PI * p1 + M_PI * (p2-p1) / (ndata_-1) * j), p3);
+        apodization_values.push_back(em*shifted_sine);
     }
 
     return true;
 }
 
-bool apodization::run_apodization(float *data, int ndata) const
+bool apodization::run_apodization(float *data, int ndata_, bool b_complex) const
 {
-    if(ndata==sps.size()*2)
+    if(b_complex)
     {
-        for (int i = 0; i < ndata/2; i++)
+        for (int i = 0; i < ndata_/2; i++)
         {
-            data[i * 2] *= sps[i];
-            data[i * 2 + 1] *= sps[i];
-        }
-    }
-    else if(ndata==sps.size())
-    {
-        for (int i = 0; i < ndata; i++)
-        {
-            data[i] *= sps[i];
+            data[i * 2] *= apodization_values[i];
+            data[i * 2 + 1] *= apodization_values[i];
         }
     }
     else
     {
-        std::cerr << "Error: data size is not correct." << std::endl;
-        return false;
+        for (int i = 0; i < ndata_; i++)
+        {
+            data[i] *= apodization_values[i];
+        }
     }
     return true;
 }
@@ -575,6 +836,21 @@ fid_1d::fid_1d()
     receiver_gain = 1.0; // default
 
     nmrpipe_header_data.resize(512, 0.0f); // nmrPipe header data 512*4
+
+    user_scale = 5.5;
+    user_scale2 = 3.0;
+    noise_level = 0.01;
+    ndata = 0;
+    ndata_bruker = 0;
+    ndata_original = 0;
+    ndata_power_of_2 = 0;
+    ndata_frq = 0;
+    spectral_width = 0.0;
+    observed_frequency = 0.0;
+    origin = 0.0;
+    begin1 = 0.0;
+    step1 = 0.0;
+    stop1 = 0.0;
 }
 
 /**
@@ -737,10 +1013,12 @@ bool fid_1d::read_bruker_acqus_and_fid(const std::string &acqus_file_name, const
     if (data_complexity == FID_DATA_COMPLEXITY_COMPLEX)
     {
         ndata = ndata_bruker / 2;
+        ndata_original = td0 / 2;
     }
     else
     {
         ndata = ndata_bruker;
+        ndata_original = td0;
     }
 
     /**
@@ -985,7 +1263,8 @@ bool fid_1d::run_fft_and_rm_bruker_filter()
     /**
      * Run apoization. We set ndata*2 in run_apodization because we are working on complex data
     */
-    apod->set_n(ndata);
+    apod->set_sw(spectral_width);
+    apod->set_n(ndata_original);
     
 
     /**
@@ -1004,7 +1283,7 @@ bool fid_1d::run_fft_and_rm_bruker_filter()
          */
         temp_fid_data_float.insert(temp_fid_data_float.end(),fid_data_float.begin()+i*ndata_bruker,fid_data_float.begin()+(i+1)*ndata_bruker);
        
-        apod->run_apodization(temp_fid_data_float.data(), ndata*2);
+        apod->run_apodization(temp_fid_data_float.data(), ndata*2, true /**complex data*/);
         
         kiss_fft_cfg cfg;
         kiss_fft_cpx *in, *out;
@@ -1099,9 +1378,9 @@ bool fid_1d::set_up_apodization(apodization *apod_)
 bool fid_1d::create_nmrpipe_dictionary(bool b_frq, std::map<std::string, std::string> &nmrpipe_dict_string, std::map<std::string, float> &nmrpipe_dict_float) const
 {
     /**
-     * @brief create_empty_nmrpipe_header: create empty nmrpipe header
+     * @brief create_default_nmrpipe_dictionary: create empty nmrpipe header
      */
-    nmrPipe::create_empty_nmrpipe_header(nmrpipe_dict_string, nmrpipe_dict_float);
+    nmrPipe::create_default_nmrpipe_dictionary(nmrpipe_dict_string, nmrpipe_dict_float);
 
     /**
      * Fill in some parameters from what we have
@@ -1152,6 +1431,12 @@ bool fid_1d::create_nmrpipe_dictionary(bool b_frq, std::map<std::string, std::st
 
         nmrpipe_dict_float["FDSIZE"] = ndata_frq;
         nmrpipe_dict_float["FDREALSIZE"] = ndata_frq;
+
+        /**
+         * ft2 file also keep original FID data size
+         * But I am not sure nmrPipde does the same!!
+        */
+        nmrpipe_dict_float["FDF2TDSIZE"] = ndata;
     }
     else
     {
@@ -1255,31 +1540,7 @@ bool fid_1d::write_nmrpipe_ft1(std::string outfname)
     return true;
 }
 
-/**
- * @brief fid_1d::write_nmrpipe_ft1: write some information
- * This is mainly for web-server
- */
-bool fid_1d::write_json(std::string fname)
-{
-    std::ofstream outfile(fname.c_str());
-    if (!outfile.is_open())
-    {
-        std::cout << "Error: cannot open file " << fname << std::endl;
-        return false;
-    }
 
-    Json::Value root;
-    root["ndata"] = ndata;
-    root["ndata_power_of_2"] = ndata_power_of_2;
-    root["carrier_frequency"] = carrier_frequency;
-    root["observed_frequency"] = observed_frequency;
-    root["spectral_width"] = spectral_width;
-
-    outfile << root << std::endl;
-    outfile.close();
-
-    return true;
-}
 
 /**
  * @brief fid_1d::get_spectrum_header: return header as a vector of float
@@ -1304,3 +1565,816 @@ std::vector<float> fid_1d::get_spectrum_imag(void) const
 {
     return spectrum_imag;
 };
+
+
+bool fid_1d::init(double user_, double user2_, double noise_)
+{
+    user_scale = user_;
+    user_scale2 = user_;
+    noise_level = noise_;
+    return true;
+};
+
+
+/**
+ * @brief write spectrum in josn format as an array, with two or three columns: ppm and intensity (and image)
+*/
+bool fid_1d::write_spectrum_json(std::string outfname)
+{
+    std::ofstream outfile;
+    outfile.open(outfname);
+    if (!outfile.is_open())
+    {
+        std::cout << "Error: cannot open file " << outfname << std::endl;
+        return false;
+    }
+
+    Json::Value root, data;
+
+    for (int j = 0; j < ndata_frq; j++)
+    {
+        data[j][0] = begin1 + j * step1;
+        data[j][1] = spectrum_real[j];
+        /**
+         * @brief if spe_image has same size as spect, save it as well
+        */
+        if(spectrum_imag.size()==ndata_frq)
+        {
+            data[j][2] = spectrum_imag[j];
+        }
+    }
+    root["spectrum"] = data;
+    outfile << root;
+    return true;
+}
+
+
+/**
+ * @brief read frq domain spectrum from three vectors (buffers) in pipe format
+ * Similar to read_spectrum_ft, but get the header and spectrum from three vectors instead of a file
+*/
+bool fid_1d::direct_set_spectrum_from_nmrpipe(const std::vector<float> &_header, const std::vector<float> &real, const std::vector<float> &imag)
+{
+
+    /**
+     * copy _header (vector) to header (float *512)
+    */
+    for (int i = 0; i < 512; i++)
+    {
+        nmrpipe_header_data[i] = _header[i];
+    }
+
+    if (nmrpipe_header_data[10 - 1] != 1.0f)
+    {
+        std::cout << "Wrong file format, dimension (header[9]) is " << nmrpipe_header_data[9] << std::endl;
+        return false;
+    }
+
+    ndata_frq = int(nmrpipe_header_data[220 - 1]) * int(nmrpipe_header_data[100 - 1]); // one of them is 1, the other one is true dimension
+
+    spectral_width = double(nmrpipe_header_data[101 - 1]);
+    observed_frequency = double(nmrpipe_header_data[120 - 1]);
+    origin = double(nmrpipe_header_data[102 - 1]);
+    carrier_frequency = double(nmrpipe_header_data[67 - 1]) * observed_frequency;
+
+    stop1 = origin / observed_frequency;
+    begin1 = stop1 + spectral_width / observed_frequency;
+    step1 = (stop1 - begin1) / (ndata_frq); // direct dimension
+    begin1 += step1;                    // here we have to + step because we want to be consistent with nmrpipe program
+                                        // I have no idea why nmrpipe is different than topspin
+
+    spectrum_real=real;
+    spectrum_imag=imag;
+    
+    if(n_verbose>0)
+    {
+        std::cout << "Spectrum size is " << ndata_frq << std::endl;
+        std::cout << "From " << begin1 << " to " << stop1 << " and step is " << step1 << std::endl;
+    }
+
+    if (noise_level < 1e-20)
+    {
+        est_noise_level();
+    }
+
+    return true;
+}
+
+/**
+ * @brief read 1D spectrum
+ * 
+ * @param infname input file name
+ * @param b_negative true: allow negative peaks, false: only positive peaks. Default is true
+ * noise_level is estimated if it is zero
+ * @return true 
+ */
+
+bool fid_1d::read_spectrum(std::string infname, bool b_negative)
+{
+    bool b_read = 0;
+
+    input_spectrum_fname = infname; // save for later use
+
+    std::string sldw(".ldw"); // my own format
+    std::string stxt(".txt"); // topspin format. saved by totxt command
+    std::string sft1(".ft1"); // nmrPipe format
+    std::string sjson(".json"); // json format
+    std::string scsv(".csv"); // csv format, used by Mnova software
+
+    if (std::equal(stxt.rbegin(), stxt.rend(), infname.rbegin()))
+    {
+        b_read = read_spectrum_txt(infname);
+    }
+    else if (std::equal(sldw.rbegin(), sldw.rend(), infname.rbegin()))
+    {
+        b_read = read_spectrum_ldw(infname);
+    }
+    else if (std::equal(sft1.rbegin(), sft1.rend(), infname.rbegin()))
+    {
+        b_read = read_spectrum_ft(infname);
+    }
+    else if (std::equal(sjson.rbegin(), sjson.rend(), infname.rbegin()))
+    {
+        b_read = read_spectrum_json(infname);
+    }
+    else if (std::equal(scsv.rbegin(), scsv.rend(), infname.rbegin()))
+    {
+        b_read = read_spectrum_csv(infname);
+    }
+    else
+    {
+        b_read = false;
+    }
+
+    if(n_verbose>0)
+    {
+        std::cout << "Spectrum size is " << ndata_frq << std::endl;
+        std::cout << "From " << begin1 << " to " << stop1 << " and step is " << step1 << std::endl;
+    }
+
+    if (noise_level < 1e-20)
+    {
+        est_noise_level();
+    }
+
+    if(b_negative==false)
+    {
+        std::cout<<"Set negative data points to zero."<<std::endl;
+        for(int i=0;i<spectrum_real.size();i++)
+        {
+            spectrum_real[i]=std::max(spectrum_real[i],0.0f);
+        }
+    }
+
+    return b_read;
+}
+/**
+ * @brief read spectrum in csv format by Mnova software
+*/
+bool fid_1d::read_spectrum_csv(std::string fname)
+{
+    std::ifstream fin(fname);
+    if (!fin)
+        return false;
+
+    std::string line;
+    std::vector<std::string> line_split;
+    std::stringstream ss;
+    std::vector<float> ppm;
+    std::vector<float> amplitude;
+
+    while (std::getline(fin, line))
+    {   
+        /**
+         * Remove leading or trailing spaces
+         * Return false if the line is empty
+        */
+        if(ldw_math_spectrum_1d::trim(line)==false)
+        {
+            continue;
+        }
+        /**
+         * Skip comment lines, start with #
+        */
+        if (line[0] == '#')
+        {
+            continue;
+        }
+
+        /**
+         * Split line by space(s)
+        */
+        line_split.clear();
+        ss.clear();
+        ss.str(line);
+        std::string temp;
+        while (ss >> temp)
+        {
+            line_split.push_back(temp);
+        }
+
+        /**
+         * The first column is ppm, the second column is amplitude. Ignore the rest
+        */
+        if(line_split.size()>=2)
+        {
+            ppm.push_back(std::stof(line_split[0]));
+            amplitude.push_back(std::stof(line_split[1]));
+        }
+    }
+
+    ndata_frq = amplitude.size();
+    begin1 = ppm[0];
+    stop1 = ppm[ndata_frq - 1];
+    step1 = (stop1 - begin1) / (ndata_frq - 1);
+
+    observed_frequency = 850.0; //default value, suppose it is 850
+    carrier_frequency = 4.7; //default value, suppose it is 4.7 ppm
+
+    spectrum_real = amplitude;
+
+    ndata_frq = amplitude.size();
+
+    return true;
+
+}
+/**
+ * @brief read spectrum in json format by Gissmo project
+*/
+bool fid_1d::read_spectrum_json(std::string infname)
+{
+
+    Json::Value root;
+    std::ifstream fin(infname);
+    if (!fin)
+        return false;
+
+    fin >> root;
+
+    Json::Value data1, data2;
+    data1 = root[0]; // ppm
+    data2 = root[1]; // amplitude
+
+    std::vector<float> ppm;
+
+    for (int i = 0; i < data2.size(); i += 1)
+    {
+        if(data2[i].isDouble()==true)
+        {
+            spectrum_real.push_back(data2[i].asDouble());
+        }
+        else if(data2[i].isString()==true)
+        {
+            spectrum_real.push_back(std::stof(data2[i].asString()));
+        }
+        else
+        {
+            std::cout<<"Error: fid_1d::read_spectrum_json, data2[i] is not double or string."<<std::endl;
+            return false;
+        }
+
+        if(data1[i].isDouble()==true)
+        {
+            ppm.push_back(data1[i].asDouble());
+        }
+        else if(data1[i].isString()==true)
+        {
+            ppm.push_back(std::stof(data1[i].asString()));
+        }
+        else
+        {
+            std::cout<<"Error: fid_1d::read_spectrum_json, data1[i] is not double or string."<<std::endl;
+            return false;
+        }
+    }
+    // std::reverse(spe.begin(),spe.end());
+
+    ndata_frq = spectrum_real.size();
+    begin1 = ppm[0];
+    stop1 = ppm[ndata_frq - 1];
+    step1 = (stop1 - begin1) / (ndata_frq - 1);
+
+    observed_frequency = 850.0; //default value, suppose it is 850
+    carrier_frequency = 4.7; //default value, suppose it is 4.7 ppm
+
+    ndata_frq = spectrum_real.size();
+
+    return true;
+};
+
+/**
+ * @brief read 1D spectrum from nmrPipe ft1 file. Will try to read imaginary part as well
+*/
+bool fid_1d::read_spectrum_ft(std::string infname)
+{
+    FILE *fp;
+    fp = fopen(infname.c_str(), "rb");
+    if (fp == NULL)
+    {
+        std::cout << "Can't open " << infname << " to read." << std::endl;
+        return false;
+    }
+    unsigned int temp = fread(nmrpipe_header_data.data(), sizeof(float), 512, fp);
+    if (temp != 512)
+    {
+        std::cout << "Wrong file format, can't read 2048 bytes of head information from " << infname << std::endl;
+        return false;
+    }
+
+    // nmrPipe::nmrpipe_header_to_dictionary(nmrpipe_header_data.data(), dict_string, dict_float);
+
+    if (nmrpipe_header_data[10 - 1] != 1.0f)
+    {
+        std::cout << "Wrong file format, dimension (header[9]) is " << nmrpipe_header_data[0] << std::endl;
+        return false;
+    }
+
+    if (nmrpipe_header_data[222 - 1] == 0.0f) // transposed?
+    {
+        ndata_frq = int(nmrpipe_header_data[100 - 1]); //FDSIZE
+    }
+    else
+    {
+        ndata_frq = int(nmrpipe_header_data[220 - 1]); //FDSPECNUM
+    }
+
+    ndata_frq = int(nmrpipe_header_data[220 - 1]) * int(nmrpipe_header_data[100 - 1]); // one of them is 1, the other one is true dimension
+
+    spectral_width = double(nmrpipe_header_data[101 - 1]); //FDF2SW
+    observed_frequency = double(nmrpipe_header_data[120 - 1]); //FDF2OBS
+    origin = double(nmrpipe_header_data[102 - 1]); //FDF2ORIG
+    carrier_frequency = double(nmrpipe_header_data[67 - 1]) * observed_frequency; //FDF2CAR
+
+    stop1 = origin / observed_frequency;
+    begin1 = stop1 + spectral_width / observed_frequency; 
+    step1 = (stop1 - begin1) / (ndata_frq); 
+    /**
+     * here we have to + step because we want to be consistent with nmrpipe program
+     * I have no idea why nmrpipe is different than topspin
+    */
+    begin1 += step1;           
+
+    spectrum_real.clear();
+    spectrum_real.resize(ndata_frq);
+    temp = fread(spectrum_real.data(), sizeof(float), ndata_frq, fp);
+
+    if (temp != ndata_frq)
+    {
+        std::cout << "Read nmrPipe 1D error, spectrum size is " << ndata_frq << " but I can only read in " << temp << " data points." << std::endl;
+    }
+
+    spectrum_imag.resize(ndata_frq);
+    temp = fread(spectrum_imag.data(), sizeof(float), ndata_frq, fp);
+    if (temp == ndata_frq)
+    {
+        if(n_verbose>0) std::cout << "Read nmrPipe 1D imaginary part successully." << std::endl;
+    }
+    else
+    {
+        if(n_verbose>0) std::cout << "Read nmrPipe 1D  imaginary part failed." << std::endl;
+        spectrum_imag.clear();
+    }
+
+    fclose(fp);
+
+
+    return true;
+};
+
+/**
+ * @brief write 1D spectrum to a file. Format is decided by file extension
+ * .ft1 .json or .txt
+*/
+bool fid_1d::write_spectrum(std::string fname)
+{
+    bool b_write = false;
+    std::string path_name, file_name, file_name_ext;
+    /**
+     * Get path name, file name and file extension
+    */
+    ldw_math_spectrum_1d::SplitFilename(fname, path_name, file_name, file_name_ext);
+
+    if(file_name_ext=="ft1")
+    {
+        b_write=write_nmrpipe_ft1(fname);
+    }
+    else if(file_name_ext=="json")
+    {
+        b_write=write_spectrum_json(fname);
+    }
+    else if(file_name_ext=="txt")
+    {
+        b_write=write_spectrum_txt(fname);
+    }
+    else
+    {
+        std::cout<<"Error: fid_1d::write_spectrum, unknown file extension "<<file_name_ext<<std::endl;
+        return false;
+    }
+    return b_write;
+}
+
+
+
+//simple text file format, defined by myself
+bool fid_1d::read_spectrum_ldw(std::string infname)
+{
+    std::ifstream fin(infname);
+
+    float data;
+    while (fin >> data)
+    {
+        spectrum_real.push_back(data);
+        // fin>>data;
+    }
+    fin.close();
+
+    ndata_frq = spectrum_real.size() - 2;
+
+    stop1 = spectrum_real[ndata_frq + 1];
+    begin1 = spectrum_real[ndata_frq];
+    step1 = (stop1 - begin1) / ndata_frq;
+
+    spectrum_real.resize(ndata_frq);
+
+    return true;
+}
+
+//ascii file saved by Topspin totxt command
+bool fid_1d::read_spectrum_txt(std::string infname)
+{
+    std::string line;
+    std::ifstream fin(infname);
+
+    bool b_left = false;
+    bool b_right = false;
+    bool b_size = false;
+
+    spectrum_real.clear();
+
+    //read line by line
+    while (std::getline(fin, line))
+    {
+        //if line is empty, skip
+        if (line.empty())
+        {
+            continue;
+        }
+
+        /**
+         * Example header:
+         * # LEFT = 12.764570236206055 ppm. RIGHT = -3.217077331696382 ppm.
+         * #
+         * # SIZE = 65536 ( = number of points)
+        */
+
+        //if line starts with #, look for key words LEFT, RIGHT in one line and key words SIZE in another line
+        if (line[0] == '#')
+        {
+            if (line.find("LEFT") != std::string::npos && line.find("RIGHT") != std::string::npos)
+            {
+                std::string temp;
+                //get substring after LEFT
+                std::string line_part1 = line.substr(line.find("LEFT") + 4 + 1); // + 1 to skip space
+                std::istringstream iss1(line_part1);
+                iss1 >> temp  >> begin1; //LEFT = 12.09875 ppm
+                b_left = true;
+            
+                std::string line_part2 = line.substr(line.find("RIGHT") + 5 + 1); // + 1 to skip space
+                std::istringstream iss2(line_part2);
+                iss2 >> temp >> stop1; //RIGHT = -3.1234 ppm
+                b_right = true;
+            }
+
+            if(line.find("SIZE") != std::string::npos)
+            {
+                std::string temp;
+                std::string line_part = line.substr(line.find("SIZE") + 4 + 1); // + 1 to skip space
+                std::istringstream iss(line_part);
+                iss >> temp >> ndata_frq; // SIZE = 1024
+                b_size = true;
+            }
+            continue;
+        }
+
+        /* *All other lines are data and they are all float
+        * They should be after the two lines with key words LEFT, RIGHT and SIZE
+        * One number per line
+        * 
+        * Example: (second part is for imaginary part, may not exist)
+        * -3747.75-17118.0i
+        * -3277.5+17781.5i
+        * 2807.25+17781.5i
+        */
+        if (b_left == true && b_right == true && b_size == true)
+        {
+            /**
+             * First, decide if this is a complex spectrum
+            */
+            if(line.find("i") != std::string::npos)
+            {
+                /**
+                 * remove the last character, which is i
+                */
+                line=line.substr(0,line.size()-1);
+                std::string line_part=line;
+
+                /**
+                 * remove first character if it is a + or -
+                */
+                if(line_part[0]=='+' || line_part[0]=='-')
+                {
+                    line_part=line_part.substr(1);
+                }
+
+                /**
+                 * seperate real and imaginary part, using the last + or - as delimiter
+                 * We use line, not line_part, because we need to keep the sign of the first number
+                */
+                std::string real_part=line.substr(0,line.find_last_of("+-"));
+                std::string imag_part=line.substr(line.find_last_of("+-"));
+                
+                /**
+                 * convert string to float, and push back to spect and spe_image
+                */
+                spectrum_real.push_back(std::stof(real_part));
+                /**
+                * Reasons unknown, but the sign of the imaginary part is reversed in Bruker's txt file
+                */
+                spectrum_imag.push_back(-std::stof(imag_part));
+            }
+            else
+            {
+                /**
+                 * This is a real spectrum. Push back to spect only
+                */
+                float data=std::stof(line);
+                spectrum_real.push_back(data);
+            }
+        }
+    }
+
+    if(spectrum_real.size()!=ndata_frq)
+    {
+        std::cout<<"Error: fid_1d::read_spectrum_txt, ndata_frq is not equal to the number of data points. Set ndata_frq=spect.size()"<<std::endl;
+        ndata_frq = spectrum_real.size();
+    }
+
+    if(spectrum_imag.size()!=ndata_frq)
+    {
+        std::cout<<"Error: fid_1d::read_spectrum_txt, ndata_frq is not equal to the number of data points. Remove imaginary data."<<std::endl;
+        spectrum_imag.clear(); //spe_image.size()==0 is used to indicate that there is no imaginary part
+    }
+
+    fin.close();
+
+    step1 = (stop1 - begin1) / ndata_frq;
+
+    observed_frequency = 850.0; //default value, suppose it is 850
+    carrier_frequency = 4.7; //default value, suppose it is 4.7 ppm
+
+/**
+ * For debug
+ */
+// #ifdef DEBUG
+//     std::ofstream fout("spect.txt");
+//     for (int i = 0; i < spect.size(); i++)
+//     {
+//         fout << spect[i] << " " << spe_image[i] << std::endl;
+//     }
+//     fout.close();
+// #endif
+
+    return true;
+}
+
+/**
+ * @brief set spectrum from a vector of data, with ppm information
+ * This is the minimal requirement for a spectrum to be used for picking and fitting.
+ * It gather similar set of information as read from text file or json file. 
+ * read ft1 will get more information, such as SW1, frq1, ref1, etc.
+*/
+bool fid_1d::set_spectrum_from_data(const std::vector<float> &data, const double begin_, const double step_, const double stop_)
+{
+    /**
+     * Set spect and ndata_frq
+    */
+    spectrum_real=data;
+    ndata_frq=spectrum_real.size();
+
+    spectrum_imag.clear(); //spe_image.size()==0 is used to indicate that there is no imaginary part
+    
+    /**
+     * Set begin1, step1, stop1 for ppm information
+    */
+    begin1=begin_;
+    step1=step_;
+    stop1=stop_;
+
+    return true;
+}
+
+/**
+ * @brief write 1D spectrum to a text file
+*/
+bool fid_1d::write_spectrum_txt(std::string outfname)
+{
+    std::ofstream outfile;
+    outfile.open(outfname);
+    if (!outfile.is_open())
+    {
+        std::cout << "Error: cannot open file " << outfname << std::endl;
+        return false;
+    }
+
+    outfile << "# LEFT = " << begin1 << " ppm. RIGHT = " << stop1 << " ppm." << std::endl;
+    outfile << "#" << std::endl;
+    outfile << "# SIZE = " << ndata_frq << " ( = number of points)" << std::endl;
+    outfile << "#" << std::endl;
+
+    if(spectrum_imag.size()==0)
+    {
+        for (int j = 0; j < ndata_frq; j++)
+        {
+            outfile << spectrum_real[j] << std::endl;
+        }
+    }
+    else
+    {
+        for (int j = 0; j < ndata_frq; j++)
+        {
+            /**
+             * Reasons unknown, but the sign of the imaginary part is reversed in Bruker's txt file
+            */
+            float temp_data=-spectrum_imag[j];
+            if(temp_data>=0.0)
+            { 
+                outfile << spectrum_real[j] << "+" << temp_data << "i" << std::endl;
+            }
+            else
+            {
+                outfile << spectrum_real[j] << temp_data << "i" << std::endl;
+            }
+        }
+    }
+    outfile.close();
+    return true;
+}
+
+/**
+ * @brief estimate noise level using a general purpose method: segment by segment variance
+*/
+bool fid_1d::est_noise_level()
+{
+
+    std::vector<double> variances;
+    std::vector<double> sums;
+    int n_segment = ndata_frq / 32;
+    for (int i = 0; i < n_segment; i++)
+    {
+        double sum = 0;
+        for (int j = 0; j < 32; j++)
+        {
+            sum += spectrum_real[i * 32 + j];
+        }
+        sum /= 32;
+        // get variance of each segment
+        double var = 0;
+        for (int j = 0; j < 32; j++)
+        {
+            var += (spectrum_real[i * 32 + j] - sum) * (spectrum_real[i * 32 + j] - sum);
+        }
+        var /= 32;
+
+        variances.push_back(var);
+        sums.push_back(sum);
+    }
+
+    // output the sums and variance of each segment
+    //  std::ofstream fout("variances.txt");
+    //  for(int i=0;i<variances.size();i++)
+    //  {
+    //      fout<<sums[i]<<" "<<variances[i]<<std::endl;
+    //  }
+    //  fout.close();
+
+    int n = variances.size() / 4;
+    nth_element(variances.begin(), variances.begin() + n, variances.end());
+    noise_level = sqrt(variances[n]);
+    if(n_verbose>0) std::cout << "Noise level is estiamted to be " << noise_level << ", using a geneal purpose method." << std::endl;
+
+    return true;
+}
+
+/**
+ * @brief estimate noise level using MAD method of the whole spectrum.
+ * Won't work if the spectrum is not phased and baseline corrected
+*/
+bool fid_1d::est_noise_level_mad()
+{
+
+    int ndim = spectrum_real.size();
+
+    if (noise_level < 1e-20) // estimate noise level
+    {
+        std::vector<float> t = spectrum_real;
+        for (unsigned int i = 0; i < t.size(); i++)
+        {
+            if (t[i] < 0)
+                t[i] *= -1;
+        }
+
+        std::vector<float> scores = t;
+        sort(scores.begin(), scores.end());
+        noise_level = scores[scores.size() / 2] * 1.4826;
+        if (noise_level <= 0.0)
+            noise_level = 0.1; // artificail spectrum w/o noise
+        std::cout << "First round, noise level is " << noise_level << std::endl;
+
+        std::vector<int> flag(ndim, 0); // flag
+
+        for (int i = 0; i < ndim; i++)
+        {
+            if (t[i] > 5.5 * noise_level)
+            {
+                int xstart = std::max(i - 5, 0);
+                int xend = std::min(i + 6, ndim);
+
+                for (int n = xstart; n < xend; n++)
+                {
+                    flag[n] = 1;
+                }
+            }
+        }
+        scores.clear();
+
+        for (int i = 0; i < ndim; i++)
+        {
+            if (flag[i] == 0)
+            {
+                scores.push_back(t[i]);
+            }
+        }
+
+        sort(scores.begin(), scores.end());
+        noise_level = scores[scores.size() / 2] * 1.4826;
+        if (noise_level <= 0.0)
+            noise_level = 0.1; // artificail spectrum w/o noise
+        std::cout << "Final noise level is estiamted to be " << noise_level << std::endl;
+    }
+
+    return true;
+};
+
+
+/**
+ * @brief fid_1d::write_nmrpipe_ft1: write some information
+ * This is mainly for web-server
+*/
+bool fid_1d::write_json(std::string fname)
+{
+    std::ofstream outfile(fname.c_str());
+    if (!outfile.is_open())
+    {
+        std::cout << "Error: cannot open file " << fname << std::endl;
+        return false;
+    }
+
+    Json::Value root;
+    root["ndata"] = ndata;
+    root["ndata_frq"] = ndata_frq;
+    root["ndata_original"] = ndata_original;
+    root["ndata_power_of_2"]=ndata_power_of_2; //We suppose ZF=2 in processing
+    /**
+     * ref1 is the end of the spectrum
+     * carrier_frequency is the middle of the spectrum
+     * SW is the total width of the spectrum
+     * All in Hz.
+     * If read in from a file other than ft1, all will be set to 0
+    */
+    root["carrier_frequency"] = carrier_frequency;
+    root["observed_frequency"]=observed_frequency;
+    root["spectral_width"]=spectral_width; //in Hz
+
+    outfile << root << std::endl;
+    outfile.close();
+
+    return true;
+}
+
+/**
+ * To save memory after peaks picking or fitting. User by 3D picker/fitter classes
+*/
+bool fid_1d::release_spectrum()
+{
+    spectrum_real.clear();
+    return true;
+}
+
+/**
+ * @brief get spectrum as a read-only vector
+*/
+const std::vector<float> & fid_1d::get_spectrum() const
+{
+    return spectrum_real;
+}

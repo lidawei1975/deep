@@ -5,9 +5,9 @@
 #include <Eigen/SparseQR>
 
 
-#include "spectrum_io_1d.h"
+#include "fid_1d.h"
 
-class spectrum_baseline_1d:public spectrum_io_1d
+class spectrum_baseline_1d:public fid_1d
 {
 private:
     /**

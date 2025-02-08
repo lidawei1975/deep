@@ -46,6 +46,10 @@ int main(int argc, char **argv)
     args.push_back("-negative");
     args2.push_back("no");
     args3.push_back("Pick both negative and positive peaks.");
+
+    args.push_back("-shoulder");
+    args2.push_back("no");
+    args3.push_back("Shoulder peak picking.");
     
 
     cmdline.init(args, args2, args3);
@@ -53,11 +57,8 @@ int main(int argc, char **argv)
 
     std::string infname,outfname;
     double user;
-    bool b_negative;
-
-
-    b_negative=false;
-    b_negative=cmdline.query("-negative")=="yes" || cmdline.query("-negative")=="y";
+    bool b_negative=cmdline.query("-negative")=="yes" || cmdline.query("-negative")=="y";
+    bool b_shoulder=cmdline.query("-shoulder")=="yes" || cmdline.query("-shoulder")=="y";
 
 
 
@@ -76,7 +77,7 @@ int main(int argc, char **argv)
         if(x.init(infname)) //read and zero filling
         {
             if (noise_level>1e-20) { x.set_noise_level(noise_level);}
-            x.simple_peak_picking(b_negative); //picking
+            x.simple_peak_picking(b_negative,b_shoulder); //picking
             x.print_peaks_picking(outfname);
         }  
     }

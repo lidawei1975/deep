@@ -1,0 +1,23 @@
+##TITLE= Parameter file, TopSpin 3.6.2
+##JCAMPDX= 5.0
+##DATATYPE= Parameter Values
+##NPOINTS= 1026	$$ modification sequence number
+##ORIGIN= Bruker BioSpin GmbH
+##OWNER= bruschweiler
+$$ 2024-03-14 04:49:51.686 -0400  bruschweiler@cbec850rb
+$$ /home/bruschweiler/Data/Choo/data/Metabolomics/nmr/syringe0.22_N_tb0-1_before sv_13Mar2024-850rb_sx7/14/acqu2s
+$$ process /opt/topspin3.6.2/prog/mod/go4
+##$ACQT0= 0
+##$BF1= 213.772902032
+##$FnMODE= 6
+##$NUC1= <13C>
+##$NusJSP= 0
+##$NusT2= 1
+##$NusTD= 1024
+##$O1= 16032.968
+##$ProjAngle= 0
+##$SFO1= 213.788935
+##$SW= 160.188717636232
+##$SW_h= 34246.5753424658
+##$TD= 1024
+##END=

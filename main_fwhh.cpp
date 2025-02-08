@@ -29,7 +29,7 @@ int main(int argc, char **argv)
     args3.push_back("Arguments file");
 
     args.push_back("-in");
-    args2.push_back("test.ft1"); 
+    args2.push_back("test.ft2"); 
     args3.push_back("input file name (test.ft1)");
 
     args.push_back("-out");

@@ -1,12 +1,12 @@
 #include <array>
 
-#include "spectrum_fwhh_1d.h" //spectrum_io_1d is included in spectrum_fwhh_1d.h
+#include "spectrum_fwhh_1d.h" //fid_1d is included in spectrum_fwhh_1d.h
 #include "phase_dnn.h"
 
 #ifndef SPECTRUM_PHASING_1D_H
 #define SPECTRUM_PHASING_1D_H
 
-class spectrum_phasing_1d : public spectrum_fwhh_1d, public phase_dnn // spectrum_fwhh_1d is a derived class of spectrum_io_1d
+class spectrum_phasing_1d : public spectrum_fwhh_1d, public phase_dnn // spectrum_fwhh_1d is a derived class of fid_1d
 {
 private:
     std::array<double, 2> phase_correction; // phase_correction[0] is total left phase, phase_correction[1] is total right phase

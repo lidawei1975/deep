@@ -72,9 +72,9 @@ std::vector<double> &kernel,int &i0,int &i1, int &j0, int &j1) const
     float wy=(1.0692*gammay+sqrt(0.8664*gammay*gammay+5.5452*sigmay*sigmay))*1.5f;
 
     i0=std::max(0,int(x-wx+0.5));
-    i1=std::min(xdim,int(x+wx+0.5));
+    i1=std::min(ndata_frq,int(x+wx+0.5));
     j0=std::max(0,int(y-wy+0.5));
-    j1=std::min(ydim,int(y+wy+0.5));
+    j1=std::min(ndata_frq_indirect,int(y+wy+0.5));
 
     kernel.clear();
     kernel.resize((i1-i0)*(j1-j0));
@@ -97,40 +97,40 @@ std::vector<double> &kernel,int &i0,int &i1, int &j0, int &j1) const
 
 bool spectrum_pick::simple_peak_picking(bool b_negative)
 {
-    for(int j=1;j<ydim-1;j++)
+    for(int j=1;j<ndata_frq_indirect-1;j++)
     {
-        for(int i=1;i<xdim-1;i++)
+        for(int i=1;i<ndata_frq-1;i++)
         {
-            if (spect[j * xdim + i] > noise_level * user_scale 
-            && spect[j * xdim + i] > spect[j * xdim + i + 1] 
-            && spect[j * xdim + i] > spect[j * xdim + i - 1] 
-            && spect[j * xdim + i] > spect[j * xdim + xdim + i] 
-            && spect[j * xdim + i] > spect[j * xdim - xdim + i]
-            && spect[j * xdim + i] > noise_level*user_scale)
+            if (spect[j * ndata_frq + i] > noise_level * user_scale 
+            && spect[j * ndata_frq + i] > spect[j * ndata_frq + i + 1] 
+            && spect[j * ndata_frq + i] > spect[j * ndata_frq + i - 1] 
+            && spect[j * ndata_frq + i] > spect[j * ndata_frq + ndata_frq + i] 
+            && spect[j * ndata_frq + i] > spect[j * ndata_frq - ndata_frq + i]
+            && spect[j * ndata_frq + i] > noise_level*user_scale)
             {
                 p1.push_back(i);
                 p2.push_back(j);
-                p_intensity.push_back(spect[j * xdim + i]);
+                p_intensity.push_back(spect[j * ndata_frq + i]);
             }
         }
     }
 
     if(b_negative)
     {
-         for(int j=1;j<ydim-1;j++)
+         for(int j=1;j<ndata_frq_indirect-1;j++)
         {
-            for(int i=1;i<xdim-1;i++)
+            for(int i=1;i<ndata_frq-1;i++)
             {
-                if (-spect[j * xdim + i] > noise_level * user_scale 
-                && -spect[j * xdim + i] > -spect[j * xdim + i + 1] 
-                && -spect[j * xdim + i] > -spect[j * xdim + i - 1] 
-                && -spect[j * xdim + i] > -spect[j * xdim + xdim + i] 
-                && -spect[j * xdim + i] > -spect[j * xdim - xdim + i]
-                && -spect[j * xdim + i] > -noise_level*user_scale)
+                if (-spect[j * ndata_frq + i] > noise_level * user_scale 
+                && -spect[j * ndata_frq + i] > -spect[j * ndata_frq + i + 1] 
+                && -spect[j * ndata_frq + i] > -spect[j * ndata_frq + i - 1] 
+                && -spect[j * ndata_frq + i] > -spect[j * ndata_frq + ndata_frq + i] 
+                && -spect[j * ndata_frq + i] > -spect[j * ndata_frq - ndata_frq + i]
+                && -spect[j * ndata_frq + i] > -noise_level*user_scale)
                 {
                     p1.push_back(i);
                     p2.push_back(j);
-                    p_intensity.push_back(spect[j * xdim + i]);
+                    p_intensity.push_back(spect[j * ndata_frq + i]);
                 }
             }
         }   
@@ -179,7 +179,7 @@ bool spectrum_pick::adjust_ppp_of_spectrum(double target_ppp)
      * Now we need to interpolate the spectrum
      * xdim_new is the new size of the spectrum along direct (x) dimension
      */
-    int xdim_new = int(std::round(xdim / current_interpolation_step_direct));
+    int xdim_new = int(std::round(ndata_frq / current_interpolation_step_direct));
 
     /**
      * Intermediate spectrum after interpolation along direct dimension
@@ -187,13 +187,13 @@ bool spectrum_pick::adjust_ppp_of_spectrum(double target_ppp)
     */
     std::vector<float> spect_intermediate; 
 
-    for(int i=0;i<ydim;i++)
+    for(int i=0;i<ndata_frq_indirect;i++)
     {
         /**
          * Define a cubic spline interpolation object for this row
          * WE need to convert the pointer to a vector
         */
-        std::vector<float> row_data(spect+i*xdim,spect+(i+1)*xdim);
+        std::vector<float> row_data(spect+i*ndata_frq,spect+(i+1)*ndata_frq);
         cublic_spline cs;
         cs.calculate_coefficients(row_data); //defined in cubic_spline.h
 
@@ -212,14 +212,14 @@ bool spectrum_pick::adjust_ppp_of_spectrum(double target_ppp)
      */
     double current_interpolation_step_indirect=ppp_indirect/target_ppp;
     std::cout<<"Interpolation step size is "<<current_interpolation_step_indirect<<" in indirect dimension."<<std::endl;
-    int ydim_new = int(std::round(ydim / current_interpolation_step_indirect));
+    int ydim_new = int(std::round(ndata_frq_indirect / current_interpolation_step_indirect));
 
     /**
      * delete spect and re-allocate memory
     */
-    delete[] spect;
-    spect=new float[xdim_new*ydim_new];
-
+    spectrum_real_real.clear();
+    spectrum_real_real.resize(xdim_new*ydim_new);
+    spect=spectrum_real_real.data();
 
 
     for(int i=0;i<xdim_new;i++)
@@ -229,7 +229,7 @@ bool spectrum_pick::adjust_ppp_of_spectrum(double target_ppp)
          * WE need to convert the pointer to a vector
         */
         std::vector<float> col_data;
-        for(int j=0;j<ydim;j++)
+        for(int j=0;j<ndata_frq_indirect;j++)
         {
             col_data.push_back(spect_intermediate[j*xdim_new+i]);
         }
@@ -249,8 +249,8 @@ bool spectrum_pick::adjust_ppp_of_spectrum(double target_ppp)
      * We have upated spect. Now update xdim,ydim,step1,step2
      * unit of step1(step2) is ppm, not points
     */
-    xdim=xdim_new;
-    ydim=ydim_new;
+    ndata_frq=xdim_new;
+    ndata_frq_indirect=ydim_new;
     step1=current_interpolation_step_direct*step1;
     step2=current_interpolation_step_indirect*step2;
 
@@ -262,7 +262,7 @@ bool spectrum_pick::adjust_ppp_of_spectrum(double target_ppp)
     /**
      * print spectrum size and new step1,step2 to inform user
     */
-    std::cout<<"After interpolation, spectrum size is "<<xdim<<" "<<ydim<<std::endl;
+    std::cout<<"After interpolation, spectrum size is "<<ndata_frq<<" "<<ndata_frq_indirect<<std::endl;
     std::cout<<"After interpolation, step1,step2 is "<<step1<<" "<<step2<<std::endl;
 
     /**
@@ -291,13 +291,13 @@ bool spectrum_pick::ann_peak_picking(int flag, int flag_t1_noise, bool b_negativ
 
     std::vector<float> sp;
 
-    sp.assign(spect, spect + xdim * ydim);
+    sp.assign(spect, spect + ndata_frq * ndata_frq_indirect);
     for (int i = 0; i < sp.size(); i++)
     {
         if (sp[i] < 0.0)
             sp[i] = 0.0;
     }
-    p.init_spectrum(xdim, ydim, noise_level, user_scale, user_scale2, sp, 1);
+    p.init_spectrum(ndata_frq, ndata_frq_indirect, noise_level, user_scale, user_scale2, sp, 1);
     p.predict();
     // get p1,p2,p_intensity,sigma,gamma from ANN here
 
@@ -310,7 +310,7 @@ bool spectrum_pick::ann_peak_picking(int flag, int flag_t1_noise, bool b_negativ
     if (b_negative == true)
     {
         sp.clear();
-        sp.assign(spect, spect + xdim * ydim);
+        sp.assign(spect, spect + ndata_frq * ndata_frq_indirect);
         for (int i = 0; i < sp.size(); i++)
         {
             if (sp[i] < 0.0)
@@ -320,7 +320,7 @@ bool spectrum_pick::ann_peak_picking(int flag, int flag_t1_noise, bool b_negativ
         }
         class peak2d pp(flag); //flag==0:  run special case, 1: not run. 2: inertia based method
         pp.init_ann(model_selection); //read in ann parameters. 1: protein para set, 2: meta para set.
-        pp.init_spectrum(xdim, ydim, noise_level, user_scale, user_scale2, sp, 1);
+        pp.init_spectrum(ndata_frq, ndata_frq_indirect, noise_level, user_scale, user_scale2, sp, 1);
         pp.predict();
         // get p1,p2,p_intensity,sigma,gamma from ANN here
         int n = p_intensity.size();
@@ -358,7 +358,7 @@ bool spectrum_pick::ann_peak_picking(int flag, int flag_t1_noise, bool b_negativ
     {
         for (int i = p1.size() - 1; i >= 0; i--)
         {
-            int pp1 = std::min(std::max(0,int(p1[i] + 0.5)),xdim-1);
+            int pp1 = std::min(std::max(0,int(p1[i] + 0.5)),ndata_frq-1);
             int pp2 = int(p2[i] + 0.5);
             if (fabs(p_intensity[i]) <= noise_level_columns[pp1] * user_scale )
             {
@@ -469,8 +469,8 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
         {
             //.tab file for nmrDraw
             FILE *fp = fopen(file_names[m].c_str(), "w");
-            fprintf(fp,"DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n",xdim,begin1,stop1);
-            fprintf(fp,"DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n",ydim,begin2,stop2);
+            fprintf(fp,"DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n",ndata_frq,begin1,stop1);
+            fprintf(fp,"DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n",ndata_frq_indirect,begin2,stop2);
             fprintf(fp,"VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT ASS CONFIDENCE POINTER\n");
             fprintf(fp,"FORMAT %%5d %%9.3f %%9.3f %%10.6f %%10.6f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%s %%4.2f %%3s\n");
             for (unsigned int ii = 0; ii < ndx.size(); ii++)

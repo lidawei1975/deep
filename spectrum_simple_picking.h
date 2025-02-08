@@ -5,10 +5,10 @@
 
 #ifndef SPECTRUM_IO_HEAD
 #define SPECTRUM_IO_HEAD
-#include "spectrum_io.h"
+#include "fid_2d.h"
 #endif
 
-class spectrum_simple_pick : public spectrum_io
+class spectrum_simple_pick : public fid_2d
 {
 private:
 protected:
@@ -29,6 +29,6 @@ public:
     spectrum_simple_pick();
     ~spectrum_simple_pick();
 
-    bool simple_peak_picking(bool b_negative = false);
+    bool simple_peak_picking(bool b_negative = false, bool b_shoulder = false);
     bool print_peaks_picking(std::string);
 };
