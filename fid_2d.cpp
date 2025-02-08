@@ -1,6 +1,7 @@
 #include <vector>
 #include <valarray>
 #include <set>
+#include <array>
 #include <fstream>
 #include <iostream>
 #include <cstring>

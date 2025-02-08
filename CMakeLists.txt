@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.5)
 
 
 
@@ -14,7 +14,7 @@ configure_file(DeepConfig.h.in DeepConfig.h)
 
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG")
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
 
 find_package(Eigen3 REQUIRED)
 include_directories(${EIGEN3_INCLUDE_DIR})
@@ -131,7 +131,10 @@ add_test(NAME test_peak_match COMMAND /usr/bin/env perl test_peak_match.pl)
 
 
 add_executable(test_functors test_functors.cpp cost_functions.cpp kiss_fft.c)
+target_include_directories(test_functors PRIVATE ${CERES_INCLUDE_DIRS})
+target_include_directories(test_functors PRIVATE ${EIGEN3_INCLUDE_DIR})
 target_link_libraries(test_functors libcerf)
+target_link_libraries(test_functors ${CERES_LIBRARIES})
 add_test(NAME test_functors COMMAND test_functors)
 
 add_test(NAME test_fid_phase COMMAND /usr/bin/env perl test_fid_phase.pl)
