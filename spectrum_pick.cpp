@@ -207,6 +207,18 @@ bool spectrum_pick::adjust_ppp_of_spectrum(double target_ppp)
     }
 
     /**
+     * We need to interpolate noise_level_columns (along direct dimension, just like a row data) as well
+    */
+    cublic_spline cs;
+    cs.calculate_coefficients(noise_level_columns); //defined in cubic_spline.h
+    std::vector<double> noise_level_columns_new;
+    for (int k = 0; k < xdim_new; k++)
+    {
+        noise_level_columns_new.push_back(cs.calculate_value(k * current_interpolation_step_direct));
+    }
+    noise_level_columns=noise_level_columns_new;
+
+    /**
      * Now we need to interpolate the spectrum along indirect dimension (y)
      * y_dim_new is the new size of the spectrum along indirect (y) dimension
      */
@@ -244,6 +256,18 @@ bool spectrum_pick::adjust_ppp_of_spectrum(double target_ppp)
             spect[k*xdim_new+i]=cs.calculate_value(k * current_interpolation_step_indirect);
         }
     }
+
+    /**
+     * Now we need to interpolate noise_level_rows (along indirect dimension, just like a column data) as well
+    */
+    cublic_spline cs2;
+    cs2.calculate_coefficients(noise_level_rows); //defined in cubic_spline.h
+    std::vector<double> noise_level_rows_new;
+    for (int k = 0; k < ydim_new; k++)
+    {
+        noise_level_rows_new.push_back(cs2.calculate_value(k * current_interpolation_step_indirect));
+    }
+    noise_level_rows=noise_level_rows_new;
 
     /**
      * We have upated spect. Now update xdim,ydim,step1,step2
