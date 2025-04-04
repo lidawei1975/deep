@@ -11,8 +11,12 @@
 namespace ldw_math_spectrum_2d
 {
     bool SplitFilename (const std::string& str, std::string &path_name, std::string &file_name, std::string &file_name_ext);
+    
     double calcualte_median(std::vector<double> scores);
-    void sortArr(std::vector<double> &arr, std::vector<int> &ndx);
+    
+    template<typename T>
+    void sortArr(std::vector<T> &arr, std::vector<int> &ndx);
+    
     bool spline_expand(int ndata_frq, int ydim, float *spect,std::vector<double> &final_data);
 };
 

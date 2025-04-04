@@ -219,9 +219,10 @@ namespace ldw_math_spectrum_2d
         }
     };
 
-    void sortArr(std::vector<double> &arr, std::vector<int> &ndx)
+    template <typename T>
+    void sortArr(std::vector<T> &arr, std::vector<int> &ndx)
     {
-        std::vector<std::pair<double, int>> vp;
+        std::vector<std::pair<T, int>> vp;
 
         for (int i = 0; i < arr.size(); ++i)
         {
@@ -235,6 +236,12 @@ namespace ldw_math_spectrum_2d
             ndx.push_back(vp[i].second);
         }
     };
+
+    template void sortArr<int>(std::vector<int> &arr, std::vector<int> &ndx);
+    template void sortArr<float>(std::vector<float> &arr, std::vector<int> &ndx);
+    template void sortArr<double>(std::vector<double> &arr, std::vector<int> &ndx);
+    
+
 
     int next_power_of_2(int n)
     {

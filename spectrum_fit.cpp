@@ -1805,23 +1805,46 @@ bool gaussian_fit::run(int flag_first)
         }
 
 
-        //actual remove peaks
-        for (int i = to_remove.size() - 1; i >= 0; i--)
+        /**
+         * Acutal remove peaks if surface.size == 1 
+        */
+        if(surface.size()==1)
         {
-            if (to_remove[i]==1)
+            for (int i = to_remove.size() - 1; i >= 0; i--)
             {
-                a.erase(a.begin() + i);
-                x.erase(x.begin() + i);
-                y.erase(y.begin() + i);
-                sigmax.erase(sigmax.begin() + i);
-                sigmay.erase(sigmay.begin() + i);
-                gammax.erase(gammax.begin() + i);
-                gammay.erase(gammay.begin() + i);
-                num_sum.erase(num_sum.begin() + i);
-                err.erase(err.begin() + i);
-                original_ndx.erase(original_ndx.begin() + i);
-                to_remove.erase(to_remove.begin() + i);
-                valid_fit_region.erase(valid_fit_region.begin()+i);
+                if (to_remove[i]==1)
+                {
+                    a.erase(a.begin() + i);
+                    x.erase(x.begin() + i);
+                    y.erase(y.begin() + i);
+                    sigmax.erase(sigmax.begin() + i);
+                    sigmay.erase(sigmay.begin() + i);
+                    gammax.erase(gammax.begin() + i);
+                    gammay.erase(gammay.begin() + i);
+                    num_sum.erase(num_sum.begin() + i);
+                    err.erase(err.begin() + i);
+                    original_ndx.erase(original_ndx.begin() + i);
+                    to_remove.erase(to_remove.begin() + i);
+                    valid_fit_region.erase(valid_fit_region.begin()+i);
+                }
+            }
+        }
+        else 
+        {
+            /**
+             * For pseudo 3D spectra, we do not remove peaks
+             * But set a to [0,0,0,...] as a flag. Also set num_sum[i] to [0,0,0,...]
+             * do not change x,y,sigmax,sigmay,gammax,gammay
+            */
+            for (int i = to_remove.size() - 1; i >= 0; i--)
+            {
+                if (to_remove[i]==1)
+                {
+                    a[i].clear();
+                    a[i].resize(surface.size(),0.0);
+                    num_sum[i].clear();
+                    num_sum[i].resize(surface.size(), 0.0);
+                }
             }
         }
     }
@@ -4395,12 +4418,23 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
             amplitudes = p_intensity;
         }
 
-        if(c==-1) //sort peaks according to height fitted without addtional noise
+        if(c==-1) 
         {
-            ldw_math_spectrum_2d::sortArr(amplitudes, ndx);
-            std::reverse(ndx.begin(), ndx.end());
-            // ndx.clear();
-            // for(int m=0;m<amplitudes.size();m++) ndx.push_back(m);
+            if (spects.size() > 1)
+            {
+                /**
+                 * For pseudo3D fitting, keep the order of peaks according to the order read from the input peak file.
+                */
+                ldw_math_spectrum_2d::sortArr(peak_index, ndx);
+            }
+            else
+            {
+                /**
+                 * For single spectrum fitting, sort peaks according to height fitted without addtional noise
+                */
+                ldw_math_spectrum_2d::sortArr(amplitudes, ndx);
+                std::reverse(ndx.begin(), ndx.end());
+            }
         }
 
         //if multiple spectral file.
@@ -4442,12 +4476,26 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
             //rescale amplitudes_all_spectra using first spectrum
             for (int i = 0; i < p_intensity_all_spectra.size(); i++)
             {
-                for (int k = 1; k < p_intensity_all_spectra[i].size(); k++)
+                /**
+                 * Prevent division by zero error in case of removed peaks in pseudo3D fitting
+                */
+                if (fabs(p_intensity_all_spectra[i][0]) < std::numeric_limits<double>::epsilon())
                 {
-
-                    amplitudes_all_spectra[i][k] /= amplitudes_all_spectra[i][0];
+                    for (int k = 0; k < p_intensity_all_spectra[i].size(); k++)
+                    {
+                        amplitudes_all_spectra[i][k] = 0.0;
+                    }
+                    continue;
                 }
-                amplitudes_all_spectra[i][0] = 1.0;
+                else
+                {
+                    for (int k = 1; k < p_intensity_all_spectra[i].size(); k++)
+                    {
+
+                        amplitudes_all_spectra[i][k] /= p_intensity_all_spectra[i][0];
+                    }
+                    amplitudes_all_spectra[i][0] = 1.0;
+                }
             }
         }
 
