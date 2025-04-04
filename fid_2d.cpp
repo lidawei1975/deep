@@ -3513,6 +3513,15 @@ bool fid_2d::process_pipe_header(std::vector<float> &header)
 bool fid_2d::write_pipe(std::vector<std::vector<float>> spect, std::string fname)
 {
 
+    if(b_read_nmrpipe_fid == false)
+    {
+        /**
+         * Initialize the header with all zeros
+        */
+        nmrpipe_header_data.clear();
+        nmrpipe_header_data.resize(512, 0.0f);
+    }
+
     if (1) // otherwise we just use the input header
     {
         nmrpipe_header_data[0] = 0.0f;
