@@ -5056,20 +5056,6 @@ bool spectrum_fit::peak_reading_pipe(std::string fname)
         }
     }
 
-    //fill in intensity information from spectrum
-    if(height==-1)
-    {
-        for(int i=0;i<p1.size();i++)
-        {
-            int n1=int(p1[i]+0.5)-1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
-            int n2=int(p2[i]+0.5)-1;
-            if(n1<0) n1=0; if(n1>ndata_frq-1) n1=ndata_frq-1;
-            if(n2<0) n2=0; if(n2>ndata_frq_indirect-1) n2=ndata_frq_indirect-1; //water proof
-            p_intensity[i]=spect[n2*ndata_frq+n1]; //n1 is direct dimension; n2 is indirect
-        }
-    }
-
-
     if(p1_ppm.size()>0) //fill in point from ppm. 
     {
         p1.clear();
@@ -5094,6 +5080,20 @@ bool spectrum_fit::peak_reading_pipe(std::string fname)
             p2_ppm.push_back(f2);
         }
     }
+    
+    //fill in intensity information from spectrum
+    if(height==-1)
+    {
+        for(int i=0;i<p1.size();i++)
+        {
+            int n1=int(p1[i]+0.5)-1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
+            int n2=int(p2[i]+0.5)-1;
+            if(n1<0) n1=0; if(n1>ndata_frq-1) n1=ndata_frq-1;
+            if(n2<0) n2=0; if(n2>ndata_frq_indirect-1) n2=ndata_frq_indirect-1; //water proof
+            p_intensity[i]=spect[n2*ndata_frq+n1]; //n1 is direct dimension; n2 is indirect
+        }
+    }
+    
     return true;
 }
 
