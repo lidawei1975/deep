@@ -4489,10 +4489,10 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
                 }
                 else
                 {
-                    for (int k = 1; k < p_intensity_all_spectra[i].size(); k++)
+                    for (int k = 1; k < amplitudes_all_spectra[i].size(); k++)
                     {
 
-                        amplitudes_all_spectra[i][k] /= p_intensity_all_spectra[i][0];
+                        amplitudes_all_spectra[i][k] /= amplitudes_all_spectra[i][0];
                     }
                     amplitudes_all_spectra[i][0] = 1.0;
                 }
