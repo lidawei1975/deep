@@ -7,7 +7,7 @@
 
 use strict;
 
-my $exe = "./deep_picker -in plane001.ft2 -noise_level 233038.28125 -scale 18.5625 -scale2 11.1375";
+my $exe = "./deep_picker -in plane001.ft2 -noise_level 233038.28125 -scale 18.5625 -scale2 11.1375 -out peaks.tab";
 
 my $out = `$exe`;
 

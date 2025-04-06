@@ -8,7 +8,7 @@
 
 use strict;
 
-my $exe = "./voigt_fit -method voigt -in plane001.ft2 -noise_level 233038.28125 -scale 18.5625 -scale2 11.1375";
+my $exe = "./voigt_fit -method voigt -in plane001.ft2 -noise_level 233038.28125 -scale 18.5625 -scale2 11.1375 -peak_in peaks.tab";
 
 my $out = `$exe`;
 

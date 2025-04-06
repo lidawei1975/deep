@@ -131,10 +131,7 @@ add_test(NAME test_peak_match COMMAND /usr/bin/env perl test_peak_match.pl)
 
 
 add_executable(test_functors test_functors.cpp cost_functions.cpp kiss_fft.c)
-target_include_directories(test_functors PRIVATE ${CERES_INCLUDE_DIRS})
-target_include_directories(test_functors PRIVATE ${EIGEN3_INCLUDE_DIR})
 target_link_libraries(test_functors libcerf)
-target_link_libraries(test_functors ${CERES_LIBRARIES})
 add_test(NAME test_functors COMMAND test_functors)
 
 add_test(NAME test_fid_phase COMMAND /usr/bin/env perl test_fid_phase.pl)

@@ -12,8 +12,6 @@ my $exe = "./voigt_fit -method voigt -in plane001.ft2 plane002.ft2 plane003.ft2 
 
 my $out = `$exe`;
 
-print($out);
-
 
 
 my @data1 = (8.585261,123.779270,0.7085,0.4992);  
