@@ -131,6 +131,7 @@ add_test(NAME test_peak_match COMMAND /usr/bin/env perl test_peak_match.pl)
 
 
 add_executable(test_functors test_functors.cpp cost_functions.cpp kiss_fft.c)
+target_compile_definitions(test_functors PRIVATE LMMIN)
 target_link_libraries(test_functors libcerf)
 add_test(NAME test_functors COMMAND test_functors)
 

@@ -450,10 +450,10 @@ bool mycostfunction_lorentz1d::Evaluate(double const *const *xx, double *residua
     {
         for (int i = 0; i < n_datapoint; i++)
         {
-            double v = 1 / (1 + (2 * (i - x0) / gamma) * (2 * (i - x0) / gamma));
+            double v = 1 / (1 + ( (i - x0) / gamma) * ( (i - x0) / gamma));
             double v2 = v * v;
             double gamma2 = gamma * gamma;
-            double av = a * v2 * 8;
+            double av = a * v2 * 2;
 
             residual[i] = a * v - z[i];
             jaco[0][i] = v;                                             // with respect to a
@@ -465,7 +465,7 @@ bool mycostfunction_lorentz1d::Evaluate(double const *const *xx, double *residua
     {
         for (int i = 0; i < n_datapoint; i++)
         {
-            residual[i] = a / (1 + (2 * (i - x0) / gamma) * (2 * (i - x0) / gamma)) - z[i];
+            residual[i] = a / (1 + ( (i - x0) / gamma) * ( (i - x0) / gamma)) - z[i];
         }
     }
     return true;

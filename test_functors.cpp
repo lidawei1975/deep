@@ -3,8 +3,6 @@
 #include <iostream>
 
 
-#define LMMIN
-
 #include "cost_functors.h"
 
 int test_voigt_lorentz()
