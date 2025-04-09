@@ -33,6 +33,14 @@ int main(int argc, char **argv)
     args2.push_back("3.0");
     args3.push_back("User defined noise floor scale factor for peak picking");
 
+    args.push_back("-scale_negative");
+    args2.push_back("5.5");
+    args3.push_back("User defined minimal peak intensity scale for negative peak picking");
+
+    args.push_back("-scale2_negative");
+    args2.push_back("3.0");
+    args3.push_back("User defined noise floor scale factor for negative peak picking");
+
     args.push_back("-noise_level");
     args2.push_back("0");
     args3.push_back("Direct set noise level to this value, estimate from sepctrum if input is 0.0");
@@ -70,7 +78,8 @@ int main(int argc, char **argv)
     if(!cmdline.pharse(argc, argv)) return 1;
 
     std::string infname,outfname;
-    double user,user2;
+    double user_scale,user_scale2;
+    double user_scale_negative,user_scale2_negative;
     double max_width;
     int model_selection;
     int debug_flag1;
@@ -105,21 +114,33 @@ int main(int argc, char **argv)
     /**
      * peak height cutoff, user defined. must be > 0.0
     */
-    user=atof(cmdline.query("-scale").c_str());
-    if(user<=0.0)
+    user_scale=atof(cmdline.query("-scale").c_str());
+    if(user_scale<=0.0)
     {
         std::cout<<"Error: peak height cutoff must be > 0.0, set it to 5.5"<<std::endl;
-        user=5.5;
+        user_scale=5.5;
+    }
+    user_scale_negative=atof(cmdline.query("-scale_negative").c_str());
+    if(user_scale_negative<=0.0)
+    {
+        std::cout<<"Error: peak height cutoff for negative peaks must be > 0.0, set it to 5.5"<<std::endl;
+        user_scale_negative=5.5;
     }
 
     /**
      * noise floor cutoff, user defined. must be > 0.0
     */
-    user2=atof(cmdline.query("-scale2").c_str());
-    if(user2<=0.0)
+    user_scale2=atof(cmdline.query("-scale2").c_str());
+    if(user_scale2<=0.0)
     {
         std::cout<<"Error: noise floor cutoff must be > 0.0, set it to 3.0"<<std::endl;
-        user2=3.0;
+        user_scale2=3.0;
+    }
+    user_scale2_negative=atof(cmdline.query("-scale2_negative").c_str());
+    if(user_scale2_negative<=0.0)
+    {
+        std::cout<<"Error: noise floor cutoff for negative peaks must be > 0.0, set it to 3.0"<<std::endl;
+        user_scale2_negative=3.0;
     }
 
     bool b_auto_ppp=cmdline.query("-auto_ppp")=="yes" || cmdline.query("-auto_ppp")=="Yes" || cmdline.query("-auto_ppp")=="YES" || cmdline.query("-auto_ppp")=="y" || cmdline.query("-auto_ppp")=="Y";
@@ -130,7 +151,8 @@ int main(int argc, char **argv)
     if (cmdline.query("-h") != "yes")
     {
         class spectrum_pick x;
-        x.set_scale(user,user2);
+        x.set_scale(user_scale,user_scale2);
+        x.set_scale_negative(user_scale_negative,user_scale2_negative);
         x.set_model_selection(model_selection);
         if(x.init(infname)) //read and zero filling
         {

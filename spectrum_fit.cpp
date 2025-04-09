@@ -1450,17 +1450,22 @@ bool gaussian_fit::voigt_lorentz_convolution_within_region(const int ndx,const d
     return true;
 };
 
-
+/**
+ * This function is used to initialize the gaussian_fit class
+ * get all its parameters about a fitting region and the initial peaks.
+ * We flip the surface (spectra) and aa (peak inten) to make all positive (for negative peaks)
+*/
 bool gaussian_fit::init(int x00,int y00,int xdim_, int ydim_, std::vector< std::vector<double> >surface_, std::vector<double> x_, std::vector<double> y_, 
                     std::vector< std::vector<double> > aa, std::vector<double> sx, std::vector<double> sy, std::vector<double> gx, std::vector<double> gy, std::vector<int> ns, std::vector<int> move_,
                     double mw_x,double mw_y)
 {
-    //at beginning, x and y are all integers!
+    /**
+     * Note: at beginning, x and y are all integers!
+    */
     xstart=x00;
     ystart=y00;
     xdim=xdim_;
     ydim=ydim_;
-    surface=surface_;
     x=x_;
     y=y_;
 
@@ -1469,12 +1474,44 @@ bool gaussian_fit::init(int x00,int y00,int xdim_, int ydim_, std::vector< std::
     gammax=gx;
     gammay=gy;
     
-    a=aa;
     original_ndx=ns;
     cannot_move=move_;
 
     median_width_x=mw_x;
     median_width_y=mw_y;
+
+
+    if(peak_sign==-1)
+    {
+        /**
+         * surface=-(surface_)
+        */
+        surface.resize(surface_.size());
+        for(int i=0;i<surface_.size();i++)
+        {
+            surface[i].resize(surface_[i].size());
+            for(int j=0;j<surface_[i].size();j++)
+            {
+                surface[i][j]=-(surface_[i][j]);
+            }
+        }
+        /**
+         * a = -(aa)
+        */
+        a.resize(aa.size());
+        for(int i=0;i<aa.size();i++)
+        {
+            a[i].resize(aa[i].size());
+            for(int j=0;j<aa[i].size();j++)
+            {
+                a[i][j]=-(aa[i][j]);
+            }
+        }
+    }
+    else{
+        surface=surface_;
+        a=aa;
+    }
 
     //std::cout<<"In this region, npeak is "<<x.size()<<std::endl;
     for(int i=x.size()-1;i>=0;i--)
@@ -3588,6 +3625,21 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
     return true;
 };
 
+bool gaussian_fit::change_sign()
+{
+    if(peak_sign == 1)
+    {
+        return false; //no need to change sign
+    }
+    for (int i = 0; i < a.size(); i++)
+    {
+        for (int j = 0; j < a[i].size(); j++)
+        {
+            a[i][j] = -a[i][j];
+        }
+    }
+    return true;
+}
 
 //for debug only. make sure I didn't fotget to update some variables in peak removal steps.
 bool gaussian_fit::assess_size()
@@ -3721,12 +3773,13 @@ bool spectrum_fit::init_error(int e_flag,int zf1_, int zf2_, int n_)
     
 
 
-//this fucntion decide how peaks are fitted together (depends on whether they overlap or not)
-//only first spectrum is used !!
+/**
+ * This fucntion decide how peaks are fitted together (depends on whether they overlap or not)
+ * It is the 1st step of peak fitting. 
+ * only first spectrum is used !!
+*/
 bool spectrum_fit::peak_partition()
 {
-    std::vector<int> peak_map2;
-
     if(wx>0.0 )
     {
         wx/=fabs(step1);
@@ -3758,9 +3811,9 @@ bool spectrum_fit::peak_partition()
     std::cout<<std::endl;
 
     peak_map.resize(ndata_frq*ndata_frq_indirect,-1);
-    peak_map2.resize(ndata_frq*ndata_frq_indirect,0);
-    // pos_x_correction=new double[p1.size()];
-    // pos_y_correction=new double[p1.size()];
+    peak_map2.resize(ndata_frq*ndata_frq_indirect,0);  //for positive peak
+    peak_map3.resize(ndata_frq*ndata_frq_indirect,0);  //for negative peak
+
     
     for(int i=0;i<p1.size();i++)
     {
@@ -3771,10 +3824,12 @@ bool spectrum_fit::peak_partition()
             std::cout<<"Sth is wrong with the coordinates. in peak_parttition."<<std::endl;
         }
         peak_map[xx*ndata_frq_indirect+yy]=i;
-        // pos_x_correction[i]=p1.at(i)-xx;
-        // pos_y_correction[i]=p2.at(i)-yy;
     }
     
+    /**
+     * peakmap2 is used to map the peak area to the data point index.
+     * All data point around a peak are set to 1, other "peak free" data points are set to 0.
+    */
     for(unsigned int i=0;i<p1.size();i++)
     {
         double d_range=1.5;
@@ -3795,72 +3850,177 @@ bool spectrum_fit::peak_partition()
                 {
                     std::cout<<"Sth is wrong with the coordinates. in peak_parttition."<<std::endl;
                 }
-                peak_map2[m*ndata_frq_indirect+n]=1;
+                if(p_intensity[i]>0)
+                {
+                    peak_map2[m*ndata_frq_indirect+n]=1;
+                }
+                else
+                {
+                    peak_map3[m*ndata_frq_indirect+n]=1;
+                }
             }
         }
     }
 
-    double lowest_level=noise_level*user_scale2;
+    cluster_counter = 0;
+    peak_partition_core(0);
+    peak_partition_core(1);
+
+    return true;
+}
+
+/**
+ * Define the peak region in 2D space, so we can fit them individually.
+ * @param flag: 0 for positive peak, 1 for negative peak
+*/
+bool spectrum_fit::peak_partition_core(int flag) 
+{
+    /**
+     * Peak map is used to map the peak position to the data point index.
+     * -1 means not a peak
+     * >=0 means a peak, and the number is the index of the peak in the peak list.
+    */
+    std::vector<std::vector<int>> peak_segment_b;
+    std::vector<std::vector<int>> peak_segment_s;
+    std::vector<std::deque<std::pair<int, int>>> clusters;
+    
+
+    double lowest_level=noise_level*user_scale2; //cutoff to define connected peak regions
     std::vector< std::vector<int> > used;
-    b.resize(ndata_frq_indirect);
-    s.resize(ndata_frq_indirect);
+    peak_segment_b.resize(ndata_frq_indirect);
+    peak_segment_s.resize(ndata_frq_indirect);
     used.resize(ndata_frq_indirect);
 
-    for(int j=0;j<ndata_frq_indirect;j++)
-    {
-        if(spect[j*ndata_frq+0]>=lowest_level && peak_map2[j]==1) b[j].push_back(0);
-        for(int i=1;i<ndata_frq;i++)
-        {
-            if((fabs(spect[j*ndata_frq+i-1])< lowest_level || peak_map2[j+(i-1)*ndata_frq_indirect]==0) && (fabs(spect[j*ndata_frq+i])>=lowest_level && peak_map2[j+i*ndata_frq_indirect]==1)) b[j].push_back(i);
-            if((fabs(spect[j*ndata_frq+i-1])>=lowest_level && peak_map2[j+(i-1)*ndata_frq_indirect]==1) && (fabs(spect[j*ndata_frq+i]) <lowest_level || peak_map2[j+i*ndata_frq_indirect]==0)) s[j].push_back(i);
-            // if(spect[j*xdim+i-1]<lowest_level  && spect[j*xdim+i]>=lowest_level ) b[j].push_back(i);
-            // if(spect[j*xdim+i-1]>=lowest_level && spect[j*xdim+i]<lowest_level ) s[j].push_back(i);
+    if(flag==0)
+    {   
+        /**
+         * Process positive peaks only
+        */
+        for(int j=0;j<ndata_frq_indirect;j++)
+        {   
+            /**
+             * Work on each direct dimension row. 
+             * b[j] is the beginnings of all peak region, s[j] is the ends of all peak region on the jth row.
+            */
+            if(spect[j*ndata_frq+0]>=lowest_level && peak_map2[j]==1) peak_segment_b[j].push_back(0); //Peak on edge, so we need to add 0 as a beginning
+            for(int i=1;i<ndata_frq;i++)
+            {
+                /**
+                 * Transition from non peak region to peak region. Add it to b[j]
+                */
+                if((spect[j*ndata_frq+i-1]< lowest_level || peak_map2[j+(i-1)*ndata_frq_indirect]==0) && (spect[j*ndata_frq+i]>=lowest_level && peak_map2[j+i*ndata_frq_indirect]==1)){
+                    peak_segment_b[j].push_back(i);
+                }
+                /**
+                 * Transition from peak region to non peak region. Add it to s[j]
+                */
+                if((spect[j*ndata_frq+i-1]>=lowest_level && peak_map2[j+(i-1)*ndata_frq_indirect]==1) && (spect[j*ndata_frq+i] <lowest_level || peak_map2[j+i*ndata_frq_indirect]==0)){
+                    peak_segment_s[j].push_back(i);
+                }
+            }
+            /**
+             * If the last point is a peak, we need to add ndata_frq as the end of the peak region.
+             * This also makes sure b[j] and s[j] have the same size.
+            */
+            if(peak_segment_s[j].size()<peak_segment_b[j].size()) peak_segment_s[j].push_back(ndata_frq);
+            /**
+             * Used is used to mark the peak region of all rows that are already visit in the following breadth first search.
+             * userd have the same size as s and b, in both dimensions.
+            */
+            for(int i=0;i<peak_segment_s[j].size();i++) used[j].push_back(0);
         }
-        if(s[j].size()<b[j].size()) s[j].push_back(ndata_frq);
-        for(int i=0;i<s[j].size();i++) used[j].push_back(0);
+    }
+    /**
+     * Process negative peaks only
+    */
+    else{
+        for(int j=0;j<ndata_frq_indirect;j++)
+        {   
+            /**
+             * Work on each direct dimension row. 
+             * b[j] is the beginnings of all peak region, s[j] is the ends of all peak region on the jth row.
+            */
+            if(spect[j*ndata_frq+0]<=-lowest_level && peak_map3[j]==1) peak_segment_b[j].push_back(0); //Peak on edge, so we need to add 0 as a beginning
+            for(int i=1;i<ndata_frq;i++)
+            {
+                /**
+                 * Transition from non peak region to peak region. Add it to b[j]
+                */
+                if((spect[j*ndata_frq+i-1]> -lowest_level || peak_map3[j+(i-1)*ndata_frq_indirect]==0) && (spect[j*ndata_frq+i]<=-lowest_level && peak_map3[j+i*ndata_frq_indirect]==1)){
+                    peak_segment_b[j].push_back(i);
+                }
+                /**
+                 * Transition from peak region to non peak region. Add it to s[j]
+                */
+                if((spect[j*ndata_frq+i-1]<=-lowest_level && peak_map3[j+(i-1)*ndata_frq_indirect]==1) && (spect[j*ndata_frq+i] > -lowest_level || peak_map3[j+i*ndata_frq_indirect]==0)){
+                    peak_segment_s[j].push_back(i);
+                }
+            }
+            /**
+             * If the last point is a peak, we need to add ndata_frq as the end of the peak region.
+             * This also makes sure b[j] and s[j] have the same size.
+            */
+            if(peak_segment_s[j].size()<peak_segment_b[j].size()) peak_segment_s[j].push_back(ndata_frq);
+            /**
+             * Used is used to mark the peak region of all rows that are already visit in the following breadth first search.
+             * userd have the same size as s and b, in both dimensions.
+            */
+            for(int i=0;i<peak_segment_s[j].size();i++) used[j].push_back(0);
+        }
     }
 
-    if(b.size()!=s.size() || b.size()!=used.size())
-    {
-        std::cout<<"ERROR!!! Size of b is "<<b.size()<<" s is "<<s.size()<<" used is "<<used.size()<<std::endl;
-    }
-    for(int j=0;j<b.size();j++)
-    {
-        if(b[j].size()!=s[j].size() || b[j].size()!=used[j].size())
-        {
-            std::cout<<"ERROR, size of b,s,used inconsistent!!!"<<b[j].size()<<" "<<s[j].size()<<" "<<used[j].size()<<std::endl;
-        }
-    }
-    std::cout<<"check size done."<<std::endl;
-
+    /**
+     * Breadth first search to find all peak clusters 
+     * connected peak regions of all rows in 2D space: neighboring rows and overlap at least one data point.
+    */
     std::deque< std::pair<int,int> > work;
     int position;
 
+    /**
+     * Loop all rows
+    */
     for(int j=0;j<ndata_frq_indirect;j++)
     {
+        /**
+         * and all peak regions in the row
+        */
         for(int i=0;i<used[j].size();i++)
-        {
+        {      
+            /**
+             * If not visited, we need to start a new cluster.
+            */
             if(used[j][i]==0)
             {
-                used[j][i]=1;
-                work.clear();
+                used[j][i]=1; //label as visted
+                work.clear(); //work will be used to store the current cluster. Pair<int,int> is used to store the index of row and index of the peak region.
                 work.push_back(std::pair<int,int>(j,i));
-                position=0;
+                position=0; //breadth first search position
                 while(position<work.size())
                 {
                     std::pair<int,int> c=work[position];
                     position++;
+                    /**
+                     * Search for all neighboring peak regions for the current peak region defined by c
+                     * Only need to check the neighboring rows by definition of peak region.
+                     * (no connected peak region in the same row, no connect jumping to row further than direct neighboring row)
+                    */
                     for(int jj=std::max(0,c.first-1);jj<std::min(ndata_frq_indirect,c.first+2);jj++)
                     {
-                        if(jj==c.first) continue;
+                        if(jj==c.first) continue; //same row, we don't need to check it again
                         for(int ii=0;ii<used[jj].size();ii++)
                         {
+                            /**
+                             * already visited or the same point
+                            */
                             if( (jj==c.first && ii==c.second) || used[jj][ii]==1)
                             {
                                 continue;
                             }
 
-                            if (s[jj][ii]>=b[c.first][c.second] && b[jj][ii]<=s[c.first][c.second])
+                            /**
+                             * At least one data point overlap and the peak region is connected.
+                            */
+                            if (peak_segment_s[jj][ii]>=peak_segment_b[c.first][c.second] && peak_segment_b[jj][ii]<=peak_segment_s[c.first][c.second])
                             {
                                 work.push_back(std::pair<int,int>(jj,ii));
                                 used[jj][ii]=1;
@@ -3868,30 +4028,37 @@ bool spectrum_fit::peak_partition()
                         }
                     }
                 }
-                clusters2.push_back(work);
+                /**
+                 * Save the current cluster to the clusters vector.
+                */
+                clusters.push_back(work);
             }
         }
     }
-    std::cout<<"Total "<<clusters2.size()<<" peak clusters."<<std::endl;
-    return true;
-}
 
-bool spectrum_fit::prepare_fit()
-{
+    if(flag == 0){
+        std::cout<<"Total "<<clusters.size()<<" positive peak clusters."<<std::endl;
+    }
+    else{
+        std::cout<<"Total "<<clusters.size()<<" negative peak clusters."<<std::endl;
+    }
+
+    /**
+     * Part II: prepare data for fitting
+    */
     int min1,min2,max1,max2;
-    int counter=0;
-    for(unsigned int i0=0;i0<clusters2.size();i0++)
+    for(unsigned int i0=0;i0<clusters.size();i0++)
     {
-        // std::cout<<"parepare, "<<i0<<" out of "<<clusters2.size()<<std::endl;
+        // std::cout<<"parepare, "<<i0<<" out of "<<clusters.size()<<std::endl;
         min1=min2=1000000;
         max1=max2=-1000000;
 
-        for (unsigned int i1 = 0; i1 < clusters2[i0].size(); i1++)
+        for (unsigned int i1 = 0; i1 < clusters[i0].size(); i1++)
         {
-            std::pair<int,int> k = clusters2[i0][i1];
+            std::pair<int,int> k = clusters[i0][i1];
             int j=k.first;
-            int begin=b[j][k.second];
-            int stop=s[j][k.second];
+            int begin=peak_segment_b[j][k.second];
+            int stop=peak_segment_s[j][k.second];
 
             if (begin <= min1)
                 min1 = begin;
@@ -3925,12 +4092,12 @@ bool spectrum_fit::prepare_fit()
         xx.clear();yy.clear();sx.clear();sy.clear();ori_index.clear();gx.clear();gy.clear(); //do not need
 
 
-        for(unsigned int i1=0;i1<clusters2[i0].size();i1++)
+        for(unsigned int i1=0;i1<clusters[i0].size();i1++)
         {
-            std::pair<int,int> k = clusters2[i0][i1];
+            std::pair<int,int> k = clusters[i0][i1];
             int j=k.first;
-            int begin=b[j][k.second];
-            int stop=s[j][k.second];
+            int begin=peak_segment_b[j][k.second];
+            int stop=peak_segment_s[j][k.second];
             for(int kk=begin;kk<stop;kk++)
             {
                 if((kk-min1)*(max2-min2)+j-min2<0 || (kk-min1)*(max2-min2)+j-min2>=spect_parts[0].size()) 
@@ -3974,13 +4141,14 @@ bool spectrum_fit::prepare_fit()
         {
             gaussian_fit myfit;
 
-            myfit.set_everything(peak_shape,maxround,counter);
-            // std::cout<<"c="<<counter<<" sizes are "<<sx.size()<<" "<<gx.size()<<std::endl;
+            myfit.set_everything(peak_shape,maxround,cluster_counter);
+            // std::cout<<"c="<<cluster_counter<<" sizes are "<<sx.size()<<" "<<gx.size()<<std::endl;
             myfit.peak_assignments=&user_comments;
+            myfit.peak_sign = flag == 0 ? 1 : -1;
             myfit.init(min1, min2, max1 - min1 , max2 - min2 , spect_parts, xx, yy, aas, sx, sy,gx,gy,ori_index,region_peak_cannot_move_flag,median_width_x,median_width_y);
             myfit.set_peak_paras(wx*1.5,wy*1.5,noise_level,noise_level*user_scale2,too_near_cutoff,step1,step2,removal_cutoff); 
             fits.emplace_back(myfit);
-            counter++;
+            cluster_counter++;
         }
         // std::cout<<"Initialization of cluster "<<i0<<" is done."<<std::endl;
     }
@@ -3991,7 +4159,6 @@ bool spectrum_fit::prepare_fit()
 bool spectrum_fit::peak_fitting()
 {
     peak_partition();
-    prepare_fit();
 
     std::cout<<"Total "<<fits.size()<<" regions to be fitted individually."<<std::endl;
     for(int i=0;i<fits.size();i++)
@@ -4368,6 +4535,14 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
     if(flag_with_error==0)
     {
         err_nround=0;
+    }
+
+    /**
+     * Before gather result. We ask all fits to change sign of their a (peak intensity) values.
+    */
+    for (int i = 0; i < fits.size(); i++)
+    {
+        fits[i].change_sign();
     }
 
     std::vector<int> ndx;
@@ -4776,7 +4951,7 @@ bool spectrum_fit::peak_reading(std::string infname)
     for(int i=0;i<p_intensity.size();i++)
     {
         int ntemp=int(round(p1[i]))+int(round(p2[i]))*ndata_frq;
-        if(p_intensity[i]/spects[0][ntemp]<0.5)
+        if(fabs(p_intensity[i])/fabs(spects[0][ntemp])<0.5)
         {
             peak_cannot_move_flag[i]=1; //peak can't move because of low reliability    
         }
@@ -5080,7 +5255,7 @@ bool spectrum_fit::peak_reading_pipe(std::string fname)
             p2_ppm.push_back(f2);
         }
     }
-    
+
     //fill in intensity information from spectrum
     if(height==-1)
     {
@@ -5093,7 +5268,7 @@ bool spectrum_fit::peak_reading_pipe(std::string fname)
             p_intensity[i]=spect[n2*ndata_frq+n1]; //n1 is direct dimension; n2 is indirect
         }
     }
-    
+
     return true;
 }
 

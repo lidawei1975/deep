@@ -249,7 +249,8 @@ protected:
 
     
     std::string infname; //file name
-    double user_scale,user_scale2; //minimal peak intesntiy in picking and fitting
+    double user_scale,user_scale2; //minimal peak intesntiy in picking 
+    double user_scale_negative, user_scale2_negative; //minimal peak intesntiy in picking for negative peaks
     double median_width_x,median_width_y; //peak width median from either picking or fitting
 
     //peaks, used by both picking and fitting classes
@@ -440,6 +441,11 @@ public:
     {
         user_scale=x;
         user_scale2=y;
+    };
+    inline void set_scale_negative(double x,double y)
+    {
+        user_scale_negative=x;
+        user_scale2_negative=y;
     };
 
     inline void set_noise_level(double t) {noise_level=t; std::cout<<"Direct set noise level to "<<t<<std::endl;}

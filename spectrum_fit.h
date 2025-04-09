@@ -120,6 +120,7 @@ public:
   std::vector<int> original_ndx;      // for debug only.
   std::vector<int> cannot_move;
   std::vector<double> original_ratio;
+  int peak_sign; // peak sign, 1: positive, -1: negative
 
   std::vector<int> removed_peaks; //original_ndx of removed peaks.
 
@@ -149,6 +150,7 @@ public:
   bool assess_size();
   int get_my_index();
   int get_nround();
+  bool change_sign();
   void set_everything(fit_type t, int r, int index);
   void set_peak_paras(double x, double y, double noise, double height, double near, double xppm, double yppm, double cutoff);
 };
@@ -166,14 +168,10 @@ private:
   // OMP
   int nthread;
 
-  // new version
-  std::vector<std::deque<std::pair<int, int>>> clusters2; // peak cluster in peak partition
-  double *pos_x_correction, *pos_y_correction;            // diff between double and int coor of all peak
-  std::vector<std::vector<int>> b, s;                     // shared between peak_partition2 and prepare_fit2
-  std::vector<int> peak_map;
-
   // peak can move in fitting process?
   std::vector<int> peak_cannot_move_flag;
+  std::vector<int> peak_map,peak_map2,peak_map3;
+  int cluster_counter;
 
   int flag_with_error;
   int zf1, zf2; // times of zero filling along x and y, needed for generation of realistic noise.
@@ -187,7 +185,7 @@ private:
   bool real_peak_fitting_with_error(int, int, int);
 
   bool peak_partition();
-  bool prepare_fit();
+  bool peak_partition_core(int flag);
   bool assess_size();
 
   bool peak_reading_sparky(std::string);

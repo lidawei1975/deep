@@ -344,7 +344,7 @@ bool spectrum_pick::ann_peak_picking(int flag, int flag_t1_noise, bool b_negativ
         }
         class peak2d pp(flag); //flag==0:  run special case, 1: not run. 2: inertia based method
         pp.init_ann(model_selection); //read in ann parameters. 1: protein para set, 2: meta para set.
-        pp.init_spectrum(ndata_frq, ndata_frq_indirect, noise_level, user_scale, user_scale2, sp, 1);
+        pp.init_spectrum(ndata_frq, ndata_frq_indirect, noise_level, user_scale_negative, user_scale2_negative, sp, 1);
         pp.predict();
         // get p1,p2,p_intensity,sigma,gamma from ANN here
         int n = p_intensity.size();
