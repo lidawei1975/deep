@@ -5,7 +5,6 @@
 #include <sstream>
 #include <string>
 #include <cmath>
-#include "omp.h"
 
 #include "json/json.h"
 

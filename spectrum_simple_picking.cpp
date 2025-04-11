@@ -1,4 +1,4 @@
-//#include <omp.h>
+
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -8,7 +8,6 @@
 #include <valarray>
 #include <string>
 #include <vector>
-// #include "omp.h"
 
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>

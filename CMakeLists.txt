@@ -73,6 +73,17 @@ target_include_directories(voigt_fit_2 PRIVATE ${EIGEN3_INCLUDE_DIR})
 target_link_libraries(voigt_fit_2 libcerf)
 target_compile_definitions(voigt_fit_2 PRIVATE LMMIN)
 
+# build voigt_fit_2 with openmp support
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+  add_executable(voigt_fit_2_omp main_peak_fitting.cpp fid_2d.cpp fid_1d.cpp kiss_fft.c spectrum_fit.cpp cost_functions.cpp kiss_fft.c lmminimizer.cpp $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+  target_include_directories(voigt_fit_2_omp PRIVATE ${EIGEN3_INCLUDE_DIR})
+  target_link_libraries(voigt_fit_2_omp libcerf)
+  target_compile_definitions(voigt_fit_2_omp PRIVATE LMMIN)
+  target_compile_options(voigt_fit_2_omp PRIVATE ${OpenMP_CXX_FLAGS})
+  target_link_libraries(voigt_fit_2_omp  OpenMP::OpenMP_CXX)
+  target_compile_definitions(voigt_fit_2_omp PRIVATE USE_OPENMP)
+endif()
 
 # fitting part, need Ceres
 find_package(Ceres)
@@ -98,11 +109,24 @@ if(Ceres_FOUND)
   target_link_libraries(dosy ${CERES_LIBRARIES})
 endif()
 
+#peak fitting program for 2D, using ceres and openmp
+if(Ceres_FOUND AND OpenMP_CXX_FOUND)
+  add_executable(voigt_fit_omp main_peak_fitting.cpp fid_2d.cpp fid_1d.cpp kiss_fft.c spectrum_fit.cpp cost_functions.cpp kiss_fft.c $<TARGET_OBJECTS:commandline> $<TARGET_OBJECTS:jsoncpp>)
+  target_include_directories(voigt_fit_omp PRIVATE ${CERES_INCLUDE_DIRS})
+  target_include_directories(voigt_fit_omp PRIVATE ${EIGEN3_INCLUDE_DIR})
+  target_link_libraries(voigt_fit_omp ${CERES_LIBRARIES})
+  target_link_libraries(voigt_fit_omp libcerf)
+  target_compile_options(voigt_fit_omp PRIVATE ${OpenMP_CXX_FLAGS})
+  target_link_libraries(voigt_fit_omp OpenMP::OpenMP_CXX)
+  target_compile_definitions(voigt_fit_omp PRIVATE USE_OPENMP)
+endif()
+
 
 # test programs
 configure_file(test/test_dp.pl ${CMAKE_CURRENT_BINARY_DIR}/test_dp.pl COPYONLY)
 configure_file(test/test_vf.pl ${CMAKE_CURRENT_BINARY_DIR}/test_vf.pl COPYONLY)
 configure_file(test/test_vf2.pl ${CMAKE_CURRENT_BINARY_DIR}/test_vf2.pl COPYONLY)
+configure_file(test/test_vf2_omp.pl ${CMAKE_CURRENT_BINARY_DIR}/test_vf2_omp.pl COPYONLY)
 configure_file(test/plane001.ft2 ${CMAKE_CURRENT_BINARY_DIR}/plane001.ft2 COPYONLY)
 configure_file(test/plane002.ft2 ${CMAKE_CURRENT_BINARY_DIR}/plane002.ft2 COPYONLY)
 configure_file(test/plane003.ft2 ${CMAKE_CURRENT_BINARY_DIR}/plane003.ft2 COPYONLY)
@@ -121,11 +145,18 @@ enable_testing()
 
 add_test(NAME test_deep_picker COMMAND /usr/bin/env perl test_dp.pl)
 
-add_test(NAME test_voigt_fit COMMAND /usr/bin/env perl test_vf.pl)
-set_tests_properties(test_voigt_fit PROPERTIES DEPENDS test_deep_picker)
+if(Ceres_FOUND)
+  add_test(NAME test_voigt_fit COMMAND /usr/bin/env perl test_vf.pl)
+  set_tests_properties(test_voigt_fit PROPERTIES DEPENDS test_deep_picker)
 
-add_test(NAME test_voigt_fit_pseudo3D COMMAND /usr/bin/env perl test_vf2.pl)
-set_tests_properties(test_voigt_fit_pseudo3D PROPERTIES DEPENDS test_voigt_fit)
+  add_test(NAME test_voigt_fit_pseudo3D COMMAND /usr/bin/env perl test_vf2.pl)
+  set_tests_properties(test_voigt_fit_pseudo3D PROPERTIES DEPENDS test_voigt_fit)
+endif()
+
+if(Ceres_FOUND AND OpenMP_CXX_FOUND)
+  add_test(NAME test_voigt_fit_pseudo3D_omp COMMAND /usr/bin/env perl test_vf2_omp.pl)
+  set_tests_properties(test_voigt_fit_pseudo3D_omp PROPERTIES DEPENDS test_voigt_fit)
+endif()
 
 add_test(NAME test_peak_match COMMAND /usr/bin/env perl test_peak_match.pl)
 

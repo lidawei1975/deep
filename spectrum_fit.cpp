@@ -10,7 +10,10 @@
 #include <string>
 #include <chrono>
 #include <random>
-#include "omp.h"
+#ifdef USE_OPENMP
+    #include <atomic>
+    #include "omp.h"
+#endif
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>
 
@@ -139,7 +142,6 @@ namespace ldw_math_spectrum_fit
                     }
                     if (neighbor[j * n + c] == 1)
                     {
-                        #pragma omp critical
                         {
                             work.push_back(j);
                             work2.push_back(j);
@@ -2705,7 +2707,6 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
 
             int i0,i1,j0,j1;
             
-            // #pragma omp critical
             if (peak_shape == gaussian_type)
                 gaussain_convolution(xdim,ydim,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak),i0,i1,j0,j1,&(analytical_spectra[i_peak]),2.0);
             else if(peak_shape == voigt_type)
@@ -2995,13 +2996,53 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
         
         if(loop2>10 && (loop2-10)%5==0)
         {
-            peak_list=get_possible_excess_peaks();
-            
+            peak_list=get_possible_excess_peaks();     
+
+            #ifdef USE_OPENMP
+            std::atomic<bool> peak_removed(false);
+            int k_location = -1;
             #pragma omp parallel for
+            for(int k=0;k<peak_list.size();k++)
+            {   
+                /**
+                 * Test if we have two peaks that are too close to each other only if other OMP threads have not removed any peaks.
+                */
+                if (!peak_removed.load(std::memory_order_relaxed))
+                {
+                    int n=test_excess_peaks(peak_list[k].first,peak_list[k].second);   
+                    
+                    if(n==1 || n==-1)
+                    {
+                        /**
+                         * Make sure only one thread remove the peak.
+                        */
+                        if (!peak_removed.exchange(true, std::memory_order_relaxed))
+                        {
+                            b_remove_operation=true;
+                            k_location = k;
+                            if(n==1)
+                            {
+                                to_remove[peak_list[k].second]=1;
+                            }
+                            else if(n==-1)
+                            {
+                                to_remove[peak_list[k].first]=1;
+                            }
+                        }
+                    }
+                }
+            }
+            if (n_verbose > 0)
+            {
+                std::cout << "Loop " << loop << " " << original_ndx[peak_list[k_location].second] << " will be removed because it failed excessive test with " << original_ndx[peak_list[k_location].first] << std::endl;
+                std::cout << " x=" << x[peak_list[k_location].second] << " y=" << y[peak_list[k_location].second] << " a=" << a[peak_list[k_location].second][0] << " sigmax=" << sigmax[peak_list[k_location].second] << " sigmay=" << sigmay[peak_list[k_location].second] << " gammax=" << gammax[peak_list[k_location].second] << " gammay=" << gammay[peak_list[k_location].second] << std::endl;
+                std::cout << " x=" << x[peak_list[k_location].first] << " y=" << y[peak_list[k_location].first] << " a=" << a[peak_list[k_location].first][0] << " sigmax=" << sigmax[peak_list[k_location].first] << " sigmay=" << sigmay[peak_list[k_location].first] << " gammax=" << gammax[peak_list[k_location].first] << " gammay=" << gammay[peak_list[k_location].first] << std::endl;
+            }
+
+            #else   
             for(int k=0;k<peak_list.size();k++)
             {
                 int n=test_excess_peaks(peak_list[k].first,peak_list[k].second);   
-                #pragma omp critical
                 {
                     if(n==1)
                     {
@@ -3033,6 +3074,7 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                     }
                 }
             }
+            #endif
         }
 
         if(b_remove_operation==true)
@@ -3708,6 +3750,11 @@ spectrum_fit::spectrum_fit()
     flag_with_error=0;
     zf1=1;
     zf2=1;
+
+    user_scale=5.5;
+    user_scale2=3.0;
+    user_scale_negative=5.5;
+    user_scale2_negative=3.0;
 };
 
 spectrum_fit::~spectrum_fit()
@@ -3729,7 +3776,7 @@ bool spectrum_fit::init_all_spectra(std::vector<std::string> fnames_)
         }
     }   
 
-    fid_2d::init(fnames[0],0);
+    fid_2d::init(fnames[0],1); //1 means noise_level estimation on the 1st spectrum
     spects.insert(spects.begin(), spectrum_real_real);
     
     /**
@@ -4185,8 +4232,40 @@ bool spectrum_fit::peak_fitting()
 
 bool spectrum_fit::real_peak_fitting()
 {
+    /**
+     * For optimized openmp performance, we will make two groups of fits, one with only one peak, and one with multiple peaks.
+    */
+    std::vector<int> single_peak_fits;
+    std::vector<int> multi_peak_fits;
+
     for (int i = 0; i < fits.size(); i++)
     {
+        if (fits[i].x.size() == 1)
+        {
+            single_peak_fits.push_back(i);
+        }
+        else
+        {
+            multi_peak_fits.push_back(i);
+        }
+    }
+
+    #pragma omp parallel for
+    for (int j=0;j<single_peak_fits.size();j++)
+    {
+        int i=single_peak_fits[j];
+        // std::cout << "Cluster " << fits[i].get_my_index() << " has " << fits[i].x.size() << " peaks before fitting. Region is " << fits[i].xstart << " " << fits[i].xstart + fits[i].xdim << " " << fits[i].ystart << " " << fits[i].ystart + fits[i].ydim << std::endl;
+        if (fits[i].run() == false || fits[i].a.size() == 0)
+        {
+            std::cout << "Cluster " << fits[i].get_my_index() << "To be removed" << std::endl;
+        }
+        std::cout << "Cluster " << fits[i].get_my_index() << "fitted " << fits[i].x.size() << " peaks." << std::endl
+                  << std::endl;
+    }
+
+    for(int j=0;j<multi_peak_fits.size();j++)
+    {
+        int i=multi_peak_fits[j];
         std::cout << "Cluster " << fits[i].get_my_index() << " has " << fits[i].x.size() << " peaks before fitting. Region is " << fits[i].xstart << " " << fits[i].xstart + fits[i].xdim << " " << fits[i].ystart << " " << fits[i].ystart + fits[i].ydim << std::endl;
         if (fits[i].run() == false || fits[i].a.size() == 0)
         {
@@ -4196,13 +4275,45 @@ bool spectrum_fit::real_peak_fitting()
                   << std::endl;
     }
 
+
+
    return true;
 };
 
 bool spectrum_fit::real_peak_fitting_with_error(int zf1,int zf2,int nround)
 {
+    /**
+     * For optimized openmp performance, we will make two groups of fits, one with only one peak, and one with multiple peaks.
+    */
+    std::vector<int> single_peak_fits;
+    std::vector<int> multi_peak_fits;
     for (int i = 0; i < fits.size(); i++)
     {
+        if (fits[i].x.size() == 1)
+        {
+            single_peak_fits.push_back(i);
+        }
+        else
+        {
+            multi_peak_fits.push_back(i);
+        }
+    }
+
+    #pragma omp parallel for
+    for (int j=0;j<single_peak_fits.size();j++)
+    {
+        int i=single_peak_fits[j];
+        if (fits[i].run_with_error_estimation(zf1,zf2,nround) == false || fits[i].a.size() == 0)
+        {
+            std::cout << "Cluster " << fits[i].get_my_index() << "To be removed" << std::endl;
+        }
+        std::cout << "Cluster " << fits[i].get_my_index() << "fitted " << fits[i].x.size() << " peaks." << std::endl
+                  << std::endl;
+    }
+
+    for(int j=0;j<multi_peak_fits.size();j++)
+    {
+        int i=multi_peak_fits[j];
         std::cout << "Cluster " << fits[i].get_my_index() << " has " << fits[i].x.size() << " peaks before fitting. Region is " << fits[i].xstart << " " << fits[i].xstart + fits[i].xdim << " " << fits[i].ystart << " " << fits[i].ystart + fits[i].ydim << std::endl;
         if (fits[i].run_with_error_estimation(zf1,zf2,nround) == false || fits[i].a.size() == 0)
         {

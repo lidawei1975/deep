@@ -1,4 +1,3 @@
-//#include <omp.h>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -8,7 +7,6 @@
 #include <valarray>
 #include <string>
 #include <vector>
-// #include "omp.h"
 
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>
@@ -36,6 +34,8 @@ spectrum_pick::spectrum_pick()
     infname="input.ft2";
     user_scale=5.5;  //used defined noise level scale factor
     user_scale2=3.0; 
+    user_scale_negative=5.5;  //used defined noise level scale factor for negative peaks
+    user_scale2_negative=3.0;
     //default peak width 6-20 (model 1) or 4-12 (model 2)
     model_selection=2; 
 

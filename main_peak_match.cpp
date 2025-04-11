@@ -1,4 +1,4 @@
-//#include <omp.h>
+
 #include <fstream>
 #include <iostream>
 #include <iomanip>      // std::setw
