@@ -39,7 +39,9 @@ sudo apt-get install cmake build-essential libeigen3-dev liblapacke-dev libsuite
 
 
 
-Without Ceres-solver, an alternative fitter will be built instead, which is about 2-3 times slower. 
+Without Ceres-solver, an alternative fitter (voigt_fit_2) will be built instead, which is about 2-3 times slower. 
+
+On systems with OpenMP support, two additional executables, namely, voigt_fit_omp and voigt_fit_2_omp, will be built with OpenMP support.
 
 Download the source code: Download the Deep-picker source code and unzip it into a folder on your Linux system, such as /home/user-name/deep-picker.
 
@@ -51,6 +53,8 @@ Generate build files using CMake: Run CMake in the build directory, specifying t
 
 Build Deep-picker: Once CMake has generated the necessary build files, use the make command to build Deep-picker: make
 
+It is recommend to run "make test" to make sure the build is correct.
+
 Run Deep-picker: After the build process completes successfully, you can find the executables in the /home/user-name/build-deep-picker folder. To run Deep-picker, type the following command: /home/user-name/build-deep-picker/deep_picker -h
 
 Combined above codes:
@@ -60,6 +64,7 @@ mkdir /home/user-name/build-deep-picker
 cd /home/user-name/build-deep-picker
 cmake ../deep-picker
 make
+(optional) make test
 ```
 
 Windows (Mac) System:
