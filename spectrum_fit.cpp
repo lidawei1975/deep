@@ -4238,9 +4238,34 @@ bool spectrum_fit::real_peak_fitting()
     std::vector<int> single_peak_fits;
     std::vector<int> multi_peak_fits;
 
+    int single_peak_defination_cutoff = 1;
+#ifdef USE_OPENMP
+    /**
+     * Get number of using threads
+     * then define single_peak_defination_cutoff to be 2/3 of the number of threads
+    */
+    int nthreads = omp_get_num_threads();
+    if (nthreads > 1)
+    {
+        single_peak_defination_cutoff = nthreads * 2 / 3;
+        if(single_peak_defination_cutoff < 1)
+        {
+            single_peak_defination_cutoff = 1;
+        }
+    }
+
+    /**
+     * Only allow one layer of parallelism
+    */
+    omp_set_max_active_levels(1);
+
+#endif
+
+
+
     for (int i = 0; i < fits.size(); i++)
     {
-        if (fits[i].x.size() == 1)
+        if (fits[i].x.size() <= single_peak_defination_cutoff)
         {
             single_peak_fits.push_back(i);
         }
