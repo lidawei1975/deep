@@ -3353,11 +3353,16 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
         i1s.resize(x.size(),-1);
         j0s.resize(x.size(),-1);
         j1s.resize(x.size(),-1);
+
+        double time_1 = 0.0;
+        double time_2 = 0.0;
+        double time_3 = 0.0;
         
 
         //spectrum by spectrum peak decovolution
         for(int spectrum_index=0;spectrum_index<surface.size();spectrum_index++)
         {
+            auto start = std::chrono::high_resolution_clock::now();
             analytical_spectra.clear();
             analytical_spectra.resize(x.size());
 
@@ -3394,6 +3399,8 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                     }
                 }
             }
+            auto end = std::chrono::high_resolution_clock::now();
+            auto duration1 = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
 
             #pragma omp parallel for
@@ -3448,9 +3455,14 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                 num_sum[i_peak][spectrum_index] = total_z;
                 zzs[i_peak].push_back(tz);//zzs[peak_index][spec_ndx][data_ndx]
             }
+            auto end2 = std::chrono::high_resolution_clock::now();
+            auto duration2 = std::chrono::duration_cast<std::chrono::milliseconds>(end2 - end);
+
+            time_1 += duration1.count();
+            time_2 += duration2.count();
         }
 
-
+        auto start = std::chrono::high_resolution_clock::now();
         #pragma omp parallel for
         for (int i_peak = 0; i_peak < x.size(); i_peak++)
         {
@@ -3492,7 +3504,7 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                 a[i_peak][i]/=spectral_max;
             }
 
-
+            auto startp = std::chrono::high_resolution_clock::now();
             if (peak_shape == gaussian_type)
             {
                 multiple_fit_gaussian(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), &e);
@@ -3505,6 +3517,13 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
             {
                 multiple_fit_voigt_lorentz(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);
             }
+            auto endp = std::chrono::high_resolution_clock::now();
+            auto durationp = std::chrono::duration_cast<std::chrono::milliseconds>(endp - startp);
+
+#ifdef USE_OPENMP
+            std::cout<<"I am "<<omp_get_thread_num()<<" of "<<omp_get_num_threads()<<" ";
+#endif
+            std::cout<<" peak "<<original_ndx[i_peak]<<" time is "<<durationp.count()/1000.0<<" seconds"<<std::endl;
 
             /**
              * Restore a[i_peak][0] to original scale.
@@ -3545,6 +3564,9 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
             x[i_peak]=current_x+i0;
             y[i_peak]=current_y+j0;
         } //end of parallel for(int i = 0; i < x.size(); i++)
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        time_3 += duration.count();
 
         //also remove peaks if two peaks become very close.
         //that is, the program fit one peak with two overallped peaks, which can happen occasionally
@@ -3647,6 +3669,9 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
         if(n_verbose>0){
             std::cout<<"\r"<<"Iteration "<<loop+1<<"   "<<std::flush;
         }
+
+        std::cout<<"In loop "<<loop+1<<" time1 = "<<time_1<<"ms, time2 = "<<time_2<<"ms, time3 = "<<time_3<<"ms"<<std::endl;
+
     } //loop
     if(n_verbose>0){
         std::cout<<std::endl;
@@ -4244,15 +4269,23 @@ bool spectrum_fit::real_peak_fitting()
      * Get number of using threads
      * then define single_peak_defination_cutoff to be 2/3 of the number of threads
     */
-    int nthreads = omp_get_num_threads();
+ int nthreads;
+    #pragma omp parallel
+  {
+    #pragma omp single
+	  nthreads = omp_get_num_threads();
+  }
+
+
     if (nthreads > 1)
     {
-        single_peak_defination_cutoff = nthreads * 2 / 3;
+        single_peak_defination_cutoff = nthreads;
         if(single_peak_defination_cutoff < 1)
         {
             single_peak_defination_cutoff = 1;
         }
     }
+    std::cout<<"nthreads="<<nthreads<<" cutoff is "<<single_peak_defination_cutoff<<std::endl;
 
     /**
      * Only allow one layer of parallelism
@@ -4275,6 +4308,7 @@ bool spectrum_fit::real_peak_fitting()
         }
     }
 
+    /*
     #pragma omp parallel for
     for (int j=0;j<single_peak_fits.size();j++)
     {
@@ -4286,11 +4320,14 @@ bool spectrum_fit::real_peak_fitting()
         }
         std::cout << "Cluster " << fits[i].get_my_index() << "fitted " << fits[i].x.size() << " peaks." << std::endl
                   << std::endl;
-    }
+    }*/
 
-    for(int j=0;j<multi_peak_fits.size();j++)
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int j = 0; j < multi_peak_fits.size(); j++)
     {
-        int i=multi_peak_fits[j];
+        int i = multi_peak_fits[j];
+        if (fits[i].x.size() < 100)
+            continue;
         std::cout << "Cluster " << fits[i].get_my_index() << " has " << fits[i].x.size() << " peaks before fitting. Region is " << fits[i].xstart << " " << fits[i].xstart + fits[i].xdim << " " << fits[i].ystart << " " << fits[i].ystart + fits[i].ydim << std::endl;
         if (fits[i].run() == false || fits[i].a.size() == 0)
         {
@@ -4298,7 +4335,11 @@ bool spectrum_fit::real_peak_fitting()
         }
         std::cout << "Cluster " << fits[i].get_my_index() << "fitted " << fits[i].x.size() << " peaks." << std::endl
                   << std::endl;
+        break;
     }
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Time taken: " << duration.count()/1000.0 << " seconds" << std::endl;
 
 
 
