@@ -3463,107 +3463,125 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
         }
 
         auto start = std::chrono::high_resolution_clock::now();
-        #pragma omp parallel for
-        for (int i_peak = 0; i_peak < x.size(); i_peak++)
-        {
-            if(to_remove[i_peak]==1) continue;  //peak has been removed. 
-
-            int i0=i0s[i_peak];
-            int i1=i1s[i_peak];
-            int j0=j0s[i_peak];
-            int j1=j1s[i_peak];
-            
-            int current_xdim=i1-i0;
-            int current_ydim=j1-j0;
-            double current_x=x.at(i_peak)-i0;
-            double current_y=y.at(i_peak)-j0;
-
-            double spectral_max = 0.0;
-            for(int i=0;i<zzs[i_peak].size();i++)
-            {
-                for(int j=0;j<zzs[i_peak][i].size();j++)
-                {
-                    if(zzs[i_peak][i][j]>spectral_max)
-                    {
-                        spectral_max=zzs[i_peak][i][j];
-                    }
-                }   
-            }
-            /**
-             * Rescale zzs[i_peak] and a[i_peak] by spectral_max
-            */
-            for(int i=0;i<zzs[i_peak].size();i++)
-            {
-                for(int j=0;j<zzs[i_peak][i].size();j++)
-                {
-                    zzs[i_peak][i][j]/=spectral_max;
-                }
-            }
-            for(int i=0;i<a[i_peak].size();i++)
-            {
-                a[i_peak][i]/=spectral_max;
-            }
-
-            auto startp = std::chrono::high_resolution_clock::now();
-            if (peak_shape == gaussian_type)
-            {
-                multiple_fit_gaussian(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), &e);
-            }
-            else if (peak_shape == voigt_type)
-            {
-                multiple_fit_voigt(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);            
-            }
-            else if (peak_shape == voigt_lorentz_type)
-            {
-                multiple_fit_voigt_lorentz(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);
-            }
-            auto endp = std::chrono::high_resolution_clock::now();
-            auto durationp = std::chrono::duration_cast<std::chrono::milliseconds>(endp - startp);
 
 #ifdef USE_OPENMP
-            std::cout<<"I am "<<omp_get_thread_num()<<" of "<<omp_get_num_threads()<<" ";
+        int num_threads = omp_get_max_threads();
+        int chunk = x.size() / num_threads;
+#else
+        int num_threads = 1;
+        int chunk = x.size();
 #endif
-            std::cout<<" peak "<<original_ndx[i_peak]<<" time is "<<durationp.count()/1000.0<<" seconds"<<std::endl;
 
-            /**
-             * Restore a[i_peak][0] to original scale.
-            */
-            for(int i=0;i<a[i_peak].size();i++)
+        #pragma omp parallel
+        {
+#ifdef USE_OPENMP
+            int tid = omp_get_thread_num();
+#else
+            int tid = 0;
+#endif
+            int start = tid * chunk;
+            int end = (tid == num_threads - 1) ?  x.size() : start + chunk;
+            for (int i_peak = start; i_peak < end; ++i_peak)
             {
-                a[i_peak][i]*=spectral_max;
-            }
+                if(to_remove[i_peak]==1) continue;  //peak has been removed. 
 
-            err.at(i_peak) = e * spectral_max;
-           
+                int i0=i0s[i_peak];
+                int i1=i1s[i_peak];
+                int j0=j0s[i_peak];
+                int j1=j1s[i_peak];
+                
+                int current_xdim=i1-i0;
+                int current_ydim=j1-j0;
+                double current_x=x.at(i_peak)-i0;
+                double current_y=y.at(i_peak)-j0;
 
-            if (peak_shape == gaussian_type)
-            {
-                if (fabs(sigmax.at(i_peak)) < 0.2 || fabs(sigmay.at(i_peak)) < 0.2)
+                double spectral_max = 0.0;
+                for(int i=0;i<zzs[i_peak].size();i++)
                 {
-                    peak_remove_flag[i_peak]=1;
+                    for(int j=0;j<zzs[i_peak][i].size();j++)
+                    {
+                        if(zzs[i_peak][i][j]>spectral_max)
+                        {
+                            spectral_max=zzs[i_peak][i][j];
+                        }
+                    }   
                 }
-
-            }
-            else  if (peak_shape == voigt_type)
-            {
-                if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.2 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) < 0.2)
+                /**
+                 * Rescale zzs[i_peak] and a[i_peak] by spectral_max
+                */
+                for(int i=0;i<zzs[i_peak].size();i++)
                 {
-                    peak_remove_flag[i_peak]=1;
+                    for(int j=0;j<zzs[i_peak][i].size();j++)
+                    {
+                        zzs[i_peak][i][j]/=spectral_max;
+                    }
                 }
-            }
+                for(int i=0;i<a[i_peak].size();i++)
+                {
+                    a[i_peak][i]/=spectral_max;
+                }
 
-           
-            if (current_x < 0 || current_x > current_xdim || current_y < 0 || current_y > current_ydim)
-            {
-                peak_remove_flag[i_peak] = 2;
-                if(n_verbose>0){
-                    std::cout << original_ndx[i_peak] << " will be removed because x=" << current_x + i0 << " y=" << current_y + j0 << " a=" <<a[i_peak][0]
-                            << " , moved out of fitting area x from " << i0  << " to " << i0+ current_xdim << " and y from " << j0 << " to " << j0+ current_ydim << std::endl;
+                auto startp = std::chrono::high_resolution_clock::now();
+                if (peak_shape == gaussian_type)
+                {
+                    multiple_fit_gaussian(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), &e);
                 }
-            }
-            x[i_peak]=current_x+i0;
-            y[i_peak]=current_y+j0;
-        } //end of parallel for(int i = 0; i < x.size(); i++)
+                else if (peak_shape == voigt_type)
+                {
+                    multiple_fit_voigt(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);            
+                }
+                else if (peak_shape == voigt_lorentz_type)
+                {
+                    multiple_fit_voigt_lorentz(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, a[i_peak], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);
+                }
+                auto endp = std::chrono::high_resolution_clock::now();
+                auto durationp = std::chrono::duration_cast<std::chrono::milliseconds>(endp - startp);
+
+    #ifdef USE_OPENMP
+                std::cout<<"I am "<<omp_get_thread_num()<<" of "<<omp_get_num_threads()<<" ";
+    #endif
+                std::cout<<"Index: "<<i_peak<<" peak "<<original_ndx[i_peak]<<" time is "<<durationp.count()/1000.0<<" seconds"<<std::endl;
+
+                /**
+                 * Restore a[i_peak][0] to original scale.
+                */
+                for(int i=0;i<a[i_peak].size();i++)
+                {
+                    a[i_peak][i]*=spectral_max;
+                }
+
+                err.at(i_peak) = e * spectral_max;
+            
+
+                if (peak_shape == gaussian_type)
+                {
+                    if (fabs(sigmax.at(i_peak)) < 0.2 || fabs(sigmay.at(i_peak)) < 0.2)
+                    {
+                        peak_remove_flag[i_peak]=1;
+                    }
+
+                }
+                else  if (peak_shape == voigt_type)
+                {
+                    if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.2 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) < 0.2)
+                    {
+                        peak_remove_flag[i_peak]=1;
+                    }
+                }
+
+            
+                if (current_x < 0 || current_x > current_xdim || current_y < 0 || current_y > current_ydim)
+                {
+                    peak_remove_flag[i_peak] = 2;
+                    if(n_verbose>0){
+                        std::cout << original_ndx[i_peak] << " will be removed because x=" << current_x + i0 << " y=" << current_y + j0 << " a=" <<a[i_peak][0]
+                                << " , moved out of fitting area x from " << i0  << " to " << i0+ current_xdim << " and y from " << j0 << " to " << j0+ current_ydim << std::endl;
+                    }
+                }
+                x[i_peak]=current_x+i0;
+                y[i_peak]=current_y+j0;
+            } //end of parallel for(int i = 0; i < x.size(); i++)
+        }
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
         time_3 += duration.count();
