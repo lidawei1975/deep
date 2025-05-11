@@ -85,6 +85,28 @@ if(OpenMP_CXX_FOUND)
   target_compile_definitions(voigt_fit_2_omp PRIVATE USE_OPENMP)
 endif()
 
+# test openmp program
+if(OpenMP_CXX_FOUND)
+
+  add_executable(test_openmp test_omp.cpp)
+  target_compile_options(test_openmp PRIVATE ${OpenMP_CXX_FLAGS})
+  target_link_libraries(test_openmp OpenMP::OpenMP_CXX)
+  target_compile_definitions(test_openmp PRIVATE USE_OPENMP)
+
+  add_executable(test_openmp_mem test_omp_mem.cpp)
+  target_compile_options(test_openmp_mem PRIVATE ${OpenMP_CXX_FLAGS})
+  target_link_libraries(test_openmp_mem OpenMP::OpenMP_CXX)
+  target_compile_definitions(test_openmp_mem PRIVATE USE_OPENMP)
+
+  add_executable(test_openmp_peak test_omp_peak.cpp cost_functions.cpp kiss_fft.c lmminimizer_n.cpp)
+  target_compile_options(test_openmp_peak PRIVATE ${OpenMP_CXX_FLAGS})
+  target_link_libraries(test_openmp_peak libcerf)
+  target_compile_definitions(test_openmp_peak PRIVATE LMMIN)
+  target_link_libraries(test_openmp_peak OpenMP::OpenMP_CXX)
+  target_compile_definitions(test_openmp_peak PRIVATE USE_OPENMP)
+
+endif()
+
 # fitting part, need Ceres
 find_package(Ceres)
 

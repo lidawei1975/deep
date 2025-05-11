@@ -2863,7 +2863,11 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                     }
                     else
                     {
-                        one_fit_voigt(current_xdim, current_ydim, &zz, current_x, current_y, current_a, current_sigmax, current_sigmay, current_gammax, current_gammay, &e,loop);            
+                        auto start = std::chrono::high_resolution_clock::now();
+                        one_fit_voigt(current_xdim, current_ydim, &zz, current_x, current_y, current_a, current_sigmax, current_sigmay, current_gammax, current_gammay, &e,0);            
+                        auto end = std::chrono::high_resolution_clock::now();
+                        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+                        std::cout << i_peak << " " << duration.count() << " milliseconds" << std::endl;
                     }
                 }
                 else if (peak_shape == voigt_lorentz_type)
