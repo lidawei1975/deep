@@ -2742,6 +2742,10 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
         x_old.push_back(x);
         y_old.push_back(y);
 
+        std::cout<<"loop="<<loop<<" begin to run fitting part."<<std::endl;
+
+        auto start_total = std::chrono::high_resolution_clock::now();
+
         #ifdef USE_OPENMP
         int num_threads = omp_get_max_threads();
         int chunk = x.size() / num_threads;
@@ -2779,19 +2783,17 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                 double current_gammay = gammay.at(i_peak);
                 std::vector<double> current_analytical_spectra;
 
+                if (peak_shape == gaussian_type)
                 {
-                    if (peak_shape == gaussian_type)
-                    {
-                        gaussain_convolution_within_region(i_peak,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak),i0,i1,j0,j1,&current_analytical_spectra,1.0);
-                    }
-                    else if (peak_shape == voigt_type)
-                    {
-                        voigt_convolution_within_region(i_peak,current_a,current_x, current_y, current_sigmax, current_sigmay, current_gammax, current_gammay,i0,i1,j0,j1,&current_analytical_spectra,2.0);
-                    }
-                    else if (peak_shape == voigt_lorentz_type)
-                    {
-                        voigt_lorentz_convolution_within_region(i_peak,a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak),sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak),i0,i1,j0,j1,&current_analytical_spectra,2.0,4.0);
-                    }
+                    gaussain_convolution_within_region(i_peak, a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), i0, i1, j0, j1, &current_analytical_spectra, 1.0);
+                }
+                else if (peak_shape == voigt_type)
+                {
+                    voigt_convolution_within_region(i_peak, current_a, current_x, current_y, current_sigmax, current_sigmay, current_gammax, current_gammay, i0, i1, j0, j1, &current_analytical_spectra, 2.0);
+                }
+                else if (peak_shape == voigt_lorentz_type)
+                {
+                    voigt_lorentz_convolution_within_region(i_peak, a[i_peak][0], x.at(i_peak), y.at(i_peak), sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), i0, i1, j0, j1, &current_analytical_spectra, 2.0, 4.0);
                 }
 
                 current_xdim=i1-i0;
@@ -2828,7 +2830,6 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                     }
                     // std::cout<<std::endl;
                 }
-                num_sum[i_peak][0] = total_z;
                 // std::cout<<std::endl;
 
                 /**
@@ -2841,7 +2842,7 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                 current_a/=spectral_max;
                 
 
-                //std::cout <<"Before " <<loop<<" "<< original_ndx[i] << " " << x.at(i) << " " << y.at(i) << " " << a[i][0] << " " << sigmax.at(i) << " " << sigmay.at(i)<< " " << gammax.at(i) << " " << gammay.at(i) << " " << total_z << std::endl;
+                // std::cout <<"Before " <<loop<<" "<< original_ndx[i_peak] << " " << x.at(i_peak) << " " << y.at(i_peak) << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << sigmay.at(i_peak)<< " " << gammax.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
                 double e;
                 if (peak_shape == gaussian_type)
                 {
@@ -2856,7 +2857,7 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                 }
                 else if (peak_shape == voigt_type)
                 {
-                    if(cannot_move[i_peak]==1)
+                    if(cannot_move[i_peak]==100)
                     {
                         one_fit_voigt_intensity_only(current_xdim, current_ydim, &zz, a[i_peak][0], current_x, current_y, sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e);       
                     }
@@ -2870,7 +2871,7 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                     one_fit_voigt_lorentz(current_xdim, current_ydim, &zz, current_x, current_y, a[i_peak][0], sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);
                 }
 
-                err.at(i_peak) = e;
+                
                 // std::cout<<"after fit at loop "<<loop<<" peak "<<original_ndx[i_peak]<<" x="<<x[i_peak]<<" y="<<y[i_peak]<<" xdim="<<xdim<<" ydim="<<ydim;
                 // std::cout<<" sx="<<sigmax.at(i_peak);
                 // std::cout<<" gx="<<gammax.at(i_peak);
@@ -2880,59 +2881,65 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                 
 
 
-                if (peak_shape == gaussian_type)
-                {
-                    if (fabs(sigmax.at(i_peak)) < 0.5 || fabs(sigmay.at(i_peak)) < 0.5 || fabs(sigmax.at(i_peak)) > 60.0 || fabs(sigmay.at(i_peak)) >60.0 )
-                    {
-                        if(n_verbose>0){
-                            std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because x=" << current_x +i0 << " y=" << current_y +j0<< " a=" << a[i_peak][0] << " simgax=" << sigmax.at(i_peak) << " sigmay=" << sigmay.at(i_peak) << " totalz=" << total_z << std::endl;
-                        }
-                        peak_remove_flag[i_peak]=1;
-                    }
+                // if (peak_shape == gaussian_type)
+                // {
+                //     if (fabs(sigmax.at(i_peak)) < 0.5 || fabs(sigmay.at(i_peak)) < 0.5 || fabs(sigmax.at(i_peak)) > 60.0 || fabs(sigmay.at(i_peak)) >60.0 )
+                //     {
+                //         if(n_verbose>0){
+                //             std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because x=" << current_x +i0 << " y=" << current_y +j0<< " a=" << a[i_peak][0] << " simgax=" << sigmax.at(i_peak) << " sigmay=" << sigmay.at(i_peak) << " totalz=" << total_z << std::endl;
+                //         }
+                //         peak_remove_flag[i_peak]=1;
+                //     }
 
-                }
-                else  if (peak_shape == voigt_type)
-                {
-                    if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.5 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) < 0.5 || fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) >100.0 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) >100.0)
-                    {
-                        if(n_verbose>0){
-                            std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because " << current_x + i0 << " " << current_y + j0 << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << gammax.at(i_peak) << " " << sigmay.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
-                        }
-                        peak_remove_flag[i_peak]=1;
-                    }
-                }
-                else  if (peak_shape == voigt_lorentz_type)
-                {
-                    if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.2 || fabs(gammay.at(i_peak)) < 0.2 || fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) >100.0 || fabs(gammay.at(i_peak)) >100.0)
-                    {
-                        if(n_verbose>0){
-                            std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because " << current_x + i0 << " " << current_y + j0 << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << gammax.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
-                        }
-                        peak_remove_flag[i_peak]=1;
-                    }
-                }
+                // }
+                // else  if (peak_shape == voigt_type)
+                // {
+                //     if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.5 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) < 0.5 || fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) >100.0 || fabs(sigmay.at(i_peak)) + fabs(gammay.at(i_peak)) >100.0)
+                //     {
+                //         if(n_verbose>0){
+                //             std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because " << current_x + i0 << " " << current_y + j0 << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << gammax.at(i_peak) << " " << sigmay.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
+                //         }
+                //         peak_remove_flag[i_peak]=1;
+                //     }
+                // }
+                // else  if (peak_shape == voigt_lorentz_type)
+                // {
+                //     if (fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) < 0.2 || fabs(gammay.at(i_peak)) < 0.2 || fabs(sigmax.at(i_peak)) + fabs(gammax.at(i_peak)) >100.0 || fabs(gammay.at(i_peak)) >100.0)
+                //     {
+                //         if(n_verbose>0){
+                //             std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because " << current_x + i0 << " " << current_y + j0 << " " << a[i_peak][0] << " " << sigmax.at(i_peak) << " " << gammax.at(i_peak) << " " << gammay.at(i_peak) << " " << total_z << std::endl;
+                //         }
+                //         peak_remove_flag[i_peak]=1;
+                //     }
+                // }
 
-                if (current_x <= 0.0 || current_x >= current_xdim || current_y <= 0 || current_y >= current_ydim)
-                {
-                    peak_remove_flag[i_peak] = 2;
-                    if(n_verbose>0){
-                        std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because x=" << current_x + i0 << " y=" << current_y + j0 << " a=" <<a[i_peak][0]
-                                << " , moved out of fitting area x from " << i0  << " to " << i0+ current_xdim << " and y from " << j0 << " to " << j0+ current_ydim << std::endl;
-                    }
-                }
-                x[i_peak]=current_x+i0;
-                y[i_peak]=current_y+j0;
+                // if (current_x <= 0.0 || current_x >= current_xdim || current_y <= 0 || current_y >= current_ydim)
+                // {
+                //     peak_remove_flag[i_peak] = 2;
+                //     if(n_verbose>0){
+                //         std::cout<< "Loop " << loop << " "  << original_ndx[i_peak] << " will be removed because x=" << current_x + i0 << " y=" << current_y + j0 << " a=" <<a[i_peak][0]
+                //                 << " , moved out of fitting area x from " << i0  << " to " << i0+ current_xdim << " and y from " << j0 << " to " << j0+ current_ydim << std::endl;
+                //     }
+                // }
+                // x[i_peak]=current_x+i0;
+                // y[i_peak]=current_y+j0;
 
-                /**
-                 * Restore a[i_peak][0] to original scale.
-                */
-                a[i_peak][0]=current_a*spectral_max;
-                sigmax.at(i_peak)=current_sigmax;
-                sigmay.at(i_peak)=current_sigmay;
-                gammax.at(i_peak)=current_gammax;
-                gammay.at(i_peak)=current_gammay;
+                // /**
+                //  * Restore a[i_peak][0] to original scale.
+                // */
+                // err.at(i_peak) = e;
+                // num_sum[i_peak][0] = total_z;
+                // a[i_peak][0]=current_a*spectral_max;
+                // sigmax.at(i_peak)=current_sigmax;
+                // sigmay.at(i_peak)=current_sigmay;
+                // gammax.at(i_peak)=current_gammax;
+                // gammay.at(i_peak)=current_gammay;
             } //end of parallel for(int i = 0; i < x.size(); i++)
         } // end of #pragma omp parallel
+
+        auto end_total = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_total - start_total);
+        std::cout<<"Time if fit all peaks is "<<duration.count()/1000.0<<" seconds"<<std::endl;
 
         //also remove peaks if two peaks become very close.
         //that is, the program fit one peak with two overallped peaks, which can happen occasionally
@@ -4391,7 +4398,7 @@ bool spectrum_fit::real_peak_fitting()
     for (int j = 0; j < multi_peak_fits.size(); j++)
     {
         int i = multi_peak_fits[j];
-        if (fits[i].x.size() < 200)
+        if (fits[i].x.size() < 100 || fits[i].x.size() > 400)
             continue;
         std::cout << "Cluster " << fits[i].get_my_index() << " has " << fits[i].x.size() << " peaks before fitting. Region is " << fits[i].xstart << " " << fits[i].xstart + fits[i].xdim << " " << fits[i].ystart << " " << fits[i].ystart + fits[i].ydim << std::endl;
         if (fits[i].run() == false || fits[i].a.size() == 0)
