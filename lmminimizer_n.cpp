@@ -6,12 +6,12 @@
 levmarq::levmarq()
 {
 	verbose = 0;
-	max_it = 250;
+	max_it = 50;
 	lambda = 0.0001;
 	up = 4.0;
 	down = 1 / 4.0;
-	target_derr = 1e-12;
-	TOL = 1e-12;
+	target_derr = 1e-8;
+	TOL = 1e-8;
 };
 
 levmarq::~levmarq(){};

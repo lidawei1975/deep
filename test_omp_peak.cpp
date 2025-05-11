@@ -10,7 +10,7 @@
 
 constexpr int GRID_SIZE = 100;
 constexpr int TOTAL_SIZE = GRID_SIZE * GRID_SIZE;
-constexpr int TASKS = 32;
+constexpr int TASKS = 4;
 
 using Surface1D = std::vector<double>;
 
@@ -45,12 +45,13 @@ void process_surface(const Surface1D& surface, double **par, double **new_par, d
     // Simulate some heavy computation
     // This is where you would call your cost function or optimization routine
     // For demonstration, we just sum the surface values
-{
-    volatile double sum = 0;
-    for (size_t i = 0; i < surface.size(); ++i) {
-        sum += std::sin(surface[i]) * std::cos(surface[i]);
-    }
-    if (sum == 123456.0) std::cout << "Unlikely!\n"; // prevent optimization
+{   
+    auto start = std::chrono::high_resolution_clock::now();
+    // volatile double sum = 0;
+    // for (size_t i = 0; i < surface.size(); ++i) {
+    //     sum += std::sin(surface[i]) * std::cos(surface[i]);
+    // }
+    // if (sum == 123456.0) std::cout << "Unlikely!\n"; // prevent optimization
 
 
     par[0][0]=10;
@@ -69,8 +70,11 @@ void process_surface(const Surface1D& surface, double **par, double **new_par, d
 
     class levmarq minimizer;
 
+    
     minimizer.solve(par,new_par, surface.size(), NULL /**weight*/,jaco, ypre, cost_function);
-
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    std::cout << "Time taken for surface processing: " << elapsed.count() << " seconds\n";
 
 }
 
@@ -88,16 +92,16 @@ int main() {
         surfaces[i] = generate_gaussian_surface(rng);
     }
 
-    int test_number[4] = {8,4,2,1};
+    int test_number[2] = {4,1};
 
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 2; ++i)
     {
 
         int num_threads = test_number[i];
 
         omp_set_num_threads(num_threads);
 
-        auto start = std::chrono::high_resolution_clock::now();
+        
 
         /**
          * Pre allocate memory for the cost function of each thread
@@ -125,11 +129,11 @@ int main() {
             }
         }
         
-
+        auto start = std::chrono::high_resolution_clock::now();
         #pragma omp parallel for 
         for (int i = 0; i < TASKS; ++i) {
-            // Surface1D surface = generate_gaussian_surface(rng);
-            const Surface1D& surface = surfaces[i];
+            Surface1D surface = generate_gaussian_surface(rng);
+            // const Surface1D& surface = surfaces[i];
             double **current_par = par[i];
             double **current_new_par = new_par[i];
             double **current_jaco = jaco[i];
