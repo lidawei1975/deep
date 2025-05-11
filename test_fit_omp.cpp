@@ -6,7 +6,7 @@
 #include <omp.h>
 
 constexpr int DATA_POINTS = 1000;
-constexpr int TASKS = 8;
+constexpr int TASKS = 32;
 constexpr int MAX_ITERS = 100;
 constexpr double EPS = 1e-8;
 constexpr double LAMBDA_INIT = 1e-3;
@@ -166,10 +166,10 @@ int main() {
     std::chrono::duration<double> elapsed = end - start;
 
     std::cout << "Parallel LM fitting done in " << elapsed.count() << " seconds\n";
-    for (int i = 0; i < TASKS; ++i) {
-        const auto& p = fitted_params[i];
-        std::cout << "Fit " << i << ": A=" << p[0] << ", x0=" << p[1] << ", sigma=" << p[2] << "\n";
-    }
+    // for (int i = 0; i < TASKS; ++i) {
+    //     const auto& p = fitted_params[i];
+    //     std::cout << "Fit " << i << ": A=" << p[0] << ", x0=" << p[1] << ", sigma=" << p[2] << "\n";
+    // }
 
     return 0;
 }

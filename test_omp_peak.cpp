@@ -8,9 +8,9 @@
 #include "lmminimizer_n.h"
 #include "cost_functors.h"
 
-constexpr int GRID_SIZE = 100;
+constexpr int GRID_SIZE = 300;
 constexpr int TOTAL_SIZE = GRID_SIZE * GRID_SIZE;
-constexpr int TASKS = 4;
+constexpr int TASKS = 16;
 
 using Surface1D = std::vector<double>;
 
