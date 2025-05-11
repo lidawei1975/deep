@@ -73,8 +73,8 @@ private:
   bool multiple_fit_voigt_lorentz(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x0, double &y0, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n);
   bool multiple_fit_voigt_lorentz_core(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &gammax, double &gammay, double *e);
 
-  bool multiple_fit_voigt(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n = 0);
-  bool multiple_fit_voigt_core(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e);
+  bool multiple_fit_voigt(const int, const int,const std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, const int n = 0);
+  bool multiple_fit_voigt_core(const int, const int,const std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e);
 
 
   bool gaussain_convolution(const int,const int,const double a,const double x,const double y,const double sigmax,const double sigmay,int&,int&,int&,int&, std::vector<double> *kernel, double scale = 1.5);

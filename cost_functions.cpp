@@ -87,7 +87,7 @@ bool mycostfunction_gaussian::Evaluate(double const *const *xx, double *residual
 
 //Voigt 
 mycostfunction_voigt::~mycostfunction_voigt(){};
-mycostfunction_voigt::mycostfunction_voigt(int xdim_, int ydim_, double *z_)
+mycostfunction_voigt::mycostfunction_voigt(int xdim_, int ydim_, double const *z_)
 {
     xdim=xdim_;
     ydim=ydim_;

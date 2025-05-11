@@ -38,14 +38,14 @@ class mycostfunction_voigt : public ceres::CostFunction
 private:
   int n_datapoint; // size of x(y,z)
   int xdim, ydim;
-  double *z; // x,y -> coor, z-> spectra data
+  double const *z; // x,y -> coor, z-> spectra data
 
   void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
   void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
 
 public:
   ~mycostfunction_voigt();
-  mycostfunction_voigt(int, int, double *);
+  mycostfunction_voigt(int, int, double const *);
   bool Evaluate(double const *const *, double *, double **) const;
 #ifndef LMMIN
   inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
