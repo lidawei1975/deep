@@ -1,5 +1,8 @@
 #ifdef LMMIN
-#include "lmminimizer.h"
+    #include "lmminimizer.h"
+#else
+    #include "ceres/ceres.h"
+    #include "glog/logging.h"
 #endif
 
 // fucntions from libcerf
@@ -148,6 +151,36 @@ public:
 };
 
 /**
+ * 3 peak fit with relative postion, relative sigma, relative gamma restriction
+ * Fitting parameters are peak 1 parameters, peak 2 relative position,sigma,gamma and peak 3 relative position,sigma,gamma
+ * Peak 2 and peak 3 can have any amplitude, like peak 1
+*/
+#ifdef LMMIN
+class mycostfunction_3voigt1d : public ldwcostfunction
+#else
+class mycostfunction_3voigt1d : public ceres::CostFunction
+#endif
+{
+
+private:
+  int n_datapoint; // size of x(y,z)
+  double *z;       // x,y -> coor, z-> spectra data
+
+  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const;
+  void voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const;
+
+public:
+  ~mycostfunction_3voigt1d();
+  mycostfunction_3voigt1d(int, double *);
+  bool Evaluate(double const *const *, double *, double **) const;
+#ifndef LMMIN
+  inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
+  inline void set_n_residuals(int n) { set_num_residuals(n); };
+#endif
+};
+
+
+/**
  * @brief for 1D voigt fitting, analytical derivative
  * fit one peak
  */
@@ -249,3 +282,46 @@ public:
 #endif
 };
 
+
+// for 1D fast voigt fitting, analytical derivative
+
+#ifdef LMMIN
+class mycostfunction_voigt1d_approx_old : public ldwcostfunction 
+#else
+class mycostfunction_voigt1d_approx_old : public ceres::CostFunction
+#endif
+{
+private:
+    int n_datapoint; // size of x(y,z)
+    double *z; // x -> coor, z-> spectra data
+
+public:
+    ~mycostfunction_voigt1d_approx_old();
+    mycostfunction_voigt1d_approx_old(int, double *);
+    bool Evaluate(double const *const *, double *, double **) const;
+#ifndef LMMIN
+    inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
+    inline void set_n_residuals(int n) { set_num_residuals(n); };
+#endif
+};
+
+
+#ifdef LMMIN
+class mycostfunction_voigt1d_approx : public ldwcostfunction 
+#else
+class mycostfunction_voigt1d_approx : public ceres::CostFunction
+#endif
+{
+private:
+    int n_datapoint; // size of x(y,z)
+    double *z; // x -> coor, z-> spectra data
+
+public:
+    ~mycostfunction_voigt1d_approx();
+    mycostfunction_voigt1d_approx(int, double *);
+    bool Evaluate(double const *const *, double *, double **) const;
+#ifndef LMMIN
+    inline std::vector<int> *parameter_block_sizes() { return mutable_parameter_block_sizes(); };
+    inline void set_n_residuals(int n) { set_num_residuals(n); };
+#endif
+};

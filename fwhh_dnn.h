@@ -3,6 +3,8 @@
 #include <iostream>
 #include "dnn_base.h"
 
+#ifndef FWHH_ESTIMATOR_H
+#define FWHH_ESTIMATOR_H
 class fwhh_estimator
 {
 private:
@@ -15,4 +17,5 @@ public:
 
     float predict(std::vector<float> &);
 };
+#endif
 

@@ -4,6 +4,7 @@
 
 #include <vector>
 #include <map>
+#include <cmath>
 #include <iostream>
 
 enum FID_DATA_COMPLEXITY
@@ -49,8 +50,115 @@ struct spectrum_1d_peaks
     std::vector<double> ppm;        //peak coordinates in ppm
     std::vector<double> sigmax;     //Gaussian peak shape parameter. IMPORTANT: in Gaussian fit, this is actually 2*sigma*sigma
     std::vector<double> gammax;     //Lorentzian peak shape parameter
-    std::vector<double> volume;    //peak volume
+    std::vector<double> delta;      //Lorentzian ratio of voigt_appromixate, Gaussain ratio is 1-delta
+    std::vector<double> volume;      //peak volume
     std::vector<double> confidence; //confidence level of peak
+    std::vector<double> fwhh;       //full width at half height
+
+    /**
+     * Default constructor
+     */
+    spectrum_1d_peaks()
+    {
+        a.clear();
+        x.clear();
+        ppm.clear();
+        sigmax.clear();
+        gammax.clear();
+        delta.clear();
+        volume.clear();
+        confidence.clear();
+        fwhh.clear();
+    };
+
+    /**
+     * Define a operator "=" to copy the content of one spectrum_1d_peaks to another
+     */
+    spectrum_1d_peaks & operator=(const spectrum_1d_peaks &other) 
+    {
+        if (this != &other) // self-assignment check
+        {
+            a = other.a;
+            x = other.x;
+            ppm = other.ppm;
+            sigmax = other.sigmax;
+            gammax = other.gammax;
+            delta = other.delta;
+            volume = other.volume;
+            confidence = other.confidence;
+            fwhh = other.fwhh;
+        }
+        return *this;
+    };
+
+    /**
+     * Clear all data in the spectrum_1d_peaks
+    */
+    void clear(){
+        a.clear();
+        x.clear();
+        ppm.clear();
+        sigmax.clear();
+        gammax.clear();
+        delta.clear();
+        volume.clear();
+        confidence.clear();
+        fwhh.clear();
+    };
+
+    /**
+     * Add one peak from a object of spectrum_1d_peaks
+    */
+    void add_peak(const spectrum_1d_peaks &other, int i){
+
+        /**
+         * Do nothing if i is out of range
+        */
+        if(i>=other.a.size() || i<0){
+            return;
+        }
+
+        a.push_back(other.a[i]);
+        x.push_back(other.x[i]);
+        ppm.push_back(other.ppm[i]);
+        sigmax.push_back(other.sigmax[i]);
+        gammax.push_back(other.gammax[i]);
+        if(other.delta.size()>i){
+            delta.push_back(other.delta[i]);
+        }
+        volume.push_back(other.volume[i]);
+        confidence.push_back(other.confidence[i]);
+        if(other.fwhh.size()>i){
+            fwhh.push_back(other.fwhh[i]);
+        }
+    };
+
+    /**
+     * Calculate fwhh from sigmax and gammax for all peaks
+    */
+    void calculate_fwhh(){
+        fwhh.clear();
+        for(int i=0;i<a.size();i++){
+            fwhh.push_back(1.0692 * gammax[i]  + std::sqrt(0.8664 * gammax[i] * gammax[i] + sigmax[i] * sigmax[i] * 5.5448));
+        }
+    };
+
+    void remove_peak(int i)
+    {
+        if (i < 0 || i >= a.size()) {
+            std::cerr << "Error: index out of range in remove_peak" << std::endl;
+            return;
+        }
+        a.erase(a.begin() + i);
+        x.erase(x.begin() + i);
+        ppm.erase(ppm.begin() + i);
+        sigmax.erase(sigmax.begin() + i);
+        gammax.erase(gammax.begin() + i);
+        if (delta.size() > i) delta.erase(delta.begin() + i);
+        volume.erase(volume.begin() + i);
+        confidence.erase(confidence.begin() + i);
+        if (fwhh.size() > i) fwhh.erase(fwhh.begin() + i);
+    };
 };
 
 struct shared_data_1d
@@ -61,6 +169,10 @@ struct shared_data_1d
    * Z_gradient is used in pseudo 2D DOSY fitting only
   */
   static std::vector<double> z_gradients;
+  /**
+   * Peak combine cutoff
+  */
+  static double peak_combine_cutoff;
 };
 
 
@@ -137,6 +249,11 @@ protected:
     */
     bool read_jcamp(std::string file_name, std::map<std::string, std::string> &udict) const;
     bool read_jcmap_line(std::ifstream &,std::string line, std::string &key, std::string &value) const; 
+
+    //These three are for endian conversion, required by sparky format!
+    float read_float(FILE *);
+    bool read_float(FILE *,int, float *);
+    int read_int(FILE *);
 
     /**
      * Helper function for run_fft_and_rm_bruker_filter
@@ -237,10 +354,12 @@ protected:
     bool read_spectrum_ft(std::string);
     bool read_spectrum_json(std::string);
     bool read_spectrum_csv(std::string);
+    bool read_spectrum_sparky(std::string infname);
 
     bool write_spectrum_json(std::string); // save spectrum
     bool write_spectrum_txt(std::string);  // write spectrum in txt format, header is copied from reading but spectrum might be changed
-
+    bool write_spectrum_csv(std::string); // write spectrum in csv format, header is copied from reading but spectrum might be changed
+    
 public:
     fid_1d();
     ~fid_1d();

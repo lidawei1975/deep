@@ -388,7 +388,7 @@ gaussian_fit::~gaussian_fit()
 
 //exact shape peak fitting, with phasing error
 
-bool gaussian_fit::one_fit_exact(std::vector<double> &zz, double &x0,double &y0,double &a,double &r2x,double &r2y,double &sx, double &sy,double *e) const
+bool gaussian_fit::one_fit_exact(std::vector<double> &zz, double &x0,double &y0,double &a,double &r2x,double &r2y,double &sx, double &sy,double *e)
 {
 #ifdef LMMIN
 
@@ -411,7 +411,7 @@ bool gaussian_fit::one_fit_exact(std::vector<double> &zz, double &x0,double &y0,
     return true;
 };
 
-bool gaussian_fit::one_fit_exact_shell(std::vector<double> &xx,std::vector<double> &yy,std::vector<double> &zz,const double x,const double y,double &aa,double &r2x, double &r2y, double &shiftx, double &shifty, double &phase_x,double &phase_y) const
+bool gaussian_fit::one_fit_exact_shell(std::vector<double> &xx,std::vector<double> &yy,std::vector<double> &zz,const double x,const double y,double &aa,double &r2x, double &r2y, double &shiftx, double &shifty, double &phase_x,double &phase_y)
 {
     double e=0.0;
     std::vector<double> z;
@@ -440,7 +440,7 @@ bool gaussian_fit::one_fit_exact_shell(std::vector<double> &xx,std::vector<doubl
 
 
 //gaussian fit of one peak
-bool gaussian_fit::one_fit_gaussian(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay, double *e) const
+bool gaussian_fit::one_fit_gaussian(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay, double *e)
 {
 
 #ifdef LMMIN
@@ -517,7 +517,7 @@ bool gaussian_fit::one_fit_gaussian(int xsize,int ysize,std::vector<double> *zz,
 
 
 
-bool gaussian_fit::one_fit_gaussian_intensity_only(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay, double *e) const
+bool gaussian_fit::one_fit_gaussian_intensity_only(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay, double *e)
 {
     sigmax=2*sigmax*sigmax;
     sigmay=2*sigmay*sigmay;
@@ -632,7 +632,7 @@ bool gaussian_fit::multiple_fit_gaussian(int xsize,int ysize, std::vector< std::
 
 
 //fit one Voigt intensity only, with jacobian!!
-bool gaussian_fit::one_fit_voigt_intensity_only(int xsize,int ysize,std::vector<double> *zz, double &a,double x0,double y0,double sigmax,double sigmay,double gammax,double gammay,double *e) const
+bool gaussian_fit::one_fit_voigt_intensity_only(int xsize,int ysize,std::vector<double> *zz, double &a,double x0,double y0,double sigmax,double sigmay,double gammax,double gammay,double *e)
 {
     // double ee;
     // ceres::Solver::Options options;
@@ -671,7 +671,7 @@ bool gaussian_fit::one_fit_voigt_intensity_only(int xsize,int ysize,std::vector<
 
 
 //fit one Voigt, with jacobian!!
-bool gaussian_fit::one_fit_voigt(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e, int n) const
+bool gaussian_fit::one_fit_voigt(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e, int n)
 {
 
     if(n<=0)
@@ -748,7 +748,7 @@ bool gaussian_fit::one_fit_voigt(int xsize,int ysize,std::vector<double> *zz, do
     return true;
 };
 
-bool gaussian_fit::one_fit_voigt_core(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e) const
+bool gaussian_fit::one_fit_voigt_core(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e)
 {
 #ifdef LMMIN
     double **par;
@@ -1124,7 +1124,7 @@ bool gaussian_fit::multiple_fit_voigt_core(int xsize,int ysize, std::vector<std:
  * 
  * n>0: skip sigmay then call the core function
 */
-bool gaussian_fit::one_fit_voigt_lorentz(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e,int n) const
+bool gaussian_fit::one_fit_voigt_lorentz(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e,int n)
 {
     if(n==0)
     {
@@ -1186,7 +1186,7 @@ bool gaussian_fit::one_fit_voigt_lorentz(int xsize,int ysize,std::vector<double>
     return one_fit_voigt_lorentz_core(xsize,ysize,zz,x0,y0,a,sigmax,gammax,gammay,e);
 }
 
-bool gaussian_fit::one_fit_voigt_lorentz_core(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &gammax,double &gammay,double *e) const
+bool gaussian_fit::one_fit_voigt_lorentz_core(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &gammax,double &gammay,double *e)
 {
 
 #ifdef LMMIN
@@ -2337,7 +2337,7 @@ std::vector<std::pair<int,int>> gaussian_fit::get_possible_excess_peaks()
  * If they are not, then we keep both peaks.
  * @return 0: keep both peaks, 1: remove i_peak, 2: remove j_peak
 */
-int gaussian_fit::test_excess_peaks(int i_peak,int j_peak) const
+int gaussian_fit::test_excess_peaks(int i_peak,int j_peak)
 {
     if(peak_shape != voigt_type && peak_shape != gaussian_type)
     {
@@ -3032,7 +3032,7 @@ bool gaussian_fit::run_multi_peaks(int loop_max)
                     }
                 }
             }
-            if (k_location >=0 && n_verbose > 0)
+            if (n_verbose > 0)
             {
                 std::cout << "Loop " << loop << " " << original_ndx[peak_list[k_location].second] << " will be removed because it failed excessive test with " << original_ndx[peak_list[k_location].first] << std::endl;
                 std::cout << " x=" << x[peak_list[k_location].second] << " y=" << y[peak_list[k_location].second] << " a=" << a[peak_list[k_location].second][0] << " sigmax=" << sigmax[peak_list[k_location].second] << " sigmay=" << sigmay[peak_list[k_location].second] << " gammax=" << gammax[peak_list[k_location].second] << " gammay=" << gammay[peak_list[k_location].second] << std::endl;
@@ -4238,34 +4238,9 @@ bool spectrum_fit::real_peak_fitting()
     std::vector<int> single_peak_fits;
     std::vector<int> multi_peak_fits;
 
-    int single_peak_defination_cutoff = 1;
-#ifdef USE_OPENMP
-    /**
-     * Get number of using threads
-     * then define single_peak_defination_cutoff to be 2/3 of the number of threads
-    */
-    int nthreads = omp_get_num_threads();
-    if (nthreads > 1)
-    {
-        single_peak_defination_cutoff = nthreads * 2 / 3;
-        if(single_peak_defination_cutoff < 1)
-        {
-            single_peak_defination_cutoff = 1;
-        }
-    }
-
-    /**
-     * Only allow one layer of parallelism
-    */
-    omp_set_max_active_levels(1);
-
-#endif
-
-
-
     for (int i = 0; i < fits.size(); i++)
     {
-        if (fits[i].x.size() <= single_peak_defination_cutoff)
+        if (fits[i].x.size() == 1)
         {
             single_peak_fits.push_back(i);
         }
