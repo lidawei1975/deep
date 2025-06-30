@@ -3619,35 +3619,7 @@ bool fid_2d::write_pipe(std::string fname,bool b_real_only)
     return true;
 };
 
-float fid_2d::read_float(FILE *fp)
-{
-    char buff[4];
-    fread(buff, 4, 1, fp); // dimension
-    std::swap(buff[0], buff[3]);
-    std::swap(buff[1], buff[2]);
-    return *((float *)buff);
-};
 
-bool fid_2d::read_float(FILE *fp, int n, float *pf)
-{
-    fread(pf, 4, n, fp);
-    char *buff = (char *)pf;
-    for (int i = 0; i < n; i++)
-    {
-        std::swap(buff[0 + i * 4], buff[3 + i * 4]);
-        std::swap(buff[1 + i * 4], buff[2 + i * 4]);
-    }
-    return true;
-}
-
-int fid_2d::read_int(FILE *fp)
-{
-    char buff[4];
-    fread(buff, 4, 1, fp); // dimension
-    std::swap(buff[0], buff[3]);
-    std::swap(buff[1], buff[2]);
-    return *((int *)buff);
-};
 
 bool fid_2d::read_sparky(std::string infname)
 {

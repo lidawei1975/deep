@@ -1,22 +1,10 @@
 #include <vector>
+#include <array>
 #include <valarray>
 #include <fstream>
 #include <iostream>
 #include <random>
 #include <limits>
-
-#ifdef LMMIN
-    #include "lmminimizer.h"
-#else
-    #include "ceres/ceres.h"
-    #include "glog/logging.h"
-    using ceres::CostFunction;
-    using ceres::AutoDiffCostFunction;
-    using ceres::NumericDiffCostFunction;
-    using ceres::Problem;
-    using ceres::Solver;
-    using ceres::Solve;
-#endif
 
 #include "kiss_fft.h"
 #include "json/json.h"
@@ -31,6 +19,21 @@
 
 namespace ldw_math_1d
 {
+    double gaussian_function(double x, double sigma)
+    {
+        return exp(-x * x / (2 * sigma * sigma));
+    };
+
+    double lorentz_function(double x, double gamma)
+    {
+        return 1 / (1 + (x / gamma) * (x / gamma));
+    };
+
+    double voigt_approximate_function(double x, double sigma, double gamma, double ratio)
+    {
+        return (exp(-x * x / (2 * sigma * sigma)) * (1 - ratio) + 1 / (1 + (x / gamma) * (x / gamma)) * ratio);
+    };
+
     double calcualte_median(std::vector<double> scores)
     {
         size_t size = scores.size();
@@ -110,6 +113,46 @@ namespace ldw_math_1d
         return true;
     };
 
+    bool voigt_approximate_convolution_old(double a, double x, double sigmax, double gammax, double ratio, std::vector<double> *kernel, int &i0, int &i1, int xdim, double scale)
+    {
+        double wx = std::max(2.355 * sigmax, 2.0 * gammax );
+
+        i0 = std::max(0, int(x - wx * scale + 0.5));
+        i1 = std::min(xdim, int(x + wx * scale + 0.5));
+
+        kernel->clear();
+        kernel->resize(i1 - i0);
+
+        double sigmax2 = sigmax * sigmax * 2.0;
+
+        for (int i = i0; i < i1; i++)
+        {
+             double t1 = x - i;
+            kernel->at(i - i0) = a * (exp(-(t1 * t1) / sigmax2) * (1-ratio) + 1 / (1 + ( t1 / gammax) * ( t1 / gammax)) * ratio);
+        }
+        return true;
+    }
+
+    bool voigt_approximate_convolution(double a, double x, double sigmax, double gammax, std::vector<double> *kernel, int &i0, int &i1, int xdim, double scale)
+    {
+        double wx = pow(pow(gammax, 5) + pow(2.69269 * sigmax, 5), 1.0 / 5.0);
+        double eta = (1.36603 * gammax / wx) - (0.47719 * pow(gammax / wx, 2)) + (0.11116 * pow(gammax / wx, 3));
+
+        i0 = std::max(0, int(x - wx * scale + 0.5));
+        i1 = std::min(xdim, int(x + wx * scale + 0.5));
+
+        kernel->clear();
+        kernel->resize(i1 - i0);
+
+        for (int i = i0; i < i1; i++)
+        {
+            double gaussain_part =  exp(-(i - x) * (i - x) / (2*sigmax*sigmax));
+            double lorentzian_part = gammax / M_PI / ((i - x) * (i - x) + gammax*gammax);
+            kernel->at(i - i0) = a * lorentzian_part * eta + a * gaussain_part * (1 - eta);
+        }
+        return true;
+    }
+
     bool voigt_convolution(double a, double x, double sigmax, double gammax, std::vector<double> *kernel, int &i0, int &i1, int xdim, double scale)
     {
         double wx = 0.5346 * gammax * 2 + std::sqrt(0.2166 * 4 * gammax * gammax + sigmax * sigmax * 8 * 0.6931);
@@ -139,6 +182,7 @@ gaussian_fit_1d::gaussian_fit_1d()
     wx = 30;
     n_patch = 20;
 
+#ifndef LMMIN
     // default fitting parameters
     options.max_num_iterations = 250;
     options.function_tolerance = 1e-12;
@@ -146,6 +190,7 @@ gaussian_fit_1d::gaussian_fit_1d()
     options.initial_trust_region_radius = 15.0;
     options.linear_solver_type = ceres::DENSE_QR;
     options.minimizer_progress_to_stdout = false;
+#endif
 
     return;
 };
@@ -227,7 +272,7 @@ bool gaussian_fit_1d::gaussian_fit_init(std::vector<std::vector<float>> &d, std:
         float s;
         for (int k = 0; k < p1.size(); k++)
         {
-            s = 0.5346 * sigmax[k] * 2 + std::sqrt(0.2166 * 4 * gammax[k] * gammax[k] + sigmax[k] * sigmax[k] * 8 * 0.6931); // fwhh
+            s = 0.5346 * gammax[k] * 2 + std::sqrt(0.2166 * 4 * gammax[k] * gammax[k] + sigmax[k] * sigmax[k] * 8 * 0.6931); // fwhh
             s = s / 2.355f;                                                                                                  // sigma
             sigmax[k] = s;
             gammax[k] = 1e-10;
@@ -238,7 +283,7 @@ bool gaussian_fit_1d::gaussian_fit_init(std::vector<std::vector<float>> &d, std:
         float s;
         for (int k = 0; k < p1.size(); k++)
         {
-            s = 0.5346 * sigmax[k] * 2 + std::sqrt(0.2166 * 4 * gammax[k] * gammax[k] + sigmax[k] * sigmax[k] * 8 * 0.6931); // fwhh
+            s = 0.5346 * gammax[k] * 2 + std::sqrt(0.2166 * 4 * gammax[k] * gammax[k] + sigmax[k] * sigmax[k] * 8 * 0.6931); // fwhh
             gammax[k] = s * 0.5;
             sigmax[k] = 1e-10;
         }
@@ -253,11 +298,32 @@ bool gaussian_fit_1d::gaussian_fit_init(std::vector<std::vector<float>> &d, std:
             }
         }
     }
+    else if (type == voigt_approximate_type) //get fwhh, then update both sigma and gamma to match fwhh
+    {
+        float s;
+        for (int k = 0; k < p1.size(); k++)
+        {
+            s = 0.5346 * gammax[k] * 2 + std::sqrt(0.2166 * 4 * gammax[k] * gammax[k] + sigmax[k] * sigmax[k] * 8 * 0.6931); // fwhh
+            sigmax[k] = s / 2.355f;                                                                                                  // sigma
+            gammax[k] = s * 0.5;    
+        }
+    }
+
+    if (type == voigt_approximate_type)
+    {
+        delta.clear();
+        delta.resize(sigmax.size(),0.5);
+    }
+    else // if not voigt_approximate_type, delta is not used but need to be allocated with all 0.0
+    {
+        delta.clear();
+        delta.resize(sigmax.size(),0.0);
+    }
 
     return true;
 };
 
-void gaussian_fit_1d::set_up(fit_type t_, int r_, double near, double scale_, double noise_, bool b_,double mw_)
+void gaussian_fit_1d::set_up(fit_type t_, int r_, double near, double scale_, double noise_, bool b_,double mw_, bool b2_)
 
 {
     type = t_;
@@ -266,6 +332,7 @@ void gaussian_fit_1d::set_up(fit_type t_, int r_, double near, double scale_, do
     minimal_height = scale_ * noise_;
     noise_level = noise_;
     b_negative=b_;
+    b_allow_remove_peaks = b2_;
     median_width_x = mw_;
 };
 
@@ -284,15 +351,27 @@ int gaussian_fit_1d::get_nround()
     return nround;
 }
 
-int gaussian_fit_1d::test_possible_removal(double x1, double a1, double s1, double g1, double x2, double a2, double s2, double g2)
+int gaussian_fit_1d::test_possible_removal(double x1, double a1, double s1, double g1, double x2, double a2, double s2, double g2,double ratio1, double ratio2)
 {
-    double fwhh1 = 0.5346 * s1 * 2 + std::sqrt(0.2166 * 4 * g1 * g1 + s1 * s1 * 8 * 0.6931);
-    double fwhh2 = 0.5346 * s2 * 2 + std::sqrt(0.2166 * 4 * g2 * g2 + s2 * s2 * 8 * 0.6931);
+    double fwhh1 = 0.5346 * g1 * 2 + std::sqrt(0.2166 * 4 * g1 * g1 + s1 * s1 * 8 * 0.6931);
+    double fwhh2 = 0.5346 * g2 * 2 + std::sqrt(0.2166 * 4 * g2 * g2 + s2 * s2 * 8 * 0.6931);
 
-    double aa1 = a1 * voigt(0, s1, g1);
-    double aa2 = a2 * voigt(0, s2, g2);
+    if(type == voigt_approximate_type)
+    {
+        fwhh1 = ratio1 * 2.0 * g1 + (1-ratio1) * s1 * 2.355;
+        fwhh2 = ratio2 * 2.0 * g2 + (1-ratio2) * s2 * 2.355;
+    }
 
-    double a, x, s, g;
+    double aa1 = a1;
+    double aa2 = a2;
+
+    if(type == voigt_type)
+    {
+        aa1 = a1 * voigt(0, s1, g1);
+        aa2 = a2 * voigt(0, s2, g2);
+    }
+
+    double a, x, s, g, r;
 
     int p1 = int(round(x1));
     int p2 = int(round(x2));
@@ -305,12 +384,14 @@ int gaussian_fit_1d::test_possible_removal(double x1, double a1, double s1, doub
         x = x1;
         s = s1;
         g = g1;
+        r = ratio1;
     }
     else
     {
         x = x2;
         s = s2;
         g = g2;
+        r = ratio2;
     }
     std::vector<double> profile;
 
@@ -318,7 +399,28 @@ int gaussian_fit_1d::test_possible_removal(double x1, double a1, double s1, doub
     int max_ndx = 0;
     for (int i = pp1; i <= pp2; i++)
     {
-        double v = a1 * voigt(i - x1, s1, g1) + a2 * voigt(i - x2, s2, g2);
+        double v;
+        if(type == voigt_type)
+        {
+            v = a1 * voigt(i - x1, s1, g1) + a2 * voigt(i - x2, s2, g2);
+        }
+        else if(type == gaussian_type)
+        {
+            v = a1 * ldw_math_1d::gaussian_function(i - x1, s1) + a2 * ldw_math_1d::gaussian_function(i - x2, s2);
+        }
+        else if(type == lorentz_type)
+        {
+            v = a1 * ldw_math_1d::lorentz_function(i - x1, g1) + a2 * ldw_math_1d::lorentz_function(i - x2, g2);
+        }
+        else if(type == voigt_approximate_type)
+        {
+            v = a1 * ldw_math_1d::voigt_approximate_function(i - x1, s1, g1, ratio1) + a2 * ldw_math_1d::voigt_approximate_function(i - x2, s2, g2, ratio2);
+        }
+        else
+        {
+            v = 0; // should not reach here
+        }
+        
         if (v > max_v)
         {
             max_v = v;
@@ -380,23 +482,66 @@ int gaussian_fit_1d::test_possible_removal(double x1, double a1, double s1, doub
         return 0;
     }
 
+
+
     double e;
     x -= pp1;
     a = std::max(a1, a2);
-    one_fit_voigt_core(pp2 - pp1 + 1, &profile, x, a, s, g, e);
+    if(type == voigt_type)
+    {
+       one_fit_voigt_core(pp2 - pp1 + 1, &profile, x, a, s, g, e);
+    }
+    else if(type == gaussian_type)
+    {
+        one_fit_gaussian(pp2 - pp1 + 1, &profile, x, a, s, e);
+    }
+    else if(type == lorentz_type)
+    {
+        one_fit_lorentz(pp2 - pp1 + 1, &profile, x, a, g, e);
+    }
+    else if(type == voigt_approximate_type)
+    {
+        one_fit_voigt_approximate(pp2 - pp1 + 1, &profile, x, a, s, g, e);
+    }
+    else
+    {
+        e = 0; // should not reach here
+    }
+    
+    
     x += pp1;
 
     double max_e = 0;
     for (int i = pp1; i <= pp2; i++)
     {
-        double e = fabs(profile[i - pp1] - a * voigt(i - x, s, g));
+        double e;
+        if(type == voigt_type)
+        {
+            e = fabs(profile[i - pp1] - a * voigt(i - x, s, g));
+        } 
+        else if(type == gaussian_type)
+        {
+            e = fabs(profile[i - pp1] - a * ldw_math_1d::gaussian_function(i - x, s));
+        }
+        else if(type == lorentz_type)
+        {
+            e = fabs(profile[i - pp1] - a * ldw_math_1d::lorentz_function(i - x, g));
+        }
+        else if(type == voigt_approximate_type)
+        {
+            e = fabs(profile[i - pp1] - a * ldw_math_1d::voigt_approximate_function(i - x, s, g, r));
+        }
+        else
+        {
+            e = 0; // should not reach here
+        }
         if (e > max_e)
         {
             max_e = e;
         }
     }
 
-    if (max_e / max_v > 0.01)
+    if (max_e / max_v > peak_combine_cutoff)
     {
         return 0;
     }
@@ -720,6 +865,7 @@ bool gaussian_fit_1d::run_peak_fitting(bool flag_first)
                 x.erase(x.begin() + i);
                 sigmax.erase(sigmax.begin() + i);
                 gammax.erase(gammax.begin() + i);
+                delta.erase(delta.begin() + i);
                 num_sum.erase(num_sum.begin() + i);
                 err.erase(err.begin() + i);
                 original_ndx.erase(original_ndx.begin() + i);
@@ -742,6 +888,7 @@ bool gaussian_fit_1d::run_peak_fitting(bool flag_first)
                 x.erase(x.begin() + i);
                 sigmax.erase(sigmax.begin() + i);
                 gammax.erase(gammax.begin() + i);
+                delta.erase(delta.begin() + i);
                 num_sum.erase(num_sum.begin() + i);
                 err.erase(err.begin() + i);
                 original_ndx.erase(original_ndx.begin() + i);
@@ -860,6 +1007,10 @@ bool gaussian_fit_1d::run_single_peak()
     {
         one_fit_voigt(xdim, &zz, x[0], a[0][0], sigmax[0], gammax[0], err[0], 0, 0);
     }
+    else if (type == voigt_approximate_type)
+    {
+        one_fit_voigt_approximate(xdim, &zz, x[0], a[0][0], sigmax[0], gammax[0], err[0]);
+    }
     nround = 1;
 
     return true;
@@ -959,6 +1110,8 @@ bool gaussian_fit_1d::run_multi_peaks()
                 voigt_convolution(a[i][0], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
             else if (type == lorentz_type)
                 lorentz_convolution(a[i][0], x[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
+            else if (type == voigt_approximate_type)
+                voigt_approximate_convolution(a[i][0], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
 
             {
                 for (int ii = i0; ii < i1; ii++)
@@ -993,6 +1146,8 @@ bool gaussian_fit_1d::run_multi_peaks()
                 voigt_convolution_with_limit(i, a[i][0], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
             else if (type == lorentz_type)
                 lorentz_convolution_with_limit(i, a[i][0], x[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
+            else if (type == voigt_approximate_type)
+                voigt_approximate_convolution_with_limit(i, a[i][0], x[i], sigmax[i], gammax[i], &(analytical_spectra), i0, i1, CONVOLUTION_RANGE);
 
             for (int ii = i0; ii < i1; ii++)
             {
@@ -1025,28 +1180,63 @@ bool gaussian_fit_1d::run_multi_peaks()
             {
                 one_fit_lorentz(i1 - i0, &zz, x[i], a[i][0], gammax[i], err[i]);
             }
+            else if (type == voigt_approximate_type)
+            {
+                one_fit_voigt_approximate(i1 - i0, &zz, x[i], a[i][0], sigmax[i], gammax[i], err[i]);
+            }
 
-            if (fabs(sigmax.at(i)) + fabs(gammax.at(i)) < 0.2 || fabs(sigmax.at(i)) + fabs(gammax.at(i)) > 10.0 * median_width_x)
+            /**
+             * For voigt_approximate_type, we calculate fwhh like this:
+             * fwhh1 = 2 * gammax;
+             * fwhh2 = 2.3548 * sigmax;
+             * fwhh = delta * fwhh1 + (1-delta) * fwhh2;
+            */
+            double fwhh;
+            if(type==voigt_approximate_type)
+            {
+                fwhh = pow(pow(gammax[i], 5) + pow(2.69269 * sigmax[i], 5), 1.0 / 5.0);
+            }
+            else if(type==voigt_type)
+            {
+                fwhh = 0.5346 * gammax[i] * 2 + std::sqrt(0.2166 * 4 * gammax[i]* gammax[i] + sigmax[i] * sigmax[i] * 8 * 0.6931);
+            }
+            else if(type==gaussian_type)
+            {
+                fwhh = 2.3548 * sigmax[i];
+            }
+            else if(type==lorentz_type)
+            {
+                fwhh = 2 * gammax[i];
+            }
+            else //should not happen
+            {
+                fwhh = 1.0;
+            }
+
+            /**
+             * Too narrow (fwhh<0.5) or too wide (fwhh>10*median_width_x) peaks will be removed.
+            */
+            if (fwhh < 0.5 || fwhh > 10.0 * median_width_x)
             {
                 if(n_verbose>1)
                 {
-                    std::cout << original_ndx[i] << " will be removed because too wide or narrow x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+                    std::cout << original_ndx[i] << " will be removed because too wide or narrow x=" << x.at(i) + i0 << " a=" << a[i][0] << " fwhh=" << fwhh << " total_z=" << total_z << std::endl;
                 }
                 peak_remove_flag[i] = 1;
                 b_some_peak_removed = 1;
                 continue; //no need to check other conditions
             }
 
-            if (x.at(i) < 0 || x.at(i) >= i1 - i0)
-            {
-                if(n_verbose>1)
-                {
-                    std::cout << original_ndx[i] << " will be removed because moved out of area  x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
-                }
-                peak_remove_flag[i] = 1;
-                b_some_peak_removed = 1;
-                continue; //no need to check other conditions
-            }
+            // if (x.at(i) < 0 || x.at(i) >= i1 - i0)
+            // {
+            //     if(n_verbose>1)
+            //     {
+            //         std::cout << original_ndx[i] << " will be removed because moved out of area  x=" << x.at(i) + i0 << " a=" << a[i][0] << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+            //     }
+            //     peak_remove_flag[i] = 1;
+            //     b_some_peak_removed = 1;
+            //     continue; //no need to check other conditions
+            // }
 
             //peah height check. if the peak height is too small, remove it.
             //height=a[i][0] for gaussian and lorentz but for voigt, we need to calculate it.
@@ -1067,16 +1257,16 @@ bool gaussian_fit_1d::run_multi_peaks()
                 continue; //no need to check other conditions
             }
 
-            if(x.at(i)+i0<x_range_left[i] || x.at(i)+i0>x_range_right[i])
-            {
-                if(n_verbose>1)
-                {
-                    std::cout << original_ndx[i] << " will be removed because moved out of range x=" << x.at(i) + i0 << " height=" << temp_peak_height << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
-                }
-                peak_remove_flag[i] = 1;
-                b_some_peak_removed=1;
-                continue; //no need to check other conditions
-            }
+            // if(x.at(i)+i0<x_range_left[i] || x.at(i)+i0>x_range_right[i])
+            // {
+            //     if(n_verbose>1)
+            //     {
+            //         std::cout << original_ndx[i] << " will be removed because moved out of range x=" << x.at(i) + i0 << " height=" << temp_peak_height << " sigma=" << sigmax.at(i) << " gamma=" << gammax.at(i) << " total_z=" << total_z << std::endl;
+            //     }
+            //     peak_remove_flag[i] = 1;
+            //     b_some_peak_removed=1;
+            //     continue; //no need to check other conditions
+            // }
 
             
             x[i] += i0;
@@ -1201,7 +1391,19 @@ bool gaussian_fit_1d::run_multi_peaks()
             {
                 int ii = ndx[i];
                 int jj = ndx[i + 1];
-                int n = test_possible_removal(x[ii], a[ii][0], sigmax[ii], gammax[ii], x[jj], a[jj][0], sigmax[jj], gammax[jj]);
+                int n =0;
+                if (type == voigt_approximate_type)
+                {
+                    n=0;
+                }
+                else if(b_allow_remove_peaks==false)
+                {
+                    n=0;
+                }
+                else
+                {
+                    test_possible_removal(x[ii], a[ii][0], sigmax[ii], gammax[ii], x[jj], a[jj][0], sigmax[jj], gammax[jj],delta[ii],delta[jj]);
+                }
                 if (n == 1)
                 {
                     to_remove[jj] = 1;
@@ -1522,6 +1724,12 @@ bool gaussian_fit_1d::run_multi_peaks_multi_spectra()
 bool gaussian_fit_1d::one_fit_gaussian(int xdim, std::vector<double> *zz, double &x0, double &a, double &sigmax, double &e)
 {
 
+#ifdef LMMIN
+
+
+
+#else
+
     ceres::Solver::Summary summary;
     ceres::Problem problem;
 
@@ -1537,12 +1745,19 @@ bool gaussian_fit_1d::one_fit_gaussian(int xdim, std::vector<double> *zz, double
     e = sqrt(summary.final_cost / zz->size());
 
     sigmax = sqrt(fabs(sigmax) / 2.0); // important: sigma is actually 2*sigma*sigma in mycostfunction_gaussian1d
+
+#endif
     return true;
 };
 
 //fit one Gaussian peak in pseudo-2D spectra
 bool gaussian_fit_1d::multi_fit_gaussian(int xdim, std::vector<std::vector<double>> &zz, double &x0, std::vector<double> &a, double &sigmax, double &e)
 {
+#ifdef LMMIN
+
+
+
+#else
     // std::vector<mycostfunction_gaussian1d *> cost_functions;
     ceres::Solver::Summary summary;
     ceres::Problem problem;
@@ -1562,13 +1777,18 @@ bool gaussian_fit_1d::multi_fit_gaussian(int xdim, std::vector<std::vector<doubl
     e = sqrt(summary.final_cost / zz[0].size());
 
     sigmax = sqrt(fabs(sigmax) / 2.0); // important: sigma is actually 2*sigma*sigma in mycostfunction_gaussian1d
+#endif
     return true;
 };
 
 
 bool gaussian_fit_1d::one_fit_lorentz(int xdim, std::vector<double> *zz, double &x0, double &a, double &gammax, double &e)
 {
+#ifdef LMMIN
 
+
+
+#else
     ceres::Solver::Summary summary;
     ceres::Problem problem;
 
@@ -1582,11 +1802,17 @@ bool gaussian_fit_1d::one_fit_lorentz(int xdim, std::vector<double> *zz, double 
     e = sqrt(summary.final_cost / zz->size());
 
     gammax = fabs(gammax);
+#endif
     return true;
 };
 
 bool gaussian_fit_1d::multi_fit_lorentz(int xdim, std::vector<std::vector<double>> &zz, double &x0, std::vector<double> &a, double &gammax, double &e)
 {
+#ifdef LMMIN
+
+
+
+#else
     ceres::Solver::Summary summary;
     ceres::Problem problem;
 
@@ -1603,6 +1829,7 @@ bool gaussian_fit_1d::multi_fit_lorentz(int xdim, std::vector<std::vector<double
     e = sqrt(summary.final_cost / zz[0].size());
 
     gammax = fabs(gammax);
+#endif
     return true;
 };
 
@@ -1826,6 +2053,34 @@ bool gaussian_fit_1d::multi_fit_voigt(int xdim, std::vector<std::vector<double>>
 
 bool gaussian_fit_1d::one_fit_voigt_core(int xdim, std::vector<double> *zz, double &x0, double &a, double &sigmax, double &gammax, double &e)
 {
+#ifdef LMMIN
+
+    double **par;
+    par = new double *[4];
+    for (int i = 0; i < 4; i++)
+        par[i] = new double[1];
+    par[0][0] = a;
+    par[1][0] = x0;
+    par[2][0] = sigmax;
+    par[3][0] = gammax;
+
+    mycostfunction_voigt1d  cost_function(xdim, zz->data());
+
+    class levmarq minimizer;
+    minimizer.solve(4,par,zz->size(),NULL/**weight*/,cost_function);
+
+    a = par[0][0];
+    x0 = par[1][0];
+    sigmax = fabs(par[2][0]);
+    gammax = fabs(par[3][0]);
+
+    e = minimizer.error_func(par, zz->size(), NULL /**weight*/, cost_function);
+
+    for (int i = 0; i < 4; i++)
+        delete[] par[i];
+    delete[] par;   
+
+#else
     ceres::Solver::Summary summary;
     ceres::Problem problem;
     mycostfunction_voigt1d *cost_function = new mycostfunction_voigt1d(xdim, zz->data());
@@ -1839,9 +2094,33 @@ bool gaussian_fit_1d::one_fit_voigt_core(int xdim, std::vector<double> *zz, doub
     // a = fabs(a);  a is not always positive
     sigmax = fabs(sigmax);
     gammax = fabs(gammax);
-
+#endif
     return true;
 };
+
+
+bool  gaussian_fit_1d::one_fit_voigt_approximate(int xdim, std::vector<double> *zz, double &x0, double &a, double &sigmax, double &gammax, double &e)
+{
+#ifdef LMMIN
+#else
+    ceres::Solver::Summary summary;
+    ceres::Problem problem;
+    mycostfunction_voigt1d_approx *cost_function = new mycostfunction_voigt1d_approx(xdim, zz->data());
+    cost_function->set_n_residuals(zz->size());
+
+    for (int m = 0; m < 4; m++)
+        cost_function->parameter_block_sizes()->push_back(1);
+    problem.AddResidualBlock(cost_function, NULL, &a, &x0, &sigmax, &gammax);
+
+    ceres::Solve(options, &problem, &summary);
+    e = sqrt(summary.final_cost / zz->size());
+    sigmax = fabs(sigmax);
+    gammax = fabs(gammax);
+#endif
+
+    return true;
+};    
+
 
 /**
  * @brief true voigt fitting for 1D. This is the core function, which will be called by multi_fit_voigt
@@ -1851,6 +2130,11 @@ bool gaussian_fit_1d::one_fit_voigt_core(int xdim, std::vector<double> *zz, doub
  */
 bool gaussian_fit_1d::multi_fit_voigt_core(int xdim, std::vector<std::vector<double>> &zz, double &x0, std::vector<double> &a, double &sigmax, double &gammax, double &e)
 {
+#ifdef LMMIN
+
+
+
+#else
     ceres::Solver::Summary summary;
     ceres::Problem problem;
 
@@ -1871,7 +2155,7 @@ bool gaussian_fit_1d::multi_fit_voigt_core(int xdim, std::vector<std::vector<dou
 
     sigmax = fabs(sigmax);
     gammax = fabs(gammax);
-
+#endif
     return true;
 };
 
@@ -1883,6 +2167,11 @@ bool gaussian_fit_1d::multi_fit_voigt_core(int xdim, std::vector<std::vector<dou
  */
 bool gaussian_fit_1d::multi_fit_voigt_core_doesy(const int xdim,std::vector<std::vector<double>> &zz, double &x0, double &a, double &d,double &sigmax, double &gammax, double &e)
 {
+#ifdef LMMIN
+
+
+
+#else
     ceres::Solver::Summary summary;
     ceres::Problem problem;
 
@@ -1904,7 +2193,7 @@ bool gaussian_fit_1d::multi_fit_voigt_core_doesy(const int xdim,std::vector<std:
     sigmax = fabs(sigmax);
     gammax = fabs(gammax);
     d = d_sqrt*d_sqrt;
-
+#endif
     return true;
 };
 
@@ -2040,11 +2329,104 @@ bool gaussian_fit_1d::voigt_convolution_with_limit(int ndx, double a, double x, 
     return true;
 };
 
+bool  gaussian_fit_1d::voigt_approximate_convolution_old(double a, double x, double sigmax, double gammax, double ratio, std::vector<double> *kernel, int &i0, int &i1, double scale)
+{
+    double wx = std::max(2.355 * sigmax, 2.0 * gammax);
+
+    i0 = std::max(0, int(x - wx * scale + 0.5));
+    i1 = std::min(xdim, int(x + wx * scale + 0.5));
+
+    if (i1 <= i0)
+        return false;
+
+    kernel->clear();
+    kernel->resize(i1 - i0);
+
+    double sigmax2 = sigmax * sigmax * 2.0;
+
+    for (int i = i0; i < i1; i++)
+    {
+        double t1 = x - i;
+        kernel->at(i - i0) = a * (exp(-(t1 * t1) / sigmax2) * (1-ratio) + 1 / (1 + ( t1 / gammax) * ( t1 / gammax)) * ratio);
+    }
+    return true;
+};
+
+bool gaussian_fit_1d::voigt_approximate_convolution_with_limit_old(int ndx, double a, double x, double sigmax, double gammax, double ratio, std::vector<double> *kernel, int &i0, int &i1, double scale)
+{
+    double wx = std::max(2.355 * sigmax, 2.0 * gammax);
+
+    std::array<int, 2> add_limit = valid_fit_region.at(ndx);
+    i0 = std::max(std::max(0, int(x - wx * scale + 0.5)), add_limit[0]);
+    i1 = std::min(std::min(xdim, int(x + wx * scale + 0.5)), add_limit[1]);
+
+    if (i1 <= i0)
+        return false;
+
+    kernel->clear();
+    kernel->resize(i1 - i0);
+
+    double sigmax2 = sigmax * sigmax * 2.0;
+
+    for (int i = i0; i < i1; i++)
+    {
+        double t1 = x - i;
+        kernel->at(i - i0) = a * (exp(-(t1 * t1) / sigmax2) * (1-ratio) + 1 / (1 + ( t1 / gammax) * ( t1 / gammax)) * ratio);
+    }
+    return true;
+};
+
+
+bool  gaussian_fit_1d::voigt_approximate_convolution(double a, double x, double sigmax, double gammax, std::vector<double> *kernel, int &i0, int &i1, double scale)
+{
+        double wx = pow(pow(gammax, 5) + pow(2.69269 * sigmax, 5), 1.0 / 5.0);
+        double eta = (1.36603 * gammax / wx) - (0.47719 * pow(gammax / wx, 2)) + (0.11116 * pow(gammax / wx, 3));
+
+        i0 = std::max(0, int(x - wx * scale + 0.5));
+        i1 = std::min(xdim, int(x + wx * scale + 0.5));
+
+        kernel->clear();
+        kernel->resize(i1 - i0);
+
+        for (int i = i0; i < i1; i++)
+        {
+            double gaussain_part =  exp(-(i - x) * (i - x) / (2*sigmax*sigmax));
+            double lorentzian_part = gammax / M_PI / ((i - x) * (i - x) + gammax*gammax);
+            kernel->at(i - i0) = a * lorentzian_part * eta + a * gaussain_part * (1 - eta);
+        }
+        return true;
+};
+
+bool gaussian_fit_1d::voigt_approximate_convolution_with_limit(int ndx, double a, double x, double sigmax, double gammax, std::vector<double> *kernel, int &i0, int &i1, double scale)
+{
+    double wx = pow(pow(gammax, 5) + pow(2.69269 * sigmax, 5), 1.0 / 5.0);
+    double eta = (1.36603 * gammax / wx) - (0.47719 * pow(gammax / wx, 2)) + (0.11116 * pow(gammax / wx, 3));
+
+    std::array<int, 2> add_limit = valid_fit_region.at(ndx);
+    i0 = std::max(std::max(0, int(x - wx * scale + 0.5)), add_limit[0]);
+    i1 = std::min(std::min(xdim, int(x + wx * scale + 0.5)), add_limit[1]);
+
+    if (i1 <= i0)
+        return false;
+
+    kernel->clear();
+        kernel->resize(i1 - i0);
+
+        for (int i = i0; i < i1; i++)
+        {
+            double gaussain_part =  exp(-(i - x) * (i - x) / (2*sigmax*sigmax));
+            double lorentzian_part = gammax / M_PI / ((i - x) * (i - x) + gammax*gammax);
+            kernel->at(i - i0) = a * lorentzian_part * eta + a * gaussain_part * (1 - eta);
+        }
+    return true;
+};
+
 spectrum_fit_1d::spectrum_fit_1d()
 {
     zf = 1;
     error_nround = 0;
     n_patch = 20;
+    b_allow_remove_peaks = true;
 };
 spectrum_fit_1d::~spectrum_fit_1d(){};
 
@@ -2088,17 +2470,26 @@ bool spectrum_fit_1d::init_all_spectra(std::vector<std::string> fnames_,int n_st
  * The crossing point will be considered as non-signal region
  * @return true always at the moment
  */
-bool spectrum_fit_1d::peak_partition_1d_for_fit()
+bool spectrum_fit_1d::peak_partition_1d_for_fit(double spectrum_begin,double spectrum_end)
 {
     double boundary_cutoff = noise_level * user_scale2;
-    if (fabs(spectrum_real[0]) > boundary_cutoff)
-    {
-        signa_boudaries.push_back(0);
-    }
+    /**
+     * Convert spectrum_begin and spectrum_end to index
+     */
+    int spectrum_begin_index = (spectrum_begin - begin1) / step1;
+    int spectrum_end_index = (spectrum_end - begin1) / step1;
 
-    for (int j = 1; j < ndata_frq; j++)
+    // std::cout<<"spectrum_begin="<<spectrum_begin<<" spectrum_end="<<spectrum_end<<std::endl;
+    // std::cout<<"Step 1="<<step1<<" begin1="<<begin1<<std::endl;
+    // std::cout<<"Cut spectrum from "<<spectrum_begin_index<<" to "<<spectrum_end_index<<std::endl;
+
+    for (int j = std::max(1,spectrum_begin_index); j < std::min(ndata_frq,spectrum_end_index); j++)
     {
-        if (fabs(spectrum_real[j - 1]) <= boundary_cutoff && fabs(spectrum_real[j]) > boundary_cutoff)
+        if(j==std::max(1,spectrum_begin_index) && fabs(spectrum_real[j]) > boundary_cutoff)
+        {
+            signa_boudaries.push_back(std::max(j - 10, 0));
+        }
+        else if (fabs(spectrum_real[j - 1]) <= boundary_cutoff && fabs(spectrum_real[j]) > boundary_cutoff)
         {
             signa_boudaries.push_back(std::max(j - 10, 0));
         }
@@ -2109,7 +2500,7 @@ bool spectrum_fit_1d::peak_partition_1d_for_fit()
     }
     if (noise_boudaries.size() < signa_boudaries.size())
     {
-        noise_boudaries.push_back(ndata_frq);
+        noise_boudaries.push_back(std::min(ndata_frq,spectrum_end_index));
     }
 
     bool b = true;
@@ -2148,7 +2539,7 @@ bool spectrum_fit_1d::set_for_one_spectrum()
     return true;
 }
 
-bool spectrum_fit_1d::peak_fitting()
+bool spectrum_fit_1d::peak_fitting(double spectrum_begin,double spectrum_end)
 {
 
     /**
@@ -2164,7 +2555,7 @@ bool spectrum_fit_1d::peak_fitting()
 
     wx = std::max(median_width_x * 1.6, 15.0);
 
-    peak_partition_1d_for_fit();
+    peak_partition_1d_for_fit(spectrum_begin,spectrum_end);
 
     // fit all spectrum at once
     //  signa_boudaries.clear();
@@ -2225,7 +2616,7 @@ bool spectrum_fit_1d::peak_fitting()
         }
 
         gaussian_fit_1d f1;
-        f1.set_up(peak_shape, rmax, to_near_cutoff, user_scale, noise_level,b_negative,median_width_x);
+        f1.set_up(peak_shape, rmax, to_near_cutoff, user_scale, noise_level,b_negative,median_width_x,b_allow_remove_peaks);
         f1.gaussian_fit_init(part_spects, part_p1, part_sigmax, part_gammax, part_p_intensity_all_spectra, part_peak_index);
         f1.save_postion_informations(begin, stop, left_patch, right_patch, n);
         
@@ -2285,6 +2676,7 @@ bool spectrum_fit_1d::gather_result()
         fit_err.insert(fit_err.end(), fits[i].err.begin(), fits[i].err.end());
         fit_num_sum.insert(fit_num_sum.end(), fits[i].num_sum.begin(), fits[i].num_sum.end());
         fit_gammax.insert(fit_gammax.end(), fits[i].gammax.begin(), fits[i].gammax.end());
+        fit_delta.insert(fit_delta.end(), fits[i].delta.begin(), fits[i].delta.end());
 
         // gather error estimation result
     }
@@ -2391,6 +2783,7 @@ bool spectrum_fit_1d::get_fitted_peaks(spectrum_1d_peaks &peaks)
         peaks.ppm.push_back(ppm[ndx[i]]);
         peaks.sigmax.push_back(fit_sigmax[ndx[i]]);
         peaks.gammax.push_back(fit_gammax[ndx[i]]);
+        peaks.delta.push_back(fit_delta[ndx[i]]);
         peaks.a.push_back(amplitudes[ndx[i]]);
         peaks.volume.push_back(fitted_volume[ndx[i]]);
     }
@@ -2582,6 +2975,16 @@ bool spectrum_fit_1d::output(std::string outfname,bool b_out_json,bool b_individ
                 fitted_volume.push_back(fit_p_intensity[i] * fabs(fit_gammax[i]) * 3.14159265358979);
             }
             amplitudes = fit_p_intensity;
+        }
+        else if (peak_shape == voigt_approximate_type)
+        {
+            amplitudes = fit_p_intensity;
+            for (int i = 0; i < fit_p_intensity.size(); i++)
+            {
+                double v1 = fabs(fit_gammax[i]) * 3.14159265358979;
+                double v2 = sqrt(fabs(fit_sigmax[i]) * 3.14159265358979);
+                fitted_volume.push_back(fit_p_intensity[i] * (v1 * fit_delta[i] + v2 * (1 - fit_delta[i])));
+            }
         }
 
         if (spects.size() > 1)
@@ -2801,6 +3204,10 @@ bool spectrum_fit_1d::output_json(std::string outfname,const std::vector<int> nd
         {
             ldw_math_1d::gaussian_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spectrum_real.size(), CONVOLUTION_RANGE);
         }
+        else if (peak_shape == voigt_approximate_type)
+        {
+            ldw_math_1d::voigt_approximate_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spectrum_real.size(), CONVOLUTION_RANGE);
+        }
         // add data to spe_recon[i0:i1]
         for (int j = i0; j < i1; j++)
         {
@@ -2834,6 +3241,10 @@ bool spectrum_fit_1d::output_json(std::string outfname,const std::vector<int> nd
             {
                 ldw_math_1d::gaussian_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], &data, i0, i1, spectrum_real.size(), 3.0);
             }
+            else if (peak_shape == voigt_approximate_type)
+            {
+                ldw_math_1d::voigt_approximate_convolution(fit_p_intensity[i], fit_p1[i], fit_sigmax[i], fit_gammax[i], &data, i0, i1, spectrum_real.size(), 3.0);
+            }
 
             for (int ii = i0; ii < i1; ii++)
             {
@@ -2861,17 +3272,15 @@ bool spectrum_fit_1d::output_json(std::string outfname,const std::vector<int> nd
     return true;
 };
 
-bool spectrum_fit_1d::init_fit(int t, int r, double c)
+bool spectrum_fit_1d::init_fit(fit_type t, int r, double c, bool b_allow_remove_peaks_)
 {
-    if (t == 1)
-        peak_shape = gaussian_type;
-    else if (t == 3)
-        peak_shape = lorentz_type;
-    else
-        peak_shape = voigt_type;
+    
+    peak_shape = t;
 
     rmax = r;
     to_near_cutoff = c;
+
+    b_allow_remove_peaks = b_allow_remove_peaks_;
 
     return true;
 }
@@ -3106,64 +3515,80 @@ bool spectrum_fit_1d::peak_reading_pipe(std::string fname)
     int height = -1;
     int ass = -1;
     int confidence = -1;
+    bool b_format = false;
+    user_comments.clear();
+    int c=0;
 
     std::ifstream fin(fname);
-    getline(fin, line);
-    iss.str(line);
-    while (iss >> p)
-    {
-        ps.push_back(p);
-    }
-    if (ps[0] != "VARS")
-    {
-        std::cout << "First word of first line must be VARS." << std::endl;
-        return false;
-    }
-    ps.erase(ps.begin()); // remove first words (VARS)
-    for (int i = 0; i < ps.size(); i++)
-    {
-        if (ps[i] == "INDEX")
-        {
-            index = i;
-        }
-        else if (ps[i] == "X_AXIS")
-        {
-            xpos = i;
-        }
-        else if (ps[i] == "X_PPM")
-        {
-            xpos_ppm = i;
-        }
-        else if (ps[i] == "XW")
-        {
-            xw = i;
-        }
-        else if (ps[i] == "HEIGHT")
-        {
-            height = i;
-        }
-        else if (ps[i] == "ASS")
-        {
-            ass = i;
-        }
-        else if (ps[i] == "CONFIDENCE")
-        {
-            confidence = i;
-        }
-    }
 
-    if (xpos == -1 && xpos_ppm == -1)
+    while(getline(fin,line))
     {
-        std::cout << "One or more required varibles are missing." << std::endl;
-        return false;
-    }
+        /**
+         * Skit REMARK,DATA and FORMAT line or empty line (less or equal than 4 charactors)
+        */
+        if(line.find("REMARK")==0 || line.length()<=4 ) continue;
+        if(line.find("DATA")==0) continue;
+        if(line.find("FORMAT")==0) continue;
+    
+        /**
+         * VARS line is required
+        */
+        if(line.find("VARS")==0)
+        {
+    
+            iss.str(line);
+            while (iss >> p)
+            {
+                ps.push_back(p);
+            }
+            ps.erase(ps.begin()); // remove first words (VARS)
+            for (int i = 0; i < ps.size(); i++)
+            {
+                if (ps[i] == "INDEX")
+                {
+                    index = i;
+                }
+                else if (ps[i] == "X_AXIS")
+                {
+                    xpos = i;
+                }
+                else if (ps[i] == "X_PPM")
+                {
+                    xpos_ppm = i;
+                }
+                else if (ps[i] == "XW")
+                {
+                    xw = i;
+                }
+                else if (ps[i] == "HEIGHT")
+                {
+                    height = i;
+                }
+                else if (ps[i] == "ASS")
+                {
+                    ass = i;
+                }
+                else if (ps[i] == "CONFIDENCE")
+                {
+                    confidence = i;
+                }
+            }
+            
+            b_format = true;
+            if (xpos == -1 && xpos_ppm == -1)
+            {
+                std::cout << "One or more required varibles are missing." << std::endl;
+                b_format = false;
+            }
+            continue;
+        }//enf of if(line.find("VARS")==0)
 
-    getline(fin, line); // read in second line
-    user_comments.clear();
-    int c = 0;
-    while (getline(fin, line))
-    {
-        c++;
+        if(b_format==false)
+        {
+            continue; // do not process until we get format line.
+        }
+
+
         iss.clear();
         iss.str(line);
         ps.clear();
@@ -3172,8 +3597,10 @@ bool spectrum_fit_1d::peak_reading_pipe(std::string fname)
             ps.push_back(p);
         }
 
-        if (ps.size() < 6)
-            continue; // empty line??
+        if (ps.size() < 4)
+            continue; // less than 4 elements, empty line??
+
+        c++;
 
         if (xpos != -1)
         {
@@ -3216,21 +3643,7 @@ bool spectrum_fit_1d::peak_reading_pipe(std::string fname)
         {
             confident_level.push_back(1.0);
         }
-    }
-
-    // fill in intensity information from spectrum
-    if (height == -1)
-    {
-        for (int i = 0; i < p1.size(); i++)
-        {
-            int n1 = int(p1[i] + 0.5) - 1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
-            if (n1 < 0)
-                n1 = 0;
-            if (n1 > ndata_frq - 1)
-                n1 = ndata_frq - 1;
-            p_intensity[i] = spectrum_real[n1]; // n1 is direct dimension; n2 is indirect
-        }
-    }
+    } // end of while(getline(fin,line))
 
     if (p1_ppm.size() > 0) // fill in point from ppm.
     {
@@ -3249,6 +3662,21 @@ bool spectrum_fit_1d::peak_reading_pipe(std::string fname)
             p1_ppm.push_back(f1);
         }
     }
+    
+    // fill in intensity information from spectrum
+    if (height == -1)
+    {
+        for (int i = 0; i < p1.size(); i++)
+        {
+            int n1 = int(p1[i] + 0.5) - 1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
+            if (n1 < 0)
+                n1 = 0;
+            if (n1 > ndata_frq - 1)
+                n1 = ndata_frq - 1;
+            p_intensity[i] = spectrum_real[n1]; // n1 is direct dimension; n2 is indirect
+        }
+    }
+
     return true;
 }
 

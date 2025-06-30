@@ -5,7 +5,9 @@
 #include <deque>
 #include "ceres/ceres.h"
 #include "glog/logging.h"
-#include "omp.h"
+#ifdef USE_OPENMP
+    #include "omp.h"
+#endif
 
 
 #include "commandline.h"

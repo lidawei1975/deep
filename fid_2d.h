@@ -231,10 +231,6 @@ protected:
 protected:
     void estimate_noise_level_mad();   //estimate noise level, using MAD method 1.4826*medium(abs(spect))
     void estimate_noise_level(); //estimate noise level, using region by region standard deviation
-    //These three are for endian conversion, required by sparky format!
-    float read_float(FILE *);
-    bool read_float(FILE *,int, float *);
-    int read_int(FILE *);
     bool process_pipe_header(std::vector<float> &header);
 
     bool read_topspin_txt(std::string fname); //topspin totxt format

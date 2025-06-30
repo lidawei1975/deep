@@ -21,6 +21,7 @@
 int shared_data_1d::n_verbose=0; 
 bool shared_data_1d::b_dosy=false;
 std::vector<double> shared_data_1d::z_gradients;
+double shared_data_1d::peak_combine_cutoff=0.01;
 
 namespace ldw_math_spectrum_1d
 {
@@ -790,6 +791,37 @@ bool fid_base::read_jcmap_line(std::ifstream &infile, std::string line, std::str
      * simple value, do nothing
      */
     return true;
+};
+
+
+float fid_base::read_float(FILE *fp)
+{
+    char buff[4];
+    fread(buff, 4, 1, fp); // dimension
+    std::swap(buff[0], buff[3]);
+    std::swap(buff[1], buff[2]);
+    return *((float *)buff);
+};
+
+bool fid_base::read_float(FILE *fp, int n, float *pf)
+{
+    fread(pf, 4, n, fp);
+    char *buff = (char *)pf;
+    for (int i = 0; i < n; i++)
+    {
+        std::swap(buff[0 + i * 4], buff[3 + i * 4]);
+        std::swap(buff[1 + i * 4], buff[2 + i * 4]);
+    }
+    return true;
+}
+
+int fid_base::read_int(FILE *fp)
+{
+    char buff[4];
+    fread(buff, 4, 1, fp); // dimension
+    std::swap(buff[0], buff[3]);
+    std::swap(buff[1], buff[2]);
+    return *((int *)buff);
 };
 
 
@@ -1637,6 +1669,16 @@ bool fid_1d::direct_set_spectrum_from_nmrpipe(const std::vector<float> &_header,
     origin = double(nmrpipe_header_data[102 - 1]);
     carrier_frequency = double(nmrpipe_header_data[67 - 1]) * observed_frequency;
 
+    /**
+     * Sometimes, original acqusition size is needed. 
+    */
+    ndata = int(nmrpipe_header_data[386]);
+    ndata_power_of_2 = 1;
+    while (ndata_power_of_2 < ndata)
+    {
+        ndata_power_of_2 *= 2;
+    }
+
     stop1 = origin / observed_frequency;
     begin1 = stop1 + spectral_width / observed_frequency;
     step1 = (stop1 - begin1) / (ndata_frq); // direct dimension
@@ -1680,6 +1722,7 @@ bool fid_1d::read_spectrum(std::string infname, bool b_negative)
     std::string sft1(".ft1"); // nmrPipe format
     std::string sjson(".json"); // json format
     std::string scsv(".csv"); // csv format, used by Mnova software
+    std::string sparky(".ucsf"); // sparky format, used by sparky software
 
     if (std::equal(stxt.rbegin(), stxt.rend(), infname.rbegin()))
     {
@@ -1700,6 +1743,10 @@ bool fid_1d::read_spectrum(std::string infname, bool b_negative)
     else if (std::equal(scsv.rbegin(), scsv.rend(), infname.rbegin()))
     {
         b_read = read_spectrum_csv(infname);
+    }
+    else if (std::equal(sparky.rbegin(), sparky.rend(), infname.rbegin()))
+    {
+        b_read = read_spectrum_sparky(infname);
     }
     else
     {
@@ -1795,6 +1842,16 @@ bool fid_1d::read_spectrum_csv(std::string fname)
 
     ndata_frq = amplitude.size();
 
+    /**
+     * In this case, we suppose n_zf is 2
+    */
+    ndata = ndata_frq/2;
+    ndata_power_of_2 = 1;
+    while (ndata_power_of_2 < ndata)
+    {
+        ndata_power_of_2 *= 2;
+    }
+
     return true;
 
 }
@@ -1858,6 +1915,15 @@ bool fid_1d::read_spectrum_json(std::string infname)
     carrier_frequency = 4.7; //default value, suppose it is 4.7 ppm
 
     ndata_frq = spectrum_real.size();
+    /**
+     * In this case, we suppose n_zf is 2
+    */
+    ndata = ndata_frq/2;
+    ndata_power_of_2 = 1;
+    while (ndata_power_of_2 < ndata)
+    {
+        ndata_power_of_2 *= 2;
+    }
 
     return true;
 };
@@ -1905,6 +1971,16 @@ bool fid_1d::read_spectrum_ft(std::string infname)
     origin = double(nmrpipe_header_data[102 - 1]); //FDF2ORIG
     carrier_frequency = double(nmrpipe_header_data[67 - 1]) * observed_frequency; //FDF2CAR
 
+    /**
+     * Sometimes, original acqusition size is needed. 
+    */
+    ndata = int(nmrpipe_header_data[386]);
+    ndata_power_of_2 = 1;
+    while (ndata_power_of_2 < ndata)
+    {
+        ndata_power_of_2 *= 2;
+    }
+
     stop1 = origin / observed_frequency;
     begin1 = stop1 + spectral_width / observed_frequency; 
     step1 = (stop1 - begin1) / (ndata_frq); 
@@ -1941,6 +2017,89 @@ bool fid_1d::read_spectrum_ft(std::string infname)
     return true;
 };
 
+
+bool fid_1d::read_spectrum_sparky(std::string infname)
+{
+    FILE *fp;
+
+    char buffer[10];
+    int temp;
+    float center1;
+
+    fp = fopen(infname.c_str(), "rb");
+    if (fp == NULL)
+    {
+        std::cout << "Can't open " << infname << " to read." << std::endl;
+        return false;
+    }
+
+    fread(buffer, 1, 10, fp);
+    // std::cout<<buffer<<std::endl;
+
+    fread(buffer, 1, 1, fp);
+    temp = int(buffer[0]);
+    if (temp != 1)
+    {
+        std::cout << "Error in sparky format file, dimension is not 1" << std::endl;
+        return false;
+    }
+
+    fread(buffer, 1, 1, fp);
+    fseek(fp, 1, SEEK_CUR);
+    temp = int(buffer[0]);
+    if (temp != 1)
+    {
+        std::cout << "Error in sparky format file, it is not in real data" << std::endl;
+        return false;
+    }
+
+    fread(buffer, 1, 1, fp);
+    // std::cout<<"Version is "<< int(buffer[0])<<std::endl;
+    fseek(fp, 166, SEEK_CUR);  //at location 180
+
+    fread(buffer, 1, 6, fp); // nuleus name, at location 186
+    std::cout << "Direct dimension nuleus " << buffer << std::endl;
+    fseek(fp, 2, SEEK_CUR); //at 188
+    ndata_frq = read_int(fp); //at 192
+    fseek(fp, 8, SEEK_CUR); //at 200
+    observed_frequency = read_float(fp); //at 204
+    spectral_width = read_float(fp); //at 208
+    center1 = read_float(fp); //at 212
+    fseek(fp, 96, SEEK_CUR);  // at location 308
+
+    /**
+     * now read the spectrum data. Remember that sparky is in big-endian format
+     */
+    spectrum_real.clear();
+    spectrum_real.resize(ndata_frq);
+    for(int i=0;i<ndata_frq;i++)
+    {
+        float temp_float=read_float(fp);
+        /**
+         * convert from big-endian to little-endian
+        */
+        spectrum_real[i] = temp_float;
+    }
+
+    float range1 = spectral_width / observed_frequency;
+    step1 = -range1 / ndata_frq;
+    begin1 = center1 + range1 / 2;
+    stop1 = center1 - range1 / 2;
+
+    origin = center1 * observed_frequency - spectral_width / 2;
+
+    std::cout << "Spectrum width are " << spectral_width << " Hz" << std::endl;
+    std::cout << "Fields are " << observed_frequency << " mHz" << std::endl;
+    std::cout << "Direct dimension size is " << ndata_frq  << std::endl;
+    std::cout << "Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " ppm" << std::endl;
+
+    fclose(fp);
+
+
+    return true;
+}
+
+
 /**
  * @brief write 1D spectrum to a file. Format is decided by file extension
  * .ft1 .json or .txt
@@ -1965,6 +2124,10 @@ bool fid_1d::write_spectrum(std::string fname)
     else if(file_name_ext=="txt")
     {
         b_write=write_spectrum_txt(fname);
+    }
+    else if(file_name_ext=="csv")
+    {
+        b_write=write_spectrum_csv(fname);
     }
     else
     {
@@ -1994,6 +2157,16 @@ bool fid_1d::read_spectrum_ldw(std::string infname)
     stop1 = spectrum_real[ndata_frq + 1];
     begin1 = spectrum_real[ndata_frq];
     step1 = (stop1 - begin1) / ndata_frq;
+
+    /**
+     * In this case, we suppose n_zf is 2
+    */
+    ndata = ndata_frq/2;
+    ndata_power_of_2 = 1;
+    while (ndata_power_of_2 < ndata)
+    {
+        ndata_power_of_2 *= 2;
+    }
 
     spectrum_real.resize(ndata_frq);
 
@@ -2133,6 +2306,16 @@ bool fid_1d::read_spectrum_txt(std::string infname)
     observed_frequency = 850.0; //default value, suppose it is 850
     carrier_frequency = 4.7; //default value, suppose it is 4.7 ppm
 
+    /**
+     * In this case, we suppose n_zf is 2
+    */
+    ndata = ndata_frq/2;
+    ndata_power_of_2 = 1;
+    while (ndata_power_of_2 < ndata)
+    {
+        ndata_power_of_2 *= 2;
+    }
+
 /**
  * For debug
  */
@@ -2171,6 +2354,27 @@ bool fid_1d::set_spectrum_from_data(const std::vector<float> &data, const double
     step1=step_;
     stop1=stop_;
 
+    return true;
+}
+
+/**
+ * @brief write 1D spectrum to a csv file
+*/
+bool fid_1d::write_spectrum_csv(std::string outfname)
+{
+    std::ofstream outfile;
+    outfile.open(outfname);
+    if (!outfile.is_open())
+    {
+        std::cout << "Error: cannot open file " << outfname << std::endl;
+        return false;
+    }
+
+    for (int j = 0; j < ndata_frq; j++)
+    {
+        outfile << begin1 + j * step1<<" "<< spectrum_real[j] << std::endl;
+    }
+    outfile.close();
     return true;
 }
 

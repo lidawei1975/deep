@@ -54,27 +54,26 @@ private:
   ceres::Solver::Options options;
 #endif
 
-  bool one_fit_exact(std::vector<double> &zz, double &x0, double &y0, double &a, double &r2x, double &r2y, double &sx, double &sy, double *e) const;
-  bool one_fit_exact_shell(std::vector<double> &xx, std::vector<double> &yy, std::vector<double> &zz, const double x, const double y, double &aa, double &r2x, double &r2y, double &shiftx, double &shifty, double &phase_x, double &phase_y) const;
+  bool one_fit_exact(std::vector<double> &zz, double &x0, double &y0, double &a, double &r2x, double &r2y, double &sx, double &sy, double *e);
+  bool one_fit_exact_shell(std::vector<double> &xx, std::vector<double> &yy, std::vector<double> &zz, const double x, const double y, double &aa, double &r2x, double &r2y, double &shiftx, double &shifty, double &phase_x, double &phase_y);
 
-  bool one_fit_gaussian(int, int, std::vector<double> *zz, double &x0, double &y0, double &a, double &sigmax, double &sigmay, double *e) const;
-  bool one_fit_gaussian_intensity_only(int, int, std::vector<double> *zz, double &x0, double &y0, double &a, double &sigmax, double &sigmay, double *e) const;
-  
-
-  bool one_fit_voigt(int, int, std::vector<double> *, double &, double &, double &, double &, double &, double &, double &, double *, int n = 0) const;
-  bool one_fit_voigt_core(int, int, std::vector<double> *, double &, double &, double &, double &, double &, double &, double &, double *) const;
-
-  bool one_fit_voigt_intensity_only(int, int, std::vector<double> *, double &, double, double, double, double, double, double, double *) const;
-  
-  bool one_fit_voigt_lorentz(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e, int n) const;
-  bool one_fit_voigt_lorentz_core(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &gammax,double &gammay,double *e) const;
-
+  bool one_fit_gaussian(int, int, std::vector<double> *zz, double &x0, double &y0, double &a, double &sigmax, double &sigmay, double *e);
+  bool one_fit_gaussian_intensity_only(int, int, std::vector<double> *zz, double &x0, double &y0, double &a, double &sigmax, double &sigmay, double *e);
   bool multiple_fit_gaussian(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double *e);
+
+  bool one_fit_voigt(int, int, std::vector<double> *, double &, double &, double &, double &, double &, double &, double &, double *, int n = 0);
+  bool one_fit_voigt_core(int, int, std::vector<double> *, double &, double &, double &, double &, double &, double &, double &, double *);
+
+  bool one_fit_voigt_intensity_only(int, int, std::vector<double> *, double &, double, double, double, double, double, double, double *);
+  bool multiple_fit_voigt(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n = 0);
+  bool multiple_fit_voigt_core(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e);
+
+  bool one_fit_voigt_lorentz(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &sigmay,double &gammax,double &gammay,double *e, int n);
+  bool one_fit_voigt_lorentz_core(int xsize,int ysize,std::vector<double> *zz, double &x0,double &y0,double &a,double &sigmax,double &gammax,double &gammay,double *e);
+
   bool multiple_fit_voigt_lorentz(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x0, double &y0, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n);
   bool multiple_fit_voigt_lorentz_core(int xsize,int ysize, std::vector<std::vector<double> > &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &gammax, double &gammay, double *e);
 
-  bool multiple_fit_voigt(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e, int n = 0);
-  bool multiple_fit_voigt_core(int, int, std::vector<std::vector<double>> &zz, double &x, double &y, std::vector<double> &a, double &sigmax, double &sigmay, double &gammax, double &gammay, double *e);
 
 
   bool gaussain_convolution(const int,const int,const double a,const double x,const double y,const double sigmax,const double sigmay,int&,int&,int&,int&, std::vector<double> *kernel, double scale = 1.5);
@@ -102,7 +101,7 @@ private:
 
   bool get_pair_overlap(const int m, const int n, double &, int &) const;
   std::vector<std::pair<int, int>> get_possible_excess_peaks();
-  int test_excess_peaks(int, int) const;
+  int test_excess_peaks(int, int);
 
   bool get_pair_overlap(const int m, const int n, double &, double &) const;
 

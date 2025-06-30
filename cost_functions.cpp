@@ -1,20 +1,6 @@
 #include <cmath>
 
-#ifdef LMMIN
-    #include "lmminimizer.h"
-#else
-    #include "ceres/ceres.h"
-    #include "glog/logging.h"
-    using ceres::CostFunction;
-    using ceres::AutoDiffCostFunction;
-    using ceres::NumericDiffCostFunction;
-    using ceres::Problem;
-    using ceres::Solver;
-    using ceres::Solve;
-#endif
-
 #include "kiss_fft.h"
-
 #include "cost_functors.h"
 
 
@@ -638,6 +624,183 @@ bool mycostfunction_voigt1d::Evaluate(double const *const *xx, double *residual,
     return true;
 };
 
+
+/**
+ * 3 peak fit with relative postion, relative sigma, relative gamma restriction
+ * Fitting parameters are peak 1 parameters, peak 2 relative position,sigma,gamma and peak 3 relative position,sigma,gamma
+ * Peak 2 and peak 3 can have any amplitude, like peak 1
+*/
+mycostfunction_3voigt1d::~mycostfunction_3voigt1d(){};
+mycostfunction_3voigt1d::mycostfunction_3voigt1d(int n, double *z_)
+{
+    n_datapoint = n;
+    z = z_;
+};
+
+void mycostfunction_3voigt1d::voigt_helper(const double x0, const double sigma, const double gamma, double *vv, double *r_x0, double *r_sigma, double *r_gamma) const
+{
+    double v, l;
+    double z_r = x0 / (sqrt(2) * sigma);
+    double z_i = gamma / (sqrt(2) * sigma);
+    double sigma2 = sigma * sigma;
+    double sigma3 = sigma * sigma2;
+
+    re_im_w_of_z(z_r, z_i, &v, &l);
+    *vv = v / sqrt(2 * M_PI * sigma2);
+
+    double t1 = z_i * l - z_r * v;
+    double t2 = z_r * l + z_i * v;
+
+    *r_x0 = t1 / (sigma2 * M_SQRT_PI);
+    *r_gamma = (t2 - M_1_SQRT_PI) / (sigma2 * M_SQRT_PI);
+    *r_sigma = -v / M_SQRT_2PI / sigma2 - t1 * x0 / sigma3 / M_SQRT_PI - (t2 - M_1_SQRT_PI) * gamma / sigma3 / M_SQRT_PI;
+    return;
+};
+
+void mycostfunction_3voigt1d::voigt_helper(const double x0, const double sigma, const double gamma, double *vv) const
+{
+    double v, l;
+    double z_r = x0 / (sqrt(2) * sigma);
+    double z_i = gamma / (sqrt(2) * sigma);
+    double sigma2 = sigma * sigma;
+
+    re_im_w_of_z(z_r, z_i, &v, &l);
+    *vv = v / sqrt(2 * M_PI * sigma2);
+    return;
+};
+
+bool mycostfunction_3voigt1d::Evaluate(double const *const *xx, double *residual, double **jaco) const
+{
+
+    double vvx, r_x, r_sigmax, r_gammax;
+    // voigt_helper(x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
+
+    if (jaco != NULL) // both residual errors and jaco are required.
+    {
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            residual[i] = -z[i];
+        }
+        /**
+         * 0th peak. 
+        */
+        double a = xx[0][0];
+        double x0 = xx[0][1];
+        double sigmax = xx[0][2];
+        double gammax = xx[0][3];
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            voigt_helper(i - x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
+            residual[i] += a * vvx;
+
+            /**
+             * jacon is a 2D array. jaco[0] is for the first peak, jaco[1] is for the second peak, etc.
+             * jaco[0]'s length is n_datapoint*n_fitting_paramter_of_peak_0
+             * res[0] with respect to a,pos,sigma,gamma, followed by res[1] with respect to a,pos,sigma,gamma, etc.
+             */
+            jaco[0][i * 4 + 0] = vvx;          // with respect to a
+            jaco[0][i * 4 + 1] = -a * r_x;     // x0
+            jaco[0][i * 4 + 2] = a * r_sigmax; // sigmax
+            jaco[0][i * 4 + 3] = a * r_gammax; // gammax
+        }
+        /**
+         * 1st peak
+        */
+        a = xx[1][0];
+        x0 = xx[1][1] + xx[0][1]; //relative position
+        sigmax = xx[0][2] + xx[1][2]; //relative sigma
+        gammax = xx[0][3] + xx[1][3]; //relative gamma
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            voigt_helper(i - x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
+            residual[i] += a * vvx;
+
+            jaco[1][i * 4 + 0] = vvx;          // with respect to a
+            /**
+             * The derivative with respect to x0 is -a * r_x, and x0=xx[1][1] + xx[0][1]
+            */
+            jaco[1][i * 4 + 1] = -a * r_x;     
+            jaco[0][i * 4 + 1] += -a * r_x;  // add the derivative with respect to x0 to the first peak 
+            jaco[1][i * 4 + 2] = a * r_sigmax; // sigmax
+            jaco[0][i * 4 + 2] += a * r_sigmax; // add the derivative with respect to sigmax to the first peak
+            jaco[1][i * 4 + 3] = a * r_gammax; // gammax
+            jaco[0][i * 4 + 3] += a * r_gammax; // add the derivative with respect to gammax to the first peak
+        }
+        /**
+         * 2nd peak
+        */
+        a = xx[2][0];
+        x0 = xx[2][1] + xx[0][1]; //relative position
+        sigmax = xx[0][2] + xx[2][2]; //relative sigma
+        gammax = xx[0][3] + xx[2][3]; //relative gamma
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            voigt_helper(i - x0, sigmax, gammax, &vvx, &r_x, &r_sigmax, &r_gammax);
+            residual[i] += a * vvx;
+
+            jaco[2][i * 4 + 0] = vvx;          // with respect to a
+            /**
+             * The derivative with respect to x0 is -a * r_x, and x0=xx[2][1] + xx[0][1]
+            */
+            jaco[2][i * 4 + 1] = -a * r_x;     
+            jaco[0][i * 4 + 1] += -a * r_x;  // add the derivative with respect to x0 to the first peak 
+            jaco[2][i * 4 + 2] = a * r_sigmax; // sigmax
+            jaco[0][i * 4 + 2] += a * r_sigmax; // add the derivative with respect to sigmax to the first peak
+            jaco[2][i * 4 + 3] = a * r_gammax; // gammax
+            jaco[0][i * 4 + 3] += a * r_gammax; // add the derivative with respect to gammax to the first peak
+        }
+
+
+        
+    }
+    else // only require residual errors
+    {
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            residual[i] = -z[i];
+        }
+        /**
+         * 0th peak
+        */
+        double a = xx[0][0];
+        double x0 = xx[0][1];
+        double sigmax = xx[0][2];
+        double gammax = xx[0][3];
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            voigt_helper(i - x0, sigmax, gammax, &vvx);
+            residual[i] += a * vvx;
+        }
+        /**
+         * 1st peak
+        */
+        a=xx[1][0];
+        x0=xx[1][1]+xx[0][1]; //relative position
+        sigmax=xx[0][2]+xx[1][2]; //relative sigma
+        gammax=xx[0][3]+xx[1][3]; //relative gamma
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            voigt_helper(i - x0, sigmax, gammax, &vvx);
+            residual[i] += a * vvx;
+        }
+        /**
+         * 2nd peak
+        */
+        a=xx[2][0];
+        x0=xx[2][1]+xx[0][1]; //relative position
+        sigmax=xx[0][2]+xx[2][2]; //relative sigma
+        gammax=xx[0][3]+xx[2][3]; //relative gamma
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            voigt_helper(i - x0, sigmax, gammax, &vvx);
+            residual[i] += a * vvx;
+        }
+    }
+    return true;
+};
+
+
+
 // voigt_1d, n peaks togather
 mycostfunction_nvoigt1d::~mycostfunction_nvoigt1d(){};
 mycostfunction_nvoigt1d::mycostfunction_nvoigt1d(int np_, int n, double *z_)
@@ -735,6 +898,131 @@ bool mycostfunction_nvoigt1d::Evaluate(double const *const *xx, double *residual
                 voigt_helper(i - x0, sigmax, gammax, &vvx);
                 residual[i] += a * vvx;
             }
+        }
+    }
+    return true;
+};
+
+
+
+/**
+ * A fast approximation of the Voigt function, using linear combination of Gaussian and Lorentzian functions.
+*/
+mycostfunction_voigt1d_approx_old::~mycostfunction_voigt1d_approx_old(){};
+mycostfunction_voigt1d_approx_old::mycostfunction_voigt1d_approx_old(int n, double *z_)
+{
+    n_datapoint = n;
+    z = z_;
+};
+
+bool mycostfunction_voigt1d_approx_old::Evaluate(double const *const *xx, double *residual, double **jaco) const
+{
+    double a = xx[0][0];
+    double x0 = xx[1][0];
+    double sigmax = fabs(xx[2][0]);
+    double gammax = fabs(xx[3][0]);
+    double delta = fabs(xx[4][0]); //ratio of Lorentzian (0.0-1), 1 - delta is the ratio of Gaussian
+
+    if (jaco != NULL) // both residual errors and jaco are required.
+    {
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            /**
+             * Gaussian part and helper variables
+            */
+            double x_sigma = (i - x0) / sigmax;
+            double gaussain_part = exp((x0 - i) * x_sigma);
+            double a_g = a * gaussain_part;
+
+
+            double lorentzian_part = 1 / (1 + ( (i - x0) / gammax) * ( (i - x0) / gammax));
+            double lorentzian_part2 = lorentzian_part * lorentzian_part;
+            double gamma2 = gammax * gammax;
+            double av = a * lorentzian_part2 * 2;
+
+            residual[i] = a * lorentzian_part * delta + a * gaussain_part * (1 - delta) - z[i];
+            jaco[0][i] = lorentzian_part * delta + gaussain_part * (1 - delta); // with respect to a
+            jaco[1][i] = av * (i-x0) / gamma2 * delta + a_g * 2 * x_sigma * (1-delta); // x0
+            jaco[2][i] = a_g * x_sigma * x_sigma * (1-delta); // sigmax
+            jaco[3][i] = av * ((i - x0) * (i - x0)) / (gamma2 * gammax) * delta; // gammax
+            jaco[4][i] = a * (lorentzian_part - gaussain_part); // delta
+        }    
+    }
+    else // only require residual errors
+    {
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            double gaussain_part =  exp(-(i - x0) * (i - x0) / sigmax);
+            double lorentzian_part = 1 / (1 + ( (i - x0) / gammax) * ( (i - x0) / gammax));
+            residual[i] = a * lorentzian_part * delta + a * gaussain_part * (1 - delta) - z[i];
+        }
+    }
+    return true;
+};
+
+
+/**
+ * A fast approximation of the Voigt function, using linear combination of Gaussian and Lorentzian functions.
+*/
+mycostfunction_voigt1d_approx::~mycostfunction_voigt1d_approx(){};
+mycostfunction_voigt1d_approx::mycostfunction_voigt1d_approx(int n, double *z_)
+{
+    n_datapoint = n;
+    z = z_;
+};
+
+bool mycostfunction_voigt1d_approx::Evaluate(double const *const *xx, double *residual, double **jaco) const
+{
+    double a = xx[0][0];
+    double x0 = xx[1][0];
+    double sigmax = fabs(xx[2][0]);
+    double gammax = fabs(xx[3][0]);
+
+    if (jaco != NULL) // both residual errors and jaco are required.
+    {
+        double w = pow(pow(gammax, 5) + pow(2.69269 * sigmax, 5), 1.0 / 5.0);
+        double eta = (1.36603 * gammax / w) - (0.47719 * pow(gammax / w, 2)) + (0.11116 * pow(gammax / w, 3));
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            /**
+             * Gaussian part and helper variables
+            */
+            double gaussain_part =  exp(-(i - x0) * (i - x0) / (2*sigmax*sigmax));
+            double lorentzian_part = gammax / M_PI / ((i - x0) * (i - x0) + gammax*gammax);
+
+            residual[i] = a * lorentzian_part * eta + a * gaussain_part * (1 - eta) - z[i];
+
+            double dw_dgamma = (5 * pow(gammax, 4)) / (5 * pow(w, 4));
+            double dw_dsigma = (5 * pow(2.69269 * sigmax, 4) * 2.69269) / (5 * pow(w, 4));
+
+            double deta_dgamma = (1.36603 / w) - (0.47719 * 2 * gammax / (w * w)) + (3 * 0.11116 * pow(gammax, 2) / pow(w, 3))
+                                - ((1.36603 * gammax - 0.47719 * 2 * gammax * gammax / w + 3 * 0.11116 * pow(gammax, 3) / (w * w)) * dw_dgamma) / (w * w);
+
+            double deta_dsigma = -((1.36603 * gammax - 0.47719 * 2 * gammax * gammax / w + 3 * 0.11116 * pow(gammax, 3) / (w * w)) * dw_dsigma) / (w * w);
+
+            double dG_dsigma = gaussain_part * (pow(i - x0, 2) / pow(sigmax, 3));
+            double dG_dx = gaussain_part * ((i - x0) / pow(sigmax, 2));
+
+            double dL_dgamma = (1.0 / M_PI) * ((pow(i - x0, 2) - pow(gammax, 2)) / pow(pow(i - x0, 2) + pow(gammax, 2), 2));
+            double dL_dx = 2 * gammax * (i - x0) / (M_PI * pow(pow(i - x0, 2) + pow(gammax, 2), 2));
+
+
+            jaco[0][i] = lorentzian_part * eta + gaussain_part * (1 - eta); // with respect to a
+            jaco[1][i] = a * (eta * dL_dx + (1 - eta) * dG_dx); //x0
+            jaco[2][i] = a * (deta_dsigma * lorentzian_part + (1 - eta) * dG_dsigma - deta_dsigma * gaussain_part); // sigmax
+            jaco[3][i] = a * (deta_dgamma * lorentzian_part + eta * dL_dgamma - deta_dgamma * gaussain_part); // gammax
+        }    
+    }
+    else // only require residual errors
+    {
+        double w = pow(pow(gammax, 5) + pow(2.69269 * sigmax, 5), 1.0 / 5.0);
+        double eta = (1.36603 * gammax / w) - (0.47719 * pow(gammax / w, 2)) + (0.11116 * pow(gammax / w, 3));
+
+        for (int i = 0; i < n_datapoint; i++)
+        {
+            double gaussain_part =  exp(-(i - x0) * (i - x0) / (2*sigmax*sigmax));
+            double lorentzian_part = gammax / M_PI / ((i - x0) * (i - x0) + gammax*gammax);
+            residual[i] = a * lorentzian_part * eta + a * gaussain_part * (1 - eta) - z[i];
         }
     }
     return true;

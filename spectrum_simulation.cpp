@@ -347,7 +347,7 @@ bool spectrum_simulation::run_peaks(
      * save initial values as picker
      */
     peak_fitter.init(10 /*peak height cutoff*/, 3.0 /* noise floor*/, 0.001 /*noise level*/);
-    peak_fitter.init_fit(2 /** voigt*/, 50 /*maxround*/, 0.0000001 /* to near cutoff*/);
+    peak_fitter.init_fit(voigt_type /** voigt*/, 50 /*maxround*/, 0.0000001 /* to near cutoff*/);
     peak_fitter.set_spectrum_from_data(spectrum_real_strided, simualted_spectrum_begin, simualted_spectrum_step, simualted_spectrum_stop);
     peak_fitter.set_for_one_spectrum();
     peak_fitter.set_peaks(peak_list);
@@ -356,7 +356,7 @@ bool spectrum_simulation::run_peaks(
      * run peak fitting to optimize peak position, height, width, etc.
      * Set n_verbose to 0 to suppress output
      */
-    peak_fitter.peak_fitting();
+    peak_fitter.peak_fitting(simualted_spectrum_begin, simualted_spectrum_stop);
 
     /**
      * clear peak_list before we get fitted peaks
@@ -572,7 +572,7 @@ bool spectrum_simulation::run(int ndata, int ndata_frq, const std::vector<double
      * save initial values as picker
      */
     peak_fitter.init(10 /*peak height cutoff*/, 3.0 /* noise floor*/, 0.001 /*noise level*/);
-    peak_fitter.init_fit(2 /** voigt*/, 50 /*maxround*/, 0.0000001 /* to near cutoff*/);
+    peak_fitter.init_fit(voigt_type /** voigt*/, 50 /*maxround*/, 0.0000001 /* to near cutoff*/);
     peak_fitter.set_spectrum_from_data(spectrum_real_strided, simualted_spectrum_begin, simualted_spectrum_step, simualted_spectrum_stop);
     peak_fitter.set_for_one_spectrum();
     peak_fitter.set_peaks(peak_list);
@@ -581,7 +581,7 @@ bool spectrum_simulation::run(int ndata, int ndata_frq, const std::vector<double
      * run peak fitting to optimize peak position, height, width, etc.
      * Set n_verbose to 0 to suppress output
      */
-    peak_fitter.peak_fitting();
+    peak_fitter.peak_fitting(simualted_spectrum_begin, simualted_spectrum_stop);
 
     /**
      * clear peak_list before we get fitted peaks
