@@ -4,7 +4,6 @@
 
 #include <vector>
 #include <map>
-#include <cmath>
 #include <iostream>
 
 enum FID_DATA_COMPLEXITY
@@ -50,131 +49,28 @@ struct spectrum_1d_peaks
     std::vector<double> ppm;        //peak coordinates in ppm
     std::vector<double> sigmax;     //Gaussian peak shape parameter. IMPORTANT: in Gaussian fit, this is actually 2*sigma*sigma
     std::vector<double> gammax;     //Lorentzian peak shape parameter
-    std::vector<double> delta;      //Lorentzian ratio of voigt_appromixate, Gaussain ratio is 1-delta
-    std::vector<double> volume;      //peak volume
+    std::vector<double> volume;    //peak volume
     std::vector<double> confidence; //confidence level of peak
-    std::vector<double> fwhh;       //full width at half height
-
-    /**
-     * Default constructor
-     */
-    spectrum_1d_peaks()
-    {
-        a.clear();
-        x.clear();
-        ppm.clear();
-        sigmax.clear();
-        gammax.clear();
-        delta.clear();
-        volume.clear();
-        confidence.clear();
-        fwhh.clear();
-    };
-
-    /**
-     * Define a operator "=" to copy the content of one spectrum_1d_peaks to another
-     */
-    spectrum_1d_peaks & operator=(const spectrum_1d_peaks &other) 
-    {
-        if (this != &other) // self-assignment check
-        {
-            a = other.a;
-            x = other.x;
-            ppm = other.ppm;
-            sigmax = other.sigmax;
-            gammax = other.gammax;
-            delta = other.delta;
-            volume = other.volume;
-            confidence = other.confidence;
-            fwhh = other.fwhh;
-        }
-        return *this;
-    };
-
-    /**
-     * Clear all data in the spectrum_1d_peaks
-    */
-    void clear(){
-        a.clear();
-        x.clear();
-        ppm.clear();
-        sigmax.clear();
-        gammax.clear();
-        delta.clear();
-        volume.clear();
-        confidence.clear();
-        fwhh.clear();
-    };
-
-    /**
-     * Add one peak from a object of spectrum_1d_peaks
-    */
-    void add_peak(const spectrum_1d_peaks &other, int i){
-
-        /**
-         * Do nothing if i is out of range
-        */
-        if(i>=other.a.size() || i<0){
-            return;
-        }
-
-        a.push_back(other.a[i]);
-        x.push_back(other.x[i]);
-        ppm.push_back(other.ppm[i]);
-        sigmax.push_back(other.sigmax[i]);
-        gammax.push_back(other.gammax[i]);
-        if(other.delta.size()>i){
-            delta.push_back(other.delta[i]);
-        }
-        volume.push_back(other.volume[i]);
-        confidence.push_back(other.confidence[i]);
-        if(other.fwhh.size()>i){
-            fwhh.push_back(other.fwhh[i]);
-        }
-    };
-
-    /**
-     * Calculate fwhh from sigmax and gammax for all peaks
-    */
-    void calculate_fwhh(){
-        fwhh.clear();
-        for(int i=0;i<a.size();i++){
-            fwhh.push_back(1.0692 * gammax[i]  + std::sqrt(0.8664 * gammax[i] * gammax[i] + sigmax[i] * sigmax[i] * 5.5448));
-        }
-    };
-
-    void remove_peak(int i)
-    {
-        if (i < 0 || i >= a.size()) {
-            std::cerr << "Error: index out of range in remove_peak" << std::endl;
-            return;
-        }
-        a.erase(a.begin() + i);
-        x.erase(x.begin() + i);
-        ppm.erase(ppm.begin() + i);
-        sigmax.erase(sigmax.begin() + i);
-        gammax.erase(gammax.begin() + i);
-        if (delta.size() > i) delta.erase(delta.begin() + i);
-        volume.erase(volume.begin() + i);
-        confidence.erase(confidence.begin() + i);
-        if (fwhh.size() > i) fwhh.erase(fwhh.begin() + i);
-    };
 };
 
 struct shared_data_1d
 {
-  static int n_verbose; //0: minimal output, 1: normal output
-  static bool b_dosy;  // true: doesy fitting, false: normal fitting
+    static int n_verbose; // 0: minimal output, 1: normal output
+    static bool b_dosy;   // true: doesy fitting, false: normal fitting
+                          /**
+                           * Z_gradient is used in pseudo 2D DOSY fitting only
+                           */
+    static std::vector<double> z_gradients;
     /**
-   * Z_gradient is used in pseudo 2D DOSY fitting only
-  */
-  static std::vector<double> z_gradients;
-  /**
-   * Peak combine cutoff
-  */
-  static double peak_combine_cutoff;
+     * Peak combine cutoff
+     */
+    static double peak_combine_cutoff;
+    /**
+     * Remove failed peaks in peak fitting from output, default is false
+     * If not removed, failed peaks will be set to have 0 intensity in the output spectrum
+     */
+    static bool b_remove_failed_peaks;
 };
-
 
 namespace ldw_math_spectrum_1d
 {
@@ -248,12 +144,8 @@ protected:
      * @brief read_jcamp: read jcamp file and save the data to a udict
     */
     bool read_jcamp(std::string file_name, std::map<std::string, std::string> &udict) const;
-    bool read_jcmap_line(std::ifstream &,std::string line, std::string &key, std::string &value) const; 
-
-    //These three are for endian conversion, required by sparky format!
-    float read_float(FILE *);
-    bool read_float(FILE *,int, float *);
-    int read_int(FILE *);
+    bool read_jcmap_line(std::istream &,std::string line, std::string &key, std::string &value) const; 
+    bool process_jcamp_as_string(const std::string &contents, std::map<std::string, std::string> &udict) const;
 
     /**
      * Helper function for run_fft_and_rm_bruker_filter
@@ -266,6 +158,10 @@ protected:
      * spectrum_imag
     */
     bool remove_bruker_digitizer_filter(double grpdly, std::vector<float> &s_real, std::vector<float> &s_imag) const;
+    //These three are for endian conversion, required by sparky format!
+    float read_float(FILE *);
+    bool read_float(FILE *,int, float *);
+    int read_int(FILE *);
 
 
 public :
@@ -277,6 +173,8 @@ public :
 class fid_1d : public fid_base, public shared_data_1d
 {
 protected:
+
+    bool b_read_from_ft1; // true if the spectrum data is read from ft1 file, false if processed from fid data
 
     /**
      * Note: Bruker may save FID as int32 or float32
@@ -354,17 +252,22 @@ protected:
     bool read_spectrum_ft(std::string);
     bool read_spectrum_json(std::string);
     bool read_spectrum_csv(std::string);
-    bool read_spectrum_sparky(std::string infname);
 
     bool write_spectrum_json(std::string); // save spectrum
     bool write_spectrum_txt(std::string);  // write spectrum in txt format, header is copied from reading but spectrum might be changed
     bool write_spectrum_csv(std::string); // write spectrum in csv format, header is copied from reading but spectrum might be changed
+    bool read_spectrum_sparky(std::string infname);
+
+    bool process_nmrpipe_header();
+
+    bool process_dictionary();
     
 public:
     fid_1d();
     ~fid_1d();
 
     bool set_up_apodization(apodization *apod_);
+    bool set_up_apodization_from_string(const std::string &apod_string);
 
 
     /**
@@ -411,6 +314,7 @@ public:
      * @brief write_json: write some useful information to a json file
     */
     bool write_json(std::string file_name);
+    std::string write_json_as_string();
 
     /**
      * get header and the frequency domain data, for fid_1d to use
@@ -419,7 +323,7 @@ public:
     std::vector<float> get_spectrum_real(void) const;
     std::vector<float> get_spectrum_imag(void) const;
 
-        bool est_noise_level_mad(); //for phased, baseline corrected spectrum only
+    bool est_noise_level_mad(); //for phased, baseline corrected spectrum only
 
     bool est_noise_level(); //general purpose noise estimation
  
@@ -429,6 +333,7 @@ public:
      * read frq domain spectrum from a file
     */
     bool read_spectrum(std::string,bool b_negative=true);
+
 
     /**
      * read frq domain spectrum from three vectors (buffers) in pipe format
@@ -441,6 +346,48 @@ public:
     bool release_spectrum(); //to save memory after peaks picking.
     bool write_spectrum(std::string); //write spectrum. Format is determined by file extension.
     const std::vector<float> & get_spectrum() const;
+
+
+    /**
+     * Below functions are mainly used for web assembly version to read froma and write to buffer
+     * that is accessible from JavaScript.
+     */
+    bool read_first_spectrum_from_buffer(std::vector<float> &header,
+                                          std::vector<float> &spectrum_real_,
+                                          std::vector<float> &spectrum_imag_);
+
+    /**
+     * Read only access of nspectra
+    */
+    inline int get_nspectra() const
+    {
+        return nspectra;
+    };
+
+    /**
+     * read only access of ndata_frq and ndata_frq_indirect
+     */
+    inline int get_ndata_frq() const
+    {
+        return ndata_frq;
+    };
+
+    /**
+     * These two functions are for web assembly binding.
+     * They work together to read acqus file and fid data, equivalent to read_bruker_acqus_and_fid()
+     */
+    bool read_bruker_files_as_strings(const std::string &contents_acqus);
+    bool set_fid_data(const std::vector<float> &fid_data_float_);
+
+#ifdef WEBASSEMBLY
+    uintptr_t get_data_of_header();
+    uintptr_t get_data_of_real();
+    uintptr_t get_data_of_imag();
+    int get_fid_data_type() const{
+        std::cout<<"udict_acqus.at('DTYPA') = "<<udict_acqus.at("DTYPA")<<std::endl;
+        return std::stoi(udict_acqus.at("DTYPA")); //2: double (float64) or 0: int32
+    }
+#endif
 };
 
 #endif

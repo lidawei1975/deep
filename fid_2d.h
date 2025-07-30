@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 #include <string>
+#include <cstdint>
 
 #include "fid_1d.h"
 
@@ -113,6 +114,8 @@ protected:
     int ndata_bruker; 
     int ndata; 
     int ndata_bruker_indirect;
+    int ndata_bruker_indirect_original;
+    int ndata_bruker_indirect_by2;
     int ndata_indirect;
     int ndata_original; 
 
@@ -241,9 +244,10 @@ protected:
     /**
      * For internal use only. Write spectrum to a file
     */
-    bool write_pipe(std::vector<std::vector<float> > spect, std::string fname); 
+    bool write_pipe_from_spect(std::vector<std::vector<float> > spect, std::string fname); 
+    bool process_dictionary(); //convert udict_acqus_direct and udict_acqus_indirect to my own variables
+    bool process_fid_data(); //convert fid_data_float to fid_data_real_real, fid_data_real_imag, fid_data_imag_real, fid_data_imag_imag
 
-    
     std::string infname; //file name
     double user_scale,user_scale2; //minimal peak intesntiy in picking 
     double user_scale_negative, user_scale2_negative; //minimal peak intesntiy in picking for negative peaks
@@ -315,11 +319,13 @@ public:
      * Read nus list from a file. One line per sampling point or one element per sampling point in one line
     */
     bool read_nus_list(std::string fname);
+    bool read_nus_list_from_string(const std::string &nus_string);
 
     /**
      * This function will get reference to two apodization objects
     */
     bool set_up_apodization(apodization *apodization_direct_in,apodization *apodization_indirect_in);
+    bool set_up_apodization_from_string(const std::string &apodization_string_direct, const std::string &apodization_string_indirect);
 
 
     /**
@@ -370,6 +376,14 @@ public:
     bool read_bruker_files(const std::string &pulse_program_name,const std::string &acqus_file2_name,const std::string &acqus_file_name, const std::vector<std::string> &fid_data_file_names);
 
     /**
+     * @brief: two functions using for web assembly binding. They work together to replace read_bruker_files above.
+     * read_bruker_files_as_strings: read 3 files: pulse sequence acqu2s acqus 
+     * read_bruker_fid_data will be called to read fid data from vector of float directly.
+     */
+    bool read_bruker_files_as_strings(const std::string &contents_pulse, const std::string &contents_acqus, const std::string &contents_acqus2);
+    bool read_bruker_fid_data(const std::vector<float> &fid_data_float_in);
+
+    /**
      * We can also read a nmrPipe format file
     */
     bool read_nmrpipe_file(const std::string &nmrpipe_fid_file_name);
@@ -386,17 +400,21 @@ public:
 
     bool other_process(bool b_di_direct=false, bool b_di_indirect=false);
 
+    bool prepare_header_for_nmrpipe();
+
     bool write_nmrpipe_ft2(std::string outfname);
 
     bool write_nmrpipe_intermediate(std::string outfname);
 
     bool write_nmrpipe_fid(std::string outfname);
 
-    bool write_nmrpipe_ft2_virtual(std::array<float,512> &header, std::vector<float> &data);
+    bool write_nmrpipe_ft2_virtual(std::vector<float> &header, std::vector<float> &data);
 
     bool run_apodization(FID_APODIZATION_TYPE apodization_type, double p1,double p2=0.0,double p3=0.0,double p4=0.0,double p5=0.0,double p6=0.0);
 
     bool write_json(std::string fname);
+
+    std::string write_json_as_string();
 
     bool write_pseudo3d_json(std::string fname);
 
@@ -431,6 +449,39 @@ public:
         return nspectra;
     };
 
+    /**
+     * read only access of ndata_frq and ndata_frq_indirect
+     */
+    inline int get_ndata_frq() const
+    {
+        return ndata_frq;
+    };
+    inline int get_ndata_frq_indirect() const
+    {
+        return ndata_frq_indirect;
+    };
+
+    inline int get_inner_dim() const
+    {
+        return n_inner_dim;
+    };
+
+    inline int get_outer_dim() const
+    {
+        return n_outer_dim;
+    };
+
+    /**
+     * For web assembly binding,
+     */
+#ifdef WEBASSEMBLY
+    uintptr_t get_nmrpipe_header_data();
+    uintptr_t get_data_of_rr();
+    uintptr_t get_data_of_ri();
+    uintptr_t get_data_of_ir();
+    uintptr_t get_data_of_ii();
+#endif
+
 
 public:
     inline void set_scale(double x,double y)
@@ -450,20 +501,14 @@ public:
 
     bool write_pipe(std::string fname, bool b_real_only = false);
     bool save_mnova(std::string fname);
-
-
-
-
-    
+ 
     bool read_spectrum(std::string); //read spectrum only
-    bool read_nmr_ft2_virtual(std::array<float,512> header, std::vector<float> data);
+    bool read_nmr_ft2_virtual(std::vector<float> header,const std::vector<float> &data);
     
     /**
      * Public function to write spectrum to a file.
      * b_real_only means we will remove all imaginary part of the spectrum
     */
-
-
     
     inline float * get_spect_data()
     {

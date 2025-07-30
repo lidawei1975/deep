@@ -25,6 +25,14 @@
 #include "lmminimizer.h"
 #include "fid_2d.h"
 
+#ifdef WEBASSEMBLY
+/**
+* Bind to emscripten with exposed class methods.
+*/
+#include <emscripten/bind.h>
+using namespace emscripten;
+#endif
+
 namespace fid_2d_math {
     bool movemean(float *data, float * new_data, int ndata, int nwindow )
     {
@@ -321,20 +329,40 @@ fid_2d::~fid_2d()
 bool fid_2d::read_nus_list(std::string fname)
 {
     std::ifstream infile(fname);
+    /**
+     * Real all lines from the file
+     */
+    std::string contents = std::string((std::istreambuf_iterator<char>(infile)), std::istreambuf_iterator<char>());
+    infile.close();
+    
+    if (contents.empty())
+    {
+        std::cerr << "Error: nus list file is empty or does not exist." << std::endl;
+        return false;
+    }
+    return read_nus_list_from_string(contents);
+}
+
+/**
+ * Read nus list from a string
+ * The string should be a space separated list of integers or new line separated list of integers
+ */
+bool fid_2d::read_nus_list_from_string(const std::string &nus_string)
+{
+    std::istringstream iss(nus_string);
     std::string line;
     nuslists.clear();
-    while (std::getline(infile, line))
+    while (std::getline(iss, line))
     {
-        std::istringstream iss(line);
+        std::istringstream iss_line(line);
         int temp;
-        while (iss >> temp)
+        while (iss_line >> temp)
         {
             nuslists.push_back(temp);
         }
     }
-    infile.close();
 
-    std::cout<<"Read "<<nuslists.size()<<" nus points from file "<<fname<<std::endl;
+    std::cout<<"Read "<<nuslists.size()<<" nus points from string"<<std::endl;
     for(int i=0;i<nuslists.size();i++)
     {
         std::cout<<nuslists[i]<<" ";
@@ -459,6 +487,57 @@ bool fid_2d::read_bruker_folder(std::string folder_name)
     std::vector<std::string> fid_data_file_names;
     fid_data_file_names.push_back(fid_data_file_name);
     return read_bruker_files(pulse_program_file_name,acqus_file2_name, acqus_file_name, fid_data_file_names);
+};
+
+
+/**
+ * @brief read_pulse_program: process pulse program file as a string and extract phase correction values
+ * This function will change the value of the following variables:
+ * indirect_p0, indirect_p1
+ */
+bool fid_2d::read_bruker_files_as_strings(const std::string &contents_pulse, const std::string &contents_acqus, const std::string &contents_acqus2)
+{
+    /**
+     * At this time, we only try to read these two lines from pulseprogram file
+     * ;PHC0(F1): 90
+     * ;PHC1(F1): -180
+     * It is possible we can only read p0 but not p1, in that case, p1 = 0.0.
+     * If we cannot read both, we will set indirect_p0 = -360.0 (moonlighting as a flag) and indirect_p1 = 0.0
+    */
+    indirect_p0 = -400.0; 
+    indirect_p1 = 0.0;
+
+    std::istringstream infile(contents_pulse);
+
+    std::string line;
+    while (std::getline(infile, line))
+    {
+        if (line.find(";PHC0(F1):") != std::string::npos)
+        {
+            indirect_p0 = std::stod(line.substr(10));
+        }
+        else if (line.find(";PHC1(F1):") != std::string::npos)
+        {
+            indirect_p1 = std::stod(line.substr(10));
+        }
+    }
+
+    bool b1=process_jcamp_as_string(contents_acqus, udict_acqus_direct);
+    bool b2=process_jcamp_as_string(contents_acqus2, udict_acqus_indirect);
+
+    process_dictionary();
+
+    return b1 && b2;
+};
+
+/**
+ * This function is to receive FID data directly from a vector of float
+ * It is for binding to web assemblies or other applications where we want to avoid file I/O.
+ */
+bool fid_2d::read_bruker_fid_data(const std::vector<float> &fid_data_float_in)
+{
+    fid_data_float = std::move(fid_data_float_in);
+    return process_fid_data();
 }
 
 /**
@@ -497,151 +576,8 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
     read_jcamp(acqus_file_name, udict_acqus_direct);
     read_jcamp(acqus_file2_name, udict_acqus_indirect);
 
-    /**
-     * Check udic_acqus["AQ_mod"] to determine the data type: real or complex
-     */
-    if (udict_acqus_direct["AQ_mod"] == "3" || udict_acqus_direct["AQ_mod"] == "1")
-    {
-        data_complexity = FID_DATA_COMPLEXITY_COMPLEX;
-    }
-    else // 0 or 2
-    {
-        data_complexity = FID_DATA_COMPLEXITY_REAL;
-        std::cerr << "Error: FID data is real, not complex" << std::endl;
-        return false;
-    }
+    process_dictionary();
 
-    /**
-     * Check udic_acqus["BYTORDA"] to determine the data type: int32 or float32
-     */
-    if (udict_acqus_direct["DTYPA"] == "2")
-    {
-        data_type = FID_DATA_TYPE_FLOAT64;
-    }
-    else
-    {
-        data_type = FID_DATA_TYPE_INT32;
-    }
-
-    /**
-     * check udic_acqus["TD"] to determine size of fid data
-     */
-    if (udict_acqus_direct.find("TD") == udict_acqus_direct.end())
-    {
-        std::cout << "Error: cannot find TD in acqus file" << std::endl;
-        return false;
-    }
-
-    int td0 = std::stoi(udict_acqus_direct["TD"]);
-
-    /**
-     * Now we need to check the indirect dimension
-     * check udic_acqus_indirect["TD"] to determine size of fid data
-     */
-    if (udict_acqus_indirect.find("TD") == udict_acqus_indirect.end())
-    {
-        std::cout << "Error: cannot find TD in acqu2s file" << std::endl;
-        return false;
-    }
-    int td2 = std::stoi(udict_acqus_indirect["TD"]);
-
-    /**
-     * Need to know size of 1st fid_data_file_names
-     */
-    struct stat sb;
-    int status = stat(fid_data_file_names[0].c_str(), &sb);
-    if (status != 0)
-    {
-        std::cout << "Error: cannot find fid data file " << fid_data_file_names[0] << std::endl;
-        return false;
-    }
-    /**
-     * size of fid data file in bytes
-     */
-    int fid_data_file_size = sb.st_size;
-
-    /**
-     * Check for indirect dimension encoding
-     */
-    if (udict_acqus_indirect.find("FnMODE") == udict_acqus_indirect.end())
-    {
-        std::cout << "Error: cannot find FnMODE in acqu2s file" << std::endl;
-        return false;
-    }
-    fnmode = std::stoi(udict_acqus_indirect["FnMODE"]);
-
-    /**
-     * According to Bruker manu,
-     * when data_type = FID_DATA_TYPE_FLOAT64, fid is padded to 128 bytes
-     * when data_type = FID_DATA_TYPE_INT32, fid is padded to 256 bytes
-     * ndata_bruker is the direct dimension size
-     */
-
-    if (data_type == FID_DATA_TYPE_INT32)
-    {
-        int ntemp = int(std::ceil((double)td0 / 256.0));
-        ndata_bruker = ntemp * 256;
-    }
-    else
-    {
-        int ntemp = int(std::ceil((double)td0 / 128.0));
-        ndata_bruker = ntemp * 128;
-    }
-
-    ndata_bruker_indirect = td2;
-
-    /**
-     * Bruker TD is the number of data points, not the number of complex points for complex data
-     * But we define ndata as the number of complex points
-     */
-    if (data_complexity == FID_DATA_COMPLEXITY_COMPLEX)
-    {
-        ndata = ndata_bruker / 2;
-        ndata_indirect = ndata_bruker_indirect / 2;
-        ndata_original = td0 / 2;
-    }
-    else
-    {
-        ndata = ndata_bruker;
-        ndata_indirect = ndata_bruker_indirect;
-        ndata_original = td0;
-    }
-
-    nucleus = udict_acqus_direct["NUC1"];
-    nucleus_indirect = udict_acqus_indirect["NUC1"];
-    
-    /**
-     * get parameters "GRPDLY" from acqus file
-     */
-
-    if (udict_acqus_direct.find("GRPDLY") != udict_acqus_direct.end())
-    {
-        grpdly = std::stod(udict_acqus_direct["GRPDLY"]);
-        /**
-         * grpdly must > 0. Otherwiae it is from an early days Bruker spectrometer
-         * We don't support this case at this time
-         */
-        if (grpdly <= 0.0)
-        {
-            std::cout << "Error: GRPDLY = " << grpdly << " is not supported" << std::endl;
-        }
-    }
-    else
-    {
-        std::cout << "Error: cannot find GRPDLY in acqus file" << std::endl;
-    }
-
-    /**
-     * If nuslists is not empty, we need to adjustt ndata_bruker_indirect
-     * We save the original value in ndata_bruker_indirect_original, so that we can expand the data to its original size (with zeros in non-sampled traces)
-     */
-    int ndata_bruker_indirect_original = ndata_bruker_indirect;
-    if(nuslists.size()>0)
-    {
-        ndata_bruker_indirect = nuslists.size()*2; //complex data
-        ndata_bruker_indirect_original = (nuslists[nuslists.size()-1]+1)*2;
-    }
-     
     /**
      * now we can actually read the fid data
      * For complex data, real and imaginary parts are stored interleaved by Bruker.
@@ -650,9 +586,6 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
      * Major order of fid_data_float:
      * indrect_dim, direct_dim, real/imaginary interleaved
      */
-
-    fid_data_float.clear();
-
     for (int i = 0; i < fid_data_file_names.size(); i++)
     {
         std::vector<int32_t> fid_data_int;       // 32 bit
@@ -731,7 +664,11 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
     std::cout << "Read " << nspectra << " spectra from " << fid_data_file_names.size() << " files" << std::endl;
     std::cout <<" ndata_bruker = "<<ndata_bruker<<" ndata_bruker_indirect = "<<ndata_bruker_indirect<<std::endl;
 
+    return process_fid_data();
+}
 
+bool fid_2d::process_fid_data()
+{
     /**
      * Now we need to reorganize fid_data_float when order is 321 (from inner to outer), which means order is
      * - indirect dimension (acqu3s ==> 1)
@@ -880,7 +817,234 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
         nusflags.resize(ndata_indirect, 1);
     }
 
+   
     /**
+     * Adjust indirect dimension data format according to FnMODE
+     * fid_data_float[ndata_bruker_indirect][ndata_bruker]. Data is interleaved along both dimensions (real,imaginary,real,imaginary,...)
+     */
+    if (fnmode == 6)
+    {
+        for(int index_spectrum=0;index_spectrum<nspectra;index_spectrum++)
+        {
+            int data_start = index_spectrum * ndata_bruker * ndata_bruker_indirect;
+            /**
+             * Echo anti-echo pulse sequence.
+             *
+             * Step 1: along indirect dimension, (increment 0 - increment 1)/2.0 ==> increment 0
+             * Step 2: along indirect dimension, (increment 0 + increment 1)/2.0 ==> increment 1, and so on
+             * Step 3, for increment 1,3,5,..., apply 90 degree correction along direct dimension (i.e., multiply by i, real -> imaginary, imaginary -> -real)
+             */
+
+
+            for (int i = 0; i < ndata_bruker_indirect_by2; i += 2)
+            {
+                std::vector<float> temp1(ndata_bruker, 0.0f), temp2(ndata_bruker, 0.0f), temp3(ndata_bruker, 0.0f);
+                for (int j = 0; j < ndata_bruker; j++)
+                {
+                    /**
+                     * Step 1 here
+                    */
+                    temp1[j] = (fid_data_float[data_start + i * ndata_bruker + j] - fid_data_float[data_start + (i + 1) * ndata_bruker + j]) / 2.0f;
+                    /**
+                     * Step 2 here
+                    */
+                    temp2[j] = (fid_data_float[data_start + i * ndata_bruker + j] + fid_data_float[data_start + (i + 1) * ndata_bruker + j]) / 2.0f;
+                }
+                /**
+                 * Step 3 here
+                 */
+                for (int k = 0; k < ndata_bruker; k += 2)
+                {
+                    temp3[k] = -temp2[k + 1];
+                    temp3[k + 1] = temp2[k];
+                }
+                /**
+                 * Copy temp1 and temp3 back to fid_data_float
+                 */
+                for (int j = 0; j < ndata_bruker; j++)
+                {
+                    fid_data_float[data_start + i * ndata_bruker + j] = temp1[j];
+                    fid_data_float[data_start + (i + 1) * ndata_bruker + j] = temp3[j];
+                }
+            } // for (int i = 0; i < ndata_bruker_indirect; i += 2)
+        } // for(int index_spectrum=0;index_spectrum<nspectra;index_spectrum++)
+    }
+
+    /**
+     * Convert fid_data_float to:
+     * fid_data_real_real, fid_data_real_imag, fid_data_imag_real, fid_data_imag_imag
+     * (This is lazy. It is better to read data into fid_data_real_real,... directly, but memory is not a big issue here.)
+     * fid_data_float is interleaved (rr, ri of 1st trace, ir, ii of 1st trace, rr, ri of 2nd trace, ir, ii of 2nd trace, ...)
+     * ndata = ndata_bruker / 2; ndata_indirect = ndata_bruker_indirect / 2;
+     */
+    fid_data_real_real.resize(nspectra * ndata * ndata_indirect, 0.0f);
+    fid_data_real_imag.resize(nspectra * ndata * ndata_indirect, 0.0f);
+    fid_data_imag_real.resize(nspectra * ndata * ndata_indirect, 0.0f);
+    fid_data_imag_imag.resize(nspectra * ndata * ndata_indirect, 0.0f);
+    for(int k=0;k<nspectra;k++)
+    {
+        int data_start = k * ndata_bruker * ndata_bruker_indirect;
+        int data_start2 = k * ndata * ndata_indirect; //same for all 4 vector. 
+        for (int i = 0; i < ndata_bruker_indirect_by2; i+=2)
+        {
+            int trace_start = i * ndata_bruker;
+            int trace_start2 = i/2 * ndata;
+            for (int j = 0; j < ndata_bruker; j += 2)
+            {
+                fid_data_real_real[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + i * ndata_bruker + j];
+                fid_data_real_imag[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + i * ndata_bruker + j + 1];
+                fid_data_imag_real[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + (i + 1) * ndata_bruker + j];
+                fid_data_imag_imag[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + (i + 1) * ndata_bruker + j + 1];
+            }
+        }
+    }
+    
+    /**
+     * To save memory, we can release fid_data_float
+     */
+    fid_data_float.clear();
+
+
+
+    return true;
+}
+
+
+
+bool fid_2d::process_dictionary()
+{
+    /**
+     * Check udic_acqus["AQ_mod"] to determine the data type: real or complex
+     */
+    if (udict_acqus_direct["AQ_mod"] == "3" || udict_acqus_direct["AQ_mod"] == "1")
+    {
+        data_complexity = FID_DATA_COMPLEXITY_COMPLEX;
+    }
+    else // 0 or 2
+    {
+        data_complexity = FID_DATA_COMPLEXITY_REAL;
+        std::cerr << "Error: FID data is real, not complex" << std::endl;
+        return false;
+    }
+
+    /**
+     * Check udic_acqus["BYTORDA"] to determine the data type: int32 or float32
+     */
+    if (udict_acqus_direct["DTYPA"] == "2")
+    {
+        data_type = FID_DATA_TYPE_FLOAT64;
+    }
+    else
+    {
+        data_type = FID_DATA_TYPE_INT32;
+    }
+
+    /**
+     * check udic_acqus["TD"] to determine size of fid data
+     */
+    if (udict_acqus_direct.find("TD") == udict_acqus_direct.end())
+    {
+        std::cout << "Error: cannot find TD in acqus file" << std::endl;
+        return false;
+    }
+
+    int td0 = std::stoi(udict_acqus_direct["TD"]);
+
+    /**
+     * Now we need to check the indirect dimension
+     * check udic_acqus_indirect["TD"] to determine size of fid data
+     */
+    if (udict_acqus_indirect.find("TD") == udict_acqus_indirect.end())
+    {
+        std::cout << "Error: cannot find TD in acqu2s file" << std::endl;
+        return false;
+    }
+    int td2 = std::stoi(udict_acqus_indirect["TD"]);
+
+
+    /**
+     * Check for indirect dimension encoding
+     */
+    if (udict_acqus_indirect.find("FnMODE") == udict_acqus_indirect.end())
+    {
+        std::cout << "Error: cannot find FnMODE in acqu2s file" << std::endl;
+        return false;
+    }
+    fnmode = std::stoi(udict_acqus_indirect["FnMODE"]);
+
+    /**
+     * According to Bruker manu,
+     * when data_type = FID_DATA_TYPE_FLOAT64, fid is padded to 128 bytes
+     * when data_type = FID_DATA_TYPE_INT32, fid is padded to 256 bytes
+     * ndata_bruker is the direct dimension size
+     */
+
+    if (data_type == FID_DATA_TYPE_INT32)
+    {
+        int ntemp = int(std::ceil((double)td0 / 256.0));
+        ndata_bruker = ntemp * 256;
+    }
+    else
+    {
+        int ntemp = int(std::ceil((double)td0 / 128.0));
+        ndata_bruker = ntemp * 128;
+    }
+
+    ndata_bruker_indirect = td2;
+
+      /**
+     * Bruker TD is the number of data points, not the number of complex points for complex data
+     * But we define ndata as the number of complex points
+     */
+    if (data_complexity == FID_DATA_COMPLEXITY_COMPLEX)
+    {
+        ndata = ndata_bruker / 2;
+        ndata_indirect = ndata_bruker_indirect / 2;
+        ndata_original = td0 / 2;
+    }
+    else
+    {
+        ndata = ndata_bruker;
+        ndata_indirect = ndata_bruker_indirect;
+        ndata_original = td0;
+    }
+
+    nucleus = udict_acqus_direct["NUC1"];
+    nucleus_indirect = udict_acqus_indirect["NUC1"];
+
+        /**
+     * get parameters "GRPDLY" from acqus file
+     */
+
+    if (udict_acqus_direct.find("GRPDLY") != udict_acqus_direct.end())
+    {
+        grpdly = std::stod(udict_acqus_direct["GRPDLY"]);
+        /**
+         * grpdly must > 0. Otherwiae it is from an early days Bruker spectrometer
+         * We don't support this case at this time
+         */
+        if (grpdly <= 0.0)
+        {
+            std::cout << "Error: GRPDLY = " << grpdly << " is not supported" << std::endl;
+        }
+    }
+    else
+    {
+        std::cout << "Error: cannot find GRPDLY in acqus file" << std::endl;
+    }
+
+    /**
+     * If nuslists is not empty, we need to adjustt ndata_bruker_indirect
+     * We save the original value in ndata_bruker_indirect_original, so that we can expand the data to its original size (with zeros in non-sampled traces)
+     */
+    ndata_bruker_indirect_original = ndata_bruker_indirect;
+    if(nuslists.size()>0)
+    {
+        ndata_bruker_indirect = nuslists.size()*2; //complex data
+        ndata_bruker_indirect_original = (nuslists[nuslists.size()-1]+1)*2;
+    }
+
+     /**
      * get receiver_gain from acqus if it exists
      */
     if (udict_acqus_direct.find("RG") != udict_acqus_direct.end())
@@ -970,7 +1134,7 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
 
 
 
-    int ndata_bruker_indirect_by2 = ndata_bruker_indirect;
+    ndata_bruker_indirect_by2 = ndata_bruker_indirect;
     /**
      * In case ndata_bruker_indirect is odd, the last trace is not used. We need to adjust ndata_bruker_indirect_by2
      */
@@ -983,97 +1147,13 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
          */
     }
 
-    /**
-     * Adjust indirect dimension data format according to FnMODE
-     * fid_data_float[ndata_bruker_indirect][ndata_bruker]. Data is interleaved along both dimensions (real,imaginary,real,imaginary,...)
-     */
-    if (fnmode == 6)
-    {
-        for(int index_spectrum=0;index_spectrum<nspectra;index_spectrum++)
-        {
-            int data_start = index_spectrum * ndata_bruker * ndata_bruker_indirect;
-            /**
-             * Echo anti-echo pulse sequence.
-             *
-             * Step 1: along indirect dimension, (increment 0 - increment 1)/2.0 ==> increment 0
-             * Step 2: along indirect dimension, (increment 0 + increment 1)/2.0 ==> increment 1, and so on
-             * Step 3, for increment 1,3,5,..., apply 90 degree correction along direct dimension (i.e., multiply by i, real -> imaginary, imaginary -> -real)
-             */
-
-
-            for (int i = 0; i < ndata_bruker_indirect_by2; i += 2)
-            {
-                std::vector<float> temp1(ndata_bruker, 0.0f), temp2(ndata_bruker, 0.0f), temp3(ndata_bruker, 0.0f);
-                for (int j = 0; j < ndata_bruker; j++)
-                {
-                    /**
-                     * Step 1 here
-                    */
-                    temp1[j] = (fid_data_float[data_start + i * ndata_bruker + j] - fid_data_float[data_start + (i + 1) * ndata_bruker + j]) / 2.0f;
-                    /**
-                     * Step 2 here
-                    */
-                    temp2[j] = (fid_data_float[data_start + i * ndata_bruker + j] + fid_data_float[data_start + (i + 1) * ndata_bruker + j]) / 2.0f;
-                }
-                /**
-                 * Step 3 here
-                 */
-                for (int k = 0; k < ndata_bruker; k += 2)
-                {
-                    temp3[k] = -temp2[k + 1];
-                    temp3[k + 1] = temp2[k];
-                }
-                /**
-                 * Copy temp1 and temp3 back to fid_data_float
-                 */
-                for (int j = 0; j < ndata_bruker; j++)
-                {
-                    fid_data_float[data_start + i * ndata_bruker + j] = temp1[j];
-                    fid_data_float[data_start + (i + 1) * ndata_bruker + j] = temp3[j];
-                }
-            } // for (int i = 0; i < ndata_bruker_indirect; i += 2)
-        } // for(int index_spectrum=0;index_spectrum<nspectra;index_spectrum++)
-    }
-
-    /**
-     * Convert fid_data_float to:
-     * fid_data_real_real, fid_data_real_imag, fid_data_imag_real, fid_data_imag_imag
-     * (This is lazy. It is better to read data into fid_data_real_real,... directly, but memory is not a big issue here.)
-     * fid_data_float is interleaved (rr, ri of 1st trace, ir, ii of 1st trace, rr, ri of 2nd trace, ir, ii of 2nd trace, ...)
-     * ndata = ndata_bruker / 2; ndata_indirect = ndata_bruker_indirect / 2;
-     */
-    fid_data_real_real.resize(nspectra * ndata * ndata_indirect, 0.0f);
-    fid_data_real_imag.resize(nspectra * ndata * ndata_indirect, 0.0f);
-    fid_data_imag_real.resize(nspectra * ndata * ndata_indirect, 0.0f);
-    fid_data_imag_imag.resize(nspectra * ndata * ndata_indirect, 0.0f);
-    for(int k=0;k<nspectra;k++)
-    {
-        int data_start = k * ndata_bruker * ndata_bruker_indirect;
-        int data_start2 = k * ndata * ndata_indirect; //same for all 4 vector. 
-        for (int i = 0; i < ndata_bruker_indirect_by2; i+=2)
-        {
-            int trace_start = i * ndata_bruker;
-            int trace_start2 = i/2 * ndata;
-            for (int j = 0; j < ndata_bruker; j += 2)
-            {
-                fid_data_real_real[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + i * ndata_bruker + j];
-                fid_data_real_imag[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + i * ndata_bruker + j + 1];
-                fid_data_imag_real[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + (i + 1) * ndata_bruker + j];
-                fid_data_imag_imag[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + (i + 1) * ndata_bruker + j + 1];
-            }
-        }
-    }
-    
-    /**
-     * To save memory, we can release fid_data_float
-     */
-    fid_data_float.clear();
-
     n_outer_dim = ndata_indirect;
     n_inner_dim = ndata;
 
     return true;
 }
+
+
 
 /**
  * Read nmrPipe .fid file
@@ -1533,8 +1613,15 @@ bool fid_2d::set_up_apodization(apodization *a1, apodization *a2)
     return true;
 };
 
+bool fid_2d::set_up_apodization_from_string(const std::string &apodization_string_direct, const std::string &apodization_string_indirect)
+{
+    apodization_direct = new apodization(apodization_string_direct);
+    apodization_indirect = new apodization(apodization_string_indirect);
+    return true;
+}
+
 /**
- * @brief fid_1d::write_nmrpipe_ft1: write some information
+ * @brief fid_2d::write_json: write some information
  * This is mainly for web-server
  */
 bool fid_2d::write_json(std::string fname)
@@ -1570,6 +1657,37 @@ bool fid_2d::write_json(std::string fname)
     outfile.close();
 
     return true;
+}
+
+/**
+ * @brief fid_2d::write_json_as_string: write some information as a string
+ * This is mainly for web-server and web assembly
+ */
+std::string fid_2d::write_json_as_string()
+{
+    Json::Value root;
+    root["ndata"] = ndata;
+    root["ndata_original"] = ndata_original;
+    root["ndata_power_of_2"] = ndata_power_of_2;
+    root["carrier_frequency"] = carrier_frequency;
+    root["observed_frequency"] = observed_frequency;
+    root["spectral_width"] = spectral_width;
+
+    /**
+     * ft2 part. 0 if not exist
+     */
+    root["n_direct"] = ndata_frq;
+    root["n_indirect"] = ndata_frq_indirect;
+    root["noise_level"] = noise_level;
+    root["begin_direct"] = begin1; 
+    root["begin_indirect"]=begin2;
+    root["step_direct"]=step1;
+    root["step_indirect"]=step2;
+
+    Json::StreamWriterBuilder writer;
+    std::string output = Json::writeString(writer, root);
+    
+    return output;
 }
 
 
@@ -2448,17 +2566,10 @@ bool fid_2d::create_nmrpipe_dictionary(std::map<std::string, std::string> &nmrpi
     return true;
 }
 
-bool fid_2d::write_nmrpipe_ft2_virtual(std::array<float, 512> &nmrpipe_header_data, std::vector<float> &data)
+bool fid_2d::write_nmrpipe_ft2_virtual(std::vector<float> &nmrpipe_header_data_, std::vector<float> &data)
 {
-    /**
-     * create nmrpipe header.
-     * This will set values for nmrpipe_dict_string and nmrpipe_dict_float
-     * from udict_acqus and derived values
-     * True means we are saving frq data
-     */
-    create_nmrpipe_dictionary(nmrpipe_dict_string, nmrpipe_dict_float,true);
-    nmrpipe_header_data.fill(0.0f);
-    nmrPipe::nmrpipe_dictionary_to_header(nmrpipe_header_data.data(), nmrpipe_dict_string, nmrpipe_dict_float);
+    prepare_header_for_nmrpipe();
+    nmrpipe_header_data_ = nmrpipe_header_data;
 
     data.clear();
     data.resize(ndata_frq_indirect*ndata_frq*4,0.0f);
@@ -2482,33 +2593,7 @@ bool fid_2d::write_nmrpipe_ft2_virtual(std::array<float, 512> &nmrpipe_header_da
 
 bool fid_2d::write_nmrpipe_intermediate(std::string outfname)
 {
-    if (b_read_bruker_acqus_and_fid == true)
-    {
-        /**
-         * create nmrpipe header.
-         * This will set values for nmrpipe_dict_string and nmrpipe_dict_float
-         * from udict_acqus and derived values
-         * True means we are saving frq data
-         */
-        create_nmrpipe_dictionary(nmrpipe_dict_string, nmrpipe_dict_float,true);
-
-        /**
-         * define header vector, because the function call nmrpipe_dictionary_to_header won't apply for memory
-         */
-        nmrpipe_header_data.clear();
-        nmrpipe_header_data.resize(512, 0.0f);
-
-        nmrPipe::nmrpipe_dictionary_to_header(nmrpipe_header_data.data(), nmrpipe_dict_string, nmrpipe_dict_float);
-    }
-    else
-    {
-        /**
-         * We read nmrpipe file, so we already have nmrpipe_header_data
-         * But we updated some values in nmrpipe_dict_float, so we need to update nmrpipe_header_data
-         */
-        create_nmrpipe_dictionary(nmrpipe_dict_string, nmrpipe_dict_float,false);
-        nmrPipe::nmrpipe_dictionary_to_header(nmrpipe_header_data.data(), nmrpipe_dict_string, nmrpipe_dict_float);
-    }   
+    prepare_header_for_nmrpipe();
 
     /**
      * now write nmrpipe_header_data and spectral to the file
@@ -2554,15 +2639,8 @@ bool fid_2d::write_nmrpipe_intermediate(std::string outfname)
     return true;
 }
 
-/**
- * @brief fid_1d::write_nmrpipe_ft1: write 1D spectrum to nmrpipe file
- * Before writing, define nmrpipe header, set values from udict_acqus and derived values
- * @param outfname: output file name
- * @return true on success, false on failure
- */
-bool fid_2d::write_nmrpipe_ft2(std::string outfname)
+bool fid_2d::prepare_header_for_nmrpipe()
 {
-
     if (b_read_bruker_acqus_and_fid == true)
     {
         /**
@@ -2589,6 +2667,19 @@ bool fid_2d::write_nmrpipe_ft2(std::string outfname)
         create_nmrpipe_dictionary(nmrpipe_dict_string, nmrpipe_dict_float, false);
         nmrPipe::nmrpipe_dictionary_to_header(nmrpipe_header_data.data(), nmrpipe_dict_string, nmrpipe_dict_float);
     }
+    return true;
+}
+
+/**
+ * @brief fid_1d::write_nmrpipe_ft1: write 1D spectrum to nmrpipe file
+ * Before writing, define nmrpipe header, set values from udict_acqus and derived values
+ * @param outfname: output file name
+ * @return true on success, false on failure
+ */
+bool fid_2d::write_nmrpipe_ft2(std::string outfname)
+{
+
+    prepare_header_for_nmrpipe();
 
     /**
      * now write nmrpipe_header_data and spectral to the file
@@ -2689,32 +2780,7 @@ bool fid_2d::write_nmrpipe_ft2(std::string outfname)
 
 bool fid_2d::write_nmrpipe_fid(std::string outfname)
 {
-    if (b_read_bruker_acqus_and_fid == true)
-    {
-        /**
-         * create nmrpipe header.
-         * This will set values for nmrpipe_dict_string and nmrpipe_dict_float
-         * from udict_acqus and derived values
-         */
-        create_nmrpipe_dictionary(nmrpipe_dict_string, nmrpipe_dict_float, true);
-
-        /**
-         * define header vector, because the function call nmrpipe_dictionary_to_header won't apply for memory
-         */
-        nmrpipe_header_data.clear();
-        nmrpipe_header_data.resize(512, 0.0f);
-
-        nmrPipe::nmrpipe_dictionary_to_header(nmrpipe_header_data.data(), nmrpipe_dict_string, nmrpipe_dict_float);
-    }
-    else
-    {
-        /**
-         * We read nmrpipe file, so we already have nmrpipe_header_data
-         * But we updated some values in nmrpipe_dict_float, so we need to update nmrpipe_header_data
-         */
-        create_nmrpipe_dictionary(nmrpipe_dict_string, nmrpipe_dict_float, false);
-        nmrPipe::nmrpipe_dictionary_to_header(nmrpipe_header_data.data(), nmrpipe_dict_string, nmrpipe_dict_float);
-    }
+    prepare_header_for_nmrpipe();
 
     /**
      * now write nmrpipe_header_data and spectral to the file
@@ -2759,7 +2825,34 @@ bool fid_2d::write_nmrpipe_fid(std::string outfname)
     return true;
 }
 
+#ifdef WEBASSEMBLY
+/**
+ * Function calls for web assembly to read header and data directly from variables without addtional copy
+ */
+uintptr_t fid_2d::get_nmrpipe_header_data()
+{
+    return reinterpret_cast<uintptr_t>(nmrpipe_header_data.data());
+}
+uintptr_t fid_2d::get_data_of_rr()
+{
+    return reinterpret_cast<uintptr_t>(spectrum_real_real.data());
+}
+uintptr_t fid_2d::get_data_of_ri()
+{
+    return reinterpret_cast<uintptr_t>(spectrum_real_imag.data());
+}
+uintptr_t fid_2d::get_data_of_ir()
+{
+    return reinterpret_cast<uintptr_t>(spectrum_imag_real.data());
+}
 
+uintptr_t fid_2d::get_data_of_ii()
+{
+    return reinterpret_cast<uintptr_t>(spectrum_imag_imag.data());
+}
+
+
+#endif
 /**
  * Functions copied from fid_2d.cpp when combine them
 */
@@ -3265,7 +3358,7 @@ bool fid_2d::read_txt(std::string infname)
     return true;
 }
 
-bool fid_2d::read_nmr_ft2_virtual(std::array<float,512> header_, std::vector<float> data)
+bool fid_2d::read_nmr_ft2_virtual(std::vector<float> header_, const std::vector<float> &data)
 {
     /**
      * Copy from header_ to header
@@ -3307,6 +3400,13 @@ bool fid_2d::read_nmr_ft2_virtual(std::array<float,512> header_, std::vector<flo
             std::copy(data.data() + i * 4 * ndata_frq + ndata_frq*2, data.data() + i * 4 * ndata_frq + ndata_frq*3, spectrum_imag_real.data() + i * ndata_frq);
             std::copy(data.data() + i * 4 * ndata_frq + ndata_frq*3, data.data() + i * 4 * ndata_frq + ndata_frq*4, spectrum_imag_imag.data() + i * ndata_frq);
         }
+
+        b_read_bruker_acqus_and_fid = false;
+        b_read_nmrpipe_fid = true;
+
+        nspectra = 1; // only one spectrum, not a pseudo 3D NMR
+
+        spect = spectrum_real_real.data(); //alias to spectrum_real_real
 
 
         return true;
@@ -3510,7 +3610,7 @@ bool fid_2d::process_pipe_header(std::vector<float> &header)
  * it is not a 100% compatible ft2 file.
  */
 
-bool fid_2d::write_pipe(std::vector<std::vector<float>> spect, std::string fname)
+bool fid_2d::write_pipe_from_spect(std::vector<std::vector<float>> spect, std::string fname)
 {
 
     if(b_read_nmrpipe_fid == false)
@@ -3618,7 +3718,6 @@ bool fid_2d::write_pipe(std::string fname,bool b_real_only)
 
     return true;
 };
-
 
 
 bool fid_2d::read_sparky(std::string infname)
@@ -3949,3 +4048,53 @@ void fid_2d::estimate_noise_level()
 
     return;
 }
+
+#ifdef WEBASSEMBLY
+/**
+ * Exposed functions
+*/
+EMSCRIPTEN_BINDINGS(dp_module_fid_2d) {
+
+    /**
+     * Note: base class function init is exposed in spectrum_pick_1d.cpp, so it is not included here.
+     * fid_base is included in spectrum_pick_1d.cpp, so it is not included here.
+    */
+
+    class_<fid_2d,base<fid_base>>("fid_2d")
+        .constructor()
+        .function("read_nmr_ft2_virtual", &fid_2d::read_nmr_ft2_virtual)
+        .function("set_aqseq", &fid_2d::set_aqseq)
+        .function("set_negative", &fid_2d::set_negative)
+        .function("set_first_only", &fid_2d::set_first_only)
+        .function("set_up_apodization_from_string", &fid_2d::set_up_apodization_from_string)
+        .function("run_zf", &fid_2d::run_zf)
+        .function("read_nus_list_from_string", &fid_2d::read_nus_list_from_string)
+        .function("read_bruker_files_as_strings", &fid_2d::read_bruker_files_as_strings)
+        .function("read_bruker_fid_data", &fid_2d::read_bruker_fid_data)
+        .function("direct_only_process", &fid_2d::direct_only_process)
+        .function("indirect_only_process", &fid_2d::indirect_only_process)
+        .function("full_process", &fid_2d::full_process)
+        .function("other_process", &fid_2d::other_process)
+        .function("polynorminal_baseline", &fid_2d::polynorminal_baseline)
+        .function("write_json_as_string", &fid_2d::write_json_as_string)
+        /**
+         * Below are used to extract ft2 data from fid_2d object, used by web assembly code.
+         */
+        .function("get_ndata_frq", &fid_2d::get_ndata_frq)
+        .function("get_ndata_frq_indirect", &fid_2d::get_ndata_frq_indirect)
+        .function("get_inner_dim", &fid_2d::get_inner_dim)
+        .function("get_outer_dim", &fid_2d::get_outer_dim)
+        .function("prepare_header_for_nmrpipe", &fid_2d::prepare_header_for_nmrpipe)
+        .function("get_nmrpipe_header_data", &fid_2d::get_nmrpipe_header_data)
+        .function("get_data_of_rr", &fid_2d::get_data_of_rr)
+        .function("get_data_of_ri", &fid_2d::get_data_of_ri)
+        .function("get_data_of_ir", &fid_2d::get_data_of_ir)
+        .function("get_data_of_ii", &fid_2d::get_data_of_ii)
+        ;
+
+    
+    /**
+     * float vector registration is also done in spectrum_pick_1d.cpp, not here.
+    */
+}
+#endif // WEBASSEMBLY
