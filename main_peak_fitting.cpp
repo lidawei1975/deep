@@ -12,10 +12,6 @@
 
 #include "commandline.h"
 #include "spectrum_fit.h"
-
-int shared_data_2d::n_verbose=1;
-double shared_data_2d::error_scale=1.0; 
-
 #include "DeepConfig.h"
 
 int main(int argc, char **argv)

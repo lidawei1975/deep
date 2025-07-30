@@ -51,7 +51,7 @@ int main(int argc, char **argv)
 
     args.push_back("-method");
     args2.push_back("voigt");
-    args3.push_back("Peak shape: gaussian, lorentz or voigt or voigt_approximate");  
+    args3.push_back("Peak shape: gaussian, lorentz or voigt");  
 
     args.push_back("-scale");
     args2.push_back("5.5");
@@ -66,7 +66,7 @@ int main(int argc, char **argv)
     args3.push_back("Direct set noise level to this value, estimate from sepctrum if input is 0.0");
 
     args.push_back("-in");
-    args2.push_back("serum.ft1"); 
+    args2.push_back("test.ft1"); 
     args3.push_back("input file name (test.ft1)");
 
     args.push_back("-stride");
@@ -121,6 +121,10 @@ int main(int argc, char **argv)
     args2.push_back("yes");
     args3.push_back("Output fitted peaks and reconstructed spectrum in json format for further analysis");
 
+    args.push_back("-out_json_fname");
+    args2.push_back("recon.json");
+    args3.push_back("Output json file name for fitted peaks and reconstructed spectrum");
+
     args.push_back("-individual");
     args2.push_back("yes");
     args3.push_back("Include individual profile of fitted peaks in json format");
@@ -128,6 +132,10 @@ int main(int argc, char **argv)
     args.push_back("-recon");
     args2.push_back("yes");
     args3.push_back("Write a reconstructed spectrum file named as input file name + _recon.ft2 (only work when input is in ft2 format)");
+
+    args.push_back("-remove");
+    args2.push_back("no");
+    args3.push_back("Remove failed peaks in the output file. Default is no");
 
     args.push_back("-folder");
     args2.push_back("./sim_diff");
@@ -140,7 +148,7 @@ int main(int argc, char **argv)
     double user,user2;
     double max_width;
     int maxround;
-    fit_type fit_type_flag;
+    int fit_type_flag=2;
     bool b_out_json=false;
     bool b_individual_peaks=false;
     bool b_recon=false;
@@ -152,10 +160,11 @@ int main(int argc, char **argv)
     b_recon=cmdline.query("-recon")=="yes" || cmdline.query("-recon")=="y";
     b_individual_peaks=cmdline.query("-individual")=="yes" || cmdline.query("-individual")=="y";
     b_negative=cmdline.query("-negative")=="yes" || cmdline.query("-negative")=="y";
+    
 
     shared_data_1d::n_verbose=atoi(cmdline.query("-v").c_str()); //set verbose level. Defined in spectrum_fit_1d.cpp
     shared_data_1d::b_dosy=cmdline.query("-doesy")=="yes" || cmdline.query("-doesy")=="y"; //set doesy flag
-    shared_data_1d::peak_combine_cutoff=std::stod(cmdline.query("-combine"));
+    shared_data_1d::b_remove_failed_peaks=cmdline.query("-remove")=="yes" || cmdline.query("-remove")=="y";
 
 
     double noise_level=stod(cmdline.query("-noise_level"));
@@ -167,42 +176,17 @@ int main(int argc, char **argv)
     user2=atof(cmdline.query("-scale2").c_str());
     n_stride=atoi(cmdline.query("-stride").c_str());
 
-    std::string method=cmdline.query("-method");
-    /**
-     * Convert to lower case
-    */
-    std::transform(method.begin(), method.end(), method.begin(), ::tolower);
 
-
-    if(method == "gaussian") fit_type_flag=gaussian_type;
-    else if(method == "voigt") fit_type_flag=voigt_type;
-    /** 
-     * Starts with voigt_a or voigt-a, then it is voigt_approximation
-    */
-    else if(method.substr(0,7)=="voigt-a" || method.substr(0,7)=="voigt_a") fit_type_flag=voigt_approximate_type;
-    else if(method == "lorentz") fit_type_flag=lorentz_type;
-    else if(method.substr(0,1)=="g") fit_type_flag=gaussian_type;
-    else if(method.substr(0,1)=="v") fit_type_flag=voigt_type;
-    else if(method.substr(0,1)=="l") fit_type_flag=lorentz_type;
+    if(cmdline.query("-method") == "gaussian") fit_type_flag=1;
+    else if(cmdline.query("-method") == "voigt") fit_type_flag=2;
+    else if(cmdline.query("-method") == "lorentz") fit_type_flag=3;
+    else if(cmdline.query("-method").substr(0,1)=="g" || cmdline.query("-method").substr(0,1)=="g") fit_type_flag=1;
+    else if(cmdline.query("-method").substr(0,1)=="v" || cmdline.query("-method").substr(0,1)=="V") fit_type_flag=2;
+    else if(cmdline.query("-method").substr(0,1)=="l" || cmdline.query("-method").substr(0,1)=="L") fit_type_flag=3;
     else
     {
         std::cout<<"Error: Peak shape not recognized. Use gaussian, lorentz or voigt"<<std::endl;
         return 0;
-    }
-
-    /**
-     * Add a note to the user if method is voigt_approximate
-    */
-    if(fit_type_flag==voigt_approximate_type)
-    {
-        std::cout<<std::endl;
-        std::cout<<"******************************************************************************"<<std::endl;
-        std::cout<<"Voigt_approximate is a linear combination of Gaussian and Lorentzian profiles. It is faster but less accurate than the full Voigt profile."<<std::endl;
-        std::cout<<"It is NOT recommended for spectra with lots of peak overlap and high dynamic range (>10:1)"<<std::endl;
-        std::cout<<"In addition, output peak list is not updated to have G/L ratio yet. Only position and height are updated."<<std::endl;
-        std::cout<<"Do not support pseudo-2D at this time neither."<<std::endl;
-        std::cout<<"******************************************************************************"<<std::endl;
-        std::cout<<std::endl;
     }
 
 
@@ -257,7 +241,7 @@ int main(int argc, char **argv)
             x.init_error(zf,n_err);
         }
 
-        if(x.init_all_spectra(file_names,n_stride,b_negative)) //read spectra.
+        if(x.init_all_spectra(file_names,b_negative)) //read spectra.
         {
             if(x.peak_reading(peakfname))
             {
@@ -269,7 +253,28 @@ int main(int argc, char **argv)
             {
                 std::cout<<"Error: Failed to read input peaks."<<std::endl;
             }
-            x.output(outfname,b_out_json,b_individual_peaks,b_recon,cmdline.query("-folder")); //output
+            x.output(outfname); //output
+
+            if(b_out_json)
+            {
+                std::string outfname_json=cmdline.query("-out_json_fname");
+                std::cout<<"Write json file: " << outfname_json << std::endl;
+                x.output_json(outfname_json,b_individual_peaks);
+            }
+
+            if(b_recon)
+            {
+                std::string folder_name=cmdline.query("-folder");
+                if(folder_name=="")
+                {
+                    std::cout<<"Warning: Folder name is empty. Reconstructed spectrum will not be saved."<<std::endl;
+                }
+                else
+                {
+                    x.write_recon(folder_name);
+                    x.get_data_of_recon(0);
+                }
+            }
         }
         else
         {

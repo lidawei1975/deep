@@ -22,7 +22,6 @@ enum fit_type
   gaussian_type,
   voigt_type,
   lorentz_type,
-  voigt_approximate_type,
   null_type
 };
 #endif
@@ -40,24 +39,12 @@ enum fit_type
     using ceres::Solve;
 #endif
 
-namespace ldw_math_1d
-{
-  double calcualte_median(std::vector<double> scores);
-  void sortArr(std::vector<double> &arr, std::vector<int> &ndx);
-  bool gaussian_convolution(double a, double x, double sigmax, std::vector<double> *kernel, int &i0, int &i1, int xdim, double scale);
-  bool lorentz_convolution(double a, double x, double gammax, std::vector<double> *kernel, int &i0, int &i1, int xdim, double scale);
-  bool voigt_approximate_convolution(double a, double x, double sigmax, double gammax, double ratio, std::vector<double> *kernel, int &i0, int &i1, int xdim, double scale);
-  bool voigt_convolution(double a, double x, double sigmax, double gammax, std::vector<double> *kernel, int &i0, int &i1, int xdim, double scale);
-};
-
 class gaussian_fit_1d: public shared_data_1d
 {
 private:
   int n_patch;
 
   bool b_negative;
-
-  bool b_allow_remove_peaks;
 
   double median_width_x; // median peak width in x direction. Copied from spectrum_fit_1d
 
@@ -82,7 +69,6 @@ private:
   bool one_fit_lorentz(int, std::vector<double> *zz, double &x0, double &a, double &gammax, double &e);
   bool one_fit_voigt(int, std::vector<double> *zz, double &, double &, double &, double &, double &, int n = 0, int n2 = 0);
   bool one_fit_voigt_core(int, std::vector<double> *zz, double &x0, double &a, double &sigmax, double &gammax, double &e);
-  bool one_fit_voigt_approximate(int, std::vector<double> *zz, double &x0, double &a, double &sigmax, double &gammax, double &e);
 
   bool multi_fit_gaussian(int xdim, std::vector<std::vector<double>> &zz, double &x0, std::vector<double> &a, double &sigmax, double &e);
   bool multi_fit_lorentz(int xdim, std::vector<std::vector<double>> &zz, double &x0, std::vector<double>  &a, double &gammax, double &e);
@@ -98,13 +84,9 @@ private:
   bool voigt_convolution_with_limit(int ndx, double a, double x, double sigmax, double gammax, std::vector<double> *kernel, int &i0, int &i1, double scale);
   bool lorentz_convolution(double a, double x, double gammax, std::vector<double> *kernel, int &i0, int &i1, double scale);
   bool lorentz_convolution_with_limit(int ndx, double a, double x, double gammax, std::vector<double> *kernel, int &i0, int &i1, double scale);
-  bool voigt_approximate_convolution(double a, double x, double sigmax, double gammax, std::vector<double> *kernel, int &i0, int &i1, double scale);
-  bool voigt_approximate_convolution_with_limit(int ndx, double a, double x, double sigmax, double gammax, std::vector<double> *kernel, int &i0, int &i1, double scale);
-  bool voigt_approximate_convolution_old(double a, double x, double sigmax, double gammax, double delta, std::vector<double> *kernel, int &i0, int &i1, double scale);
-  bool voigt_approximate_convolution_with_limit_old(int ndx, double a, double x, double sigmax, double gammax, double delta, std::vector<double> *kernel, int &i0, int &i1, double scale);
   bool find_highest_neighbor(int xx, int &mm);
   bool limit_fitting_region_of_each_peak();
-  int test_possible_removal(double, double, double, double, double, double, double, double,double,double);
+  int test_possible_removal(double, double, double, double, double, double, double, double);
   bool run_single_peak();
   bool run_multi_peaks();
   bool run_single_peak_multi_spectra();
@@ -118,9 +100,9 @@ public:
   std::vector<std::vector<double>> a;               // peak intensity a[peak_index][spectra_index]
   std::vector<double>   a_at_time_zero;             // peak intensity at time zero. used in doesy fitting only
   std::vector<double> x;                            // peak coordinates
+  std::vector<double> x_as_input;                   // peak coordinates before fitting
   std::vector<double> sigmax;                       // Gaussian peak shape parameter. IMPORTANT: in Gaussian fit, this is actually 2*sigma*sigma
   std::vector<double> gammax;                       // Lorentzian peak shape parameter
-  std::vector<double> delta;                        // Lorentzian ratio of voigt_appromixate, Gaussain ratio is 1-delta
   std::vector<double> err;                          // fitting residual (RMSD)
   std::vector<int> original_ndx;                    // for debug only.
   std::vector<std::vector<double>> num_sum;         // numerical integral of each peak num_sum[peak_index][spectra_index]
@@ -150,7 +132,7 @@ public:
   bool run_peak_fitting(bool flag_first = true);
   bool run_with_error_estimation(int zf1, int n_error_round);
   int get_nround();
-  void set_up(fit_type, int, double, double, double,bool,double,bool);
+  void set_up(fit_type, int, double, double, double,bool,double);
 };
 
 class spectrum_fit_1d : public fid_1d
@@ -163,8 +145,6 @@ private:
 
   bool b_negative;
 
-  bool b_allow_remove_peaks;
-
   int n_patch;
   int zf, error_nround;
   int rmax;
@@ -172,10 +152,6 @@ private:
   double to_near_cutoff;
   double w_smooth, w_positive, w_fit;
 
-  /**
-   * These are peak parameters we read from peak file.
-   * not to be confused with the fitted peak parameters, which always have the prefix "fit_"
-  */
   std::vector<double> p1, p1_ppm, sigmax, gammax, p_intensity;
   std::vector<std::vector<double>> p_intensity_all_spectra; //for pseudo 2D. [peak_index][spectra_index]
   std::vector<std::string> user_comments;
@@ -188,20 +164,18 @@ private:
 
   std::vector<gaussian_fit_1d> fits;
 
-  bool peak_reading_pipe(std::string outfname);
-  bool peak_reading_json(std::string outfname);
-  bool peak_reading_sparky(std::string outfname);
+  bool peak_reading_pipe(const std::string &content);
+  bool peak_reading_json(const std::string &content);
+  bool peak_reading_sparky(const std::string &content);
   bool assess_size();
   bool gather_result();
   bool gather_result_with_error_estimation(int);
-  bool output_json(std::string outfname,const std::vector<int> ndx,const std::vector<double> amp, bool b_individual_peaks);
-  bool write_recon(std::string folder_name); 
   bool peak_partition_1d_for_fit(double,double);
   bool label_baseline_peaks();
 
 public:
   std::vector<int> fit_peak_index;
-  std::vector<double> fit_p1, fit_p1_ppm, fit_sigmax, fit_gammax, fit_delta, fit_p_intensity; // lazy. should be private
+  std::vector<double> fit_p1, fit_p1_ppm, fit_sigmax, fit_gammax, fit_p_intensity; // lazy. should be private
   std::vector<std::vector<double>> fit_num_sum,fit_p_intensity_all_spectra; //for pseudo 2D. [peak_index][spectra_index]
   std::vector<double> fit_err;
   std::vector<int> fit_nround;
@@ -209,13 +183,29 @@ public:
 
   spectrum_fit_1d();
   ~spectrum_fit_1d();
-  bool init_all_spectra(std::vector<std::string> finames,int,bool);
+  bool init_all_spectra(std::vector<std::string> finames,bool);
   bool set_for_one_spectrum();
-  bool init_fit(fit_type, int, double, bool b_allow_remove_peaks = true);
+  bool init_fit(int, int, double);
   bool init_error(int, int);
   bool peak_fitting(double spectrum_begin=100.0,double spectrum_end=-100.0);
-  bool output(std::string outfname,bool b_out_json,bool b_individual_peaks, bool b_recon,std::string);
+  bool output(std::string outfname);
   bool peak_reading(std::string outfname); //default is allow negative peaks.
   bool set_peaks(const spectrum_1d_peaks);
   bool get_fitted_peaks(spectrum_1d_peaks &);
+  bool output_json(std::string outfname,bool b_individual_peaks);
+  bool write_recon(std::string folder_name); 
+
+  /**
+   * Below functions are mainly used for web assembly version to read froma and write to buffer
+   * that is accessible from JavaScript.
+   */
+  bool prepare_to_read_additional_spectrum_from_buffer(bool);
+  bool read_additonal_spectrum_from_buffer(std::vector<float> &buffer);
+  
+  std::string  output_as_string(int c);
+  std::string output_json_as_string(bool b_individual_peaks);
+  bool peak_reading_from_string(const std::string &content, int read_type);
+  int get_size_of_recon();
+  std::vector<float> spe_recon;
+  uintptr_t get_data_of_recon(int);
 };

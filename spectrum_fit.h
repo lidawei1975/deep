@@ -107,13 +107,12 @@ private:
 
 
 public:
-  std::vector<std::string> * peak_assignments; //reference to spectrum_fit varaible user_comments
-
   // will be read directly in fit_gather step of spectrum_fit.cpp
   // updated in fitting at each iteration
   std::vector<int> to_remove;         // lable to_be_remvoed peaks identifed in fitting process
-  std::vector<std::vector<double>> a; // peak intensity  a[peak index][spe index]
+  std::vector<double> amp;              // peak intensity, flattened as 1D vector  a[peak index][spe index] ==> a[peak index * nspectra + spe index]
   std::vector<double> x, y;           // peak coordinates
+  int npeak;                 // number of peaks in this gaussian_fit object (before fitting)
   std::vector<double> sigmax, sigmay; // peak width
   std::vector<double> gammax, gammay; // Lorentzian peak width
   std::vector<double> err;            // fitting residual (RMSD)
@@ -125,7 +124,7 @@ public:
   std::vector<int> removed_peaks; //original_ndx of removed peaks.
 
   std::vector<std::vector<double>> batch_x, batch_y, batch_sigmax, batch_sigmay, batch_gammax, batch_gammay;
-  std::vector<std::vector<std::vector<double>>> batch_a;
+  std::vector<std::vector<double>> batch_a;
 
   std::vector<double> delta_x, delta_y, delta_sigmax, delta_sigmay, delta_gammax, delta_gammay;
   std::vector<std::vector<double>> delta_amplitude, delta_volume; // delta[peak_index][spe_index]
@@ -138,13 +137,20 @@ public:
   // other varibles need direct access
   int xstart, ystart;
   int xdim, ydim;
+  int xydim; // xdim*ydim, size of each spectrum
   double xppm_per_step, yppm_per_step;
-  std::vector<std::vector<double>> surface; // 2D spectrum matrix, column by column order. outlayer: list of spectra
+  /**
+   * 2D spectrum matrix flattened, outlayer: list of spectra
+   * inner layer; flattened 2D matrix of each spectrum, column major order
+   * surface[spec_index][x_index*ydim+y_index]
+   */
+  std::vector<double> surface; 
+  int nspectra; //size of surface, number of spectra in this gaussian_fit object
 
   gaussian_fit();
   ~gaussian_fit();
 
-  bool init(int, int, int, int, std::vector<std::vector<double>>, std::vector<double>, std::vector<double>, std::vector<std::vector<double>>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<int>, std::vector<int>,double,double);
+  bool init(int, int, int, int, int, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::vector<int>, std::vector<int>,double,double);
   bool run(int flag = 1);
   bool run_with_error_estimation(int, int, int nround = 10);
   bool assess_size();
@@ -152,6 +158,7 @@ public:
   int get_nround();
   bool change_sign();
   void set_everything(fit_type t, int r, int index);
+  void set_everything_wasm(int t,int r,int index);
   void set_peak_paras(double x, double y, double noise, double height, double near, double xppm, double yppm, double cutoff);
 };
 

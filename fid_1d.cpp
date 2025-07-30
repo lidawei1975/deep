@@ -10,6 +10,15 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#ifdef WEBASSEMBLY
+/**
+* Bind to emscripten with exposed class methods.
+*/
+#include <emscripten/bind.h>
+using namespace emscripten;
+#endif
+
+
 #include "kiss_fft.h"
 
 #include "json/json.h"
@@ -18,10 +27,11 @@
 /**
  * These are shared varibles between db_match_1d and pattern_match_1d and spectrum_pick_1d
 */
-int shared_data_1d::n_verbose=0; 
+int shared_data_1d::n_verbose=1; 
 bool shared_data_1d::b_dosy=false;
 std::vector<double> shared_data_1d::z_gradients;
 double shared_data_1d::peak_combine_cutoff=0.01;
+bool shared_data_1d::b_remove_failed_peaks=false;
 
 namespace ldw_math_spectrum_1d
 {
@@ -682,12 +692,86 @@ bool fid_base::read_jcamp(std::string file_name, std::map<std::string, std::stri
     return true;
 }
 
+
+bool fid_base::process_jcamp_as_string(const std::string &contents, std::map<std::string, std::string> &udict) const
+{
+
+    /**
+     * This function will read the contents of a JCAMP file and store the key-value pairs in udict
+     * The JCAMP file is expected to have the format:
+     * ##key1=value1
+     * ##key2=value2
+     * ...
+     */
+    std::istringstream infile(contents);
+    std::string line;
+    std::string key, value;
+    while (std::getline(infile, line))
+    {
+       /**
+         * On linux, the end of line is \n, so the value of line is correct here
+         * On Windows, the end of line is \r\n, so the value of line has an extra \r, we need to remove it
+         */
+        if (line.size() > 0 && line[line.size() - 1] == '\r')
+        {
+            line = line.substr(0, line.size() - 1);
+        }
+
+        /**
+         * check end of file indicator "##END="
+         */
+        if (line.find("##END=") != std::string::npos)
+        {
+            break;
+        }
+        /**
+         * comment line starts with "##"
+         */
+        else if (line.find("$$") == 0)
+        {
+            udict["comment"] += line + "\n"; // append to comment. Keep the header
+        }
+        /**
+         * header line starts with "##" and the 3rd character is not "$"
+         */
+        else if (line.find("##") == 0 && line[2] != '$')
+        {
+            udict["header"] += line + "\n"; // append to header. Keep the header
+        }
+        /**
+         * key value pair line starts with "##" and the 3rd character is "$"
+         * @brief read_jcmap_line: read one line of jcamp file and store the content in key and value
+         */
+        else if (line.find("##") == 0 && line[2] == '$')
+        {
+            if (read_jcmap_line(infile, line, key, value))
+            {
+                udict[key] = value;
+            }
+            else
+            {
+                std::cerr << "Warning: cannot parse line " << line << std::endl;
+            }
+        }
+        /**
+         * other lines are undefined
+         */
+        else
+        {
+            std::cerr << "Warning: unknown line " << line << std::endl;
+        }
+    }
+
+    return true;
+}
+
+
 /**
  * @brief read_jcmap_line: read one line of jcamp file and store the content in key and value
  * In rare cases, the value may have "<" but without ">", which means a multi-line value
  * In this case, we need to read the next line and append to the value
  */
-bool fid_base::read_jcmap_line(std::ifstream &infile, std::string line, std::string &key, std::string &value) const
+bool fid_base::read_jcmap_line(std::istream &infile, std::string line, std::string &key, std::string &value) const
 {
     /**
      * Step 1, find "=", which separates key and value. Skip the first two characters "##" and the third character "$"
@@ -792,7 +876,6 @@ bool fid_base::read_jcmap_line(std::ifstream &infile, std::string line, std::str
      */
     return true;
 };
-
 
 float fid_base::read_float(FILE *fp)
 {
@@ -981,79 +1064,29 @@ bool fid_1d::read_bruker_folder(std::string folder_name)
     return read_bruker_acqus_and_fid(acqus_file_name, fid_data_file_names);
 }
 
+
+bool fid_1d::read_bruker_files_as_strings(const std::string &contents_acqus)
+{
+    return process_jcamp_as_string(contents_acqus, udict_acqus) && process_dictionary();      
+}
+
+bool fid_1d::set_fid_data(const std::vector<float> &fid_data_float_)
+{
+    fid_data_float = std::move(fid_data_float_);
+    nspectra = fid_data_float.size()/ ndata_bruker; // number of spectra is the size of fid_data_float divided by ndata_bruker
+    std::cout<<"Set fid_data_float with " << fid_data_float.size() << " elements, which is " << nspectra << " spectra." << std::endl;
+    std::cout<<"ndata_bruker is " << ndata_bruker << std::endl;
+    return true;
+}
+
 bool fid_1d::read_bruker_acqus_and_fid(const std::string &acqus_file_name, const std::vector<std::string> &fid_data_file_names)
 {
 
     read_jcamp(acqus_file_name, udict_acqus);
 
-    /**
-     * Check udic_acqus["AQ_mod"] to determine the data type: real or complex
-     */
-    if (udict_acqus["AQ_mod"] == "3" || udict_acqus["AQ_mod"] == "1")
-    {
-        data_complexity = FID_DATA_COMPLEXITY_COMPLEX;
-    }
-    else
-    {
-        data_complexity = FID_DATA_COMPLEXITY_REAL;
-    }
+    process_dictionary();
 
-    /**
-     * Check udic_acqus["BYTORDA"] to determine the data type: int32 or float32
-     */
-    if (udict_acqus["DTYPA"] == "2")
-    {
-        data_type = FID_DATA_TYPE_FLOAT64;
-    }
-    else
-    {
-        data_type = FID_DATA_TYPE_INT32;
-    }
-
-    /**
-     * check udic_acqus["TD"] to determine size of fid data
-     */
-    if (udict_acqus.find("TD") == udict_acqus.end())
-    {
-        std::cout << "Error: cannot find TD in acqus file" << std::endl;
-        return false;
-    }
-
-    int td0 = std::stoi(udict_acqus["TD"]);
-
-    /**
-     * According to Bruker manu,
-     * when data_type = FID_DATA_TYPE_FLOAT64, fid is padded to 128 bytes
-     * when data_type = FID_DATA_TYPE_INT32, fid is padded to 256 bytes
-     */
-
-    if (data_type == FID_DATA_TYPE_INT32)
-    {
-        int ntemp = int(std::ceil((double)td0 / 256.0));
-        ndata_bruker = ntemp * 256;
-    }
-    else
-    {
-        int ntemp = int(std::ceil((double)td0 / 128.0));
-        ndata_bruker = ntemp * 128;
-    }
-
-    /**
-     * Bruker TD is the number of data points, not the number of complex points for complex data
-     * But we define ndata as the number of complex points
-     */
-    if (data_complexity == FID_DATA_COMPLEXITY_COMPLEX)
-    {
-        ndata = ndata_bruker / 2;
-        ndata_original = td0 / 2;
-    }
-    else
-    {
-        ndata = ndata_bruker;
-        ndata_original = td0;
-    }
-
-    /**
+        /**
      * now we can actually read the fid data
      * For complex data, real and imaginary parts are stored interleaved by Bruker.
      * Here we leave them interleaved in fid_data_float or fid_data_int
@@ -1139,6 +1172,82 @@ bool fid_1d::read_bruker_acqus_and_fid(const std::string &acqus_file_name, const
 
     std::cout << "Read " << nspectra << " spectra from " << fid_data_file_names.size() << " files" << std::endl;
 
+    
+
+    return true;
+}
+
+
+bool fid_1d::process_dictionary()
+{
+    b_read_from_ft1 = false; // default, we are not reading from ft1 file
+    /**
+     * Check udic_acqus["AQ_mod"] to determine the data type: real or complex
+     */
+    if (udict_acqus["AQ_mod"] == "3" || udict_acqus["AQ_mod"] == "1")
+    {
+        data_complexity = FID_DATA_COMPLEXITY_COMPLEX;
+    }
+    else
+    {
+        data_complexity = FID_DATA_COMPLEXITY_REAL;
+    }
+
+    /**
+     * Check udic_acqus["BYTORDA"] to determine the data type: int32 or float32
+     */
+    if (udict_acqus["DTYPA"] == "2")
+    {
+        data_type = FID_DATA_TYPE_FLOAT64;
+    }
+    else
+    {
+        data_type = FID_DATA_TYPE_INT32;
+    }
+
+    /**
+     * check udic_acqus["TD"] to determine size of fid data
+     */
+    if (udict_acqus.find("TD") == udict_acqus.end())
+    {
+        std::cout << "Error: cannot find TD in acqus file" << std::endl;
+        return false;
+    }
+
+    int td0 = std::stoi(udict_acqus["TD"]);
+
+    /**
+     * According to Bruker manu,
+     * when data_type = FID_DATA_TYPE_FLOAT64, fid is padded to 128 bytes
+     * when data_type = FID_DATA_TYPE_INT32, fid is padded to 256 bytes
+     */
+
+    if (data_type == FID_DATA_TYPE_INT32)
+    {
+        int ntemp = int(std::ceil((double)td0 / 256.0));
+        ndata_bruker = ntemp * 256;
+    }
+    else
+    {
+        int ntemp = int(std::ceil((double)td0 / 128.0));
+        ndata_bruker = ntemp * 128;
+    }
+
+    /**
+     * Bruker TD is the number of data points, not the number of complex points for complex data
+     * But we define ndata as the number of complex points
+     */
+    if (data_complexity == FID_DATA_COMPLEXITY_COMPLEX)
+    {
+        ndata = ndata_bruker / 2;
+        ndata_original = td0 / 2;
+    }
+    else
+    {
+        ndata = ndata_bruker;
+        ndata_original = td0;
+    }
+
     /**
      * Now setup the following variables:
      * spectral_width, observed_frequency, carrier_frequency
@@ -1211,6 +1320,9 @@ bool fid_1d::read_bruker_acqus_and_fid(const std::string &acqus_file_name, const
 
     return true;
 }
+
+
+
 
 /**
  * write 1D fid to nmrpipe file
@@ -1400,6 +1512,13 @@ bool fid_1d::set_up_apodization(apodization *apod_)
 };
 
 
+bool fid_1d::set_up_apodization_from_string(const std::string &apod_string)
+{
+    apod = new apodization(apod_string);
+    return true;
+}
+
+
 
 /**
  * @brief create_nmrpipe_dictionary: create nmrpipe dictionary from udict_acqus and derived values
@@ -1518,9 +1637,17 @@ bool fid_1d::write_nmrpipe_ft1(std::string outfname)
 
     /**
      * define header vector, because the function call nmrpipe_dictionary_to_header won't apply for memory
+     * We do not need to do this when reading from nmrPipe ft1 file (where header is read from file.)
      */
-    nmrpipe_header_data.resize(512, 0.0f);
+    if(b_read_from_ft1 == false)
+    {
+        nmrpipe_header_data.clear();
+        nmrpipe_header_data.resize(512, 0.0f);
+    }
 
+    /**
+     * Even when we read from .ft1 file, we may still change nmrpipe_header_data if warranted.
+    */
     nmrPipe::nmrpipe_dictionary_to_header(nmrpipe_header_data.data(), nmrpipe_dict_string, nmrpipe_dict_float);
 
     /**
@@ -1774,7 +1901,12 @@ bool fid_1d::read_spectrum(std::string infname, bool b_negative)
     }
 
     return b_read;
-}
+};
+
+
+
+
+
 /**
  * @brief read spectrum in csv format by Mnova software
 */
@@ -1929,6 +2061,44 @@ bool fid_1d::read_spectrum_json(std::string infname)
 };
 
 /**
+ * This function will replace fid_1d::read_spectrum(), but only support reading nmrPipe ft1 file and means for web assembly to direct set spectrum data from memory buffer
+*/
+bool fid_1d::read_first_spectrum_from_buffer(std::vector<float> &header, std::vector<float> &spectrum_real_, std::vector<float> &spectrum_imag)
+{
+    /**
+     * copy first 512 float32 to nmrpipe_header_data
+     */
+    if(header.size()<512)
+    {
+        std::cout << "Error: buffer size is less than 512, cannot read nmrPipe header." << std::endl;
+        return false;
+    }
+    /**
+     * C++17 allows us to use std::move to avoid copying the header data. Simply transfer ownership of the header vector to nmrpipe_header_data.
+    */
+    nmrpipe_header_data = std::move(header); 
+
+    process_nmrpipe_header();  
+
+    spectrum_real = std::move(spectrum_real_); // move the spectrum_real vector to the class member
+
+    if(spectrum_imag.size()>0)
+    {
+        spectrum_imag = std::move(spectrum_imag); // move the spectrum_imag vector to the class member
+    }
+    else
+    {
+        spectrum_imag.clear(); // clear the imaginary part if it is empty
+    }
+   
+    if (noise_level < 1e-20)
+    {
+        est_noise_level();
+    }
+    return true;
+}
+
+/**
  * @brief read 1D spectrum from nmrPipe ft1 file. Will try to read imaginary part as well
 */
 bool fid_1d::read_spectrum_ft(std::string infname)
@@ -1946,9 +2116,37 @@ bool fid_1d::read_spectrum_ft(std::string infname)
         std::cout << "Wrong file format, can't read 2048 bytes of head information from " << infname << std::endl;
         return false;
     }
+    process_nmrpipe_header();    
 
-    // nmrPipe::nmrpipe_header_to_dictionary(nmrpipe_header_data.data(), dict_string, dict_float);
+    spectrum_real.clear();
+    spectrum_real.resize(ndata_frq);
+    temp = fread(spectrum_real.data(), sizeof(float), ndata_frq, fp);
 
+    if (temp != ndata_frq)
+    {
+        std::cout << "Read nmrPipe 1D error, spectrum size is " << ndata_frq << " but I can only read in " << temp << " data points." << std::endl;
+    }
+
+    spectrum_imag.resize(ndata_frq);
+    temp = fread(spectrum_imag.data(), sizeof(float), ndata_frq, fp);
+    if (temp == ndata_frq)
+    {
+        if(n_verbose>0) std::cout << "Read nmrPipe 1D imaginary part successully." << std::endl;
+    }
+    else
+    {
+        if(n_verbose>0) std::cout << "Read nmrPipe 1D  imaginary part failed." << std::endl;
+        spectrum_imag.clear();
+    }
+
+    fclose(fp);
+
+
+    return true;
+};
+
+bool fid_1d::process_nmrpipe_header()
+{
     if (nmrpipe_header_data[10 - 1] != 1.0f)
     {
         std::cout << "Wrong file format, dimension (header[9]) is " << nmrpipe_header_data[0] << std::endl;
@@ -1988,113 +2186,9 @@ bool fid_1d::read_spectrum_ft(std::string infname)
      * here we have to + step because we want to be consistent with nmrpipe program
      * I have no idea why nmrpipe is different than topspin
     */
-    begin1 += step1;           
+    begin1 += step1;  
 
-    spectrum_real.clear();
-    spectrum_real.resize(ndata_frq);
-    temp = fread(spectrum_real.data(), sizeof(float), ndata_frq, fp);
-
-    if (temp != ndata_frq)
-    {
-        std::cout << "Read nmrPipe 1D error, spectrum size is " << ndata_frq << " but I can only read in " << temp << " data points." << std::endl;
-    }
-
-    spectrum_imag.resize(ndata_frq);
-    temp = fread(spectrum_imag.data(), sizeof(float), ndata_frq, fp);
-    if (temp == ndata_frq)
-    {
-        if(n_verbose>0) std::cout << "Read nmrPipe 1D imaginary part successully." << std::endl;
-    }
-    else
-    {
-        if(n_verbose>0) std::cout << "Read nmrPipe 1D  imaginary part failed." << std::endl;
-        spectrum_imag.clear();
-    }
-
-    fclose(fp);
-
-
-    return true;
-};
-
-
-bool fid_1d::read_spectrum_sparky(std::string infname)
-{
-    FILE *fp;
-
-    char buffer[10];
-    int temp;
-    float center1;
-
-    fp = fopen(infname.c_str(), "rb");
-    if (fp == NULL)
-    {
-        std::cout << "Can't open " << infname << " to read." << std::endl;
-        return false;
-    }
-
-    fread(buffer, 1, 10, fp);
-    // std::cout<<buffer<<std::endl;
-
-    fread(buffer, 1, 1, fp);
-    temp = int(buffer[0]);
-    if (temp != 1)
-    {
-        std::cout << "Error in sparky format file, dimension is not 1" << std::endl;
-        return false;
-    }
-
-    fread(buffer, 1, 1, fp);
-    fseek(fp, 1, SEEK_CUR);
-    temp = int(buffer[0]);
-    if (temp != 1)
-    {
-        std::cout << "Error in sparky format file, it is not in real data" << std::endl;
-        return false;
-    }
-
-    fread(buffer, 1, 1, fp);
-    // std::cout<<"Version is "<< int(buffer[0])<<std::endl;
-    fseek(fp, 166, SEEK_CUR);  //at location 180
-
-    fread(buffer, 1, 6, fp); // nuleus name, at location 186
-    std::cout << "Direct dimension nuleus " << buffer << std::endl;
-    fseek(fp, 2, SEEK_CUR); //at 188
-    ndata_frq = read_int(fp); //at 192
-    fseek(fp, 8, SEEK_CUR); //at 200
-    observed_frequency = read_float(fp); //at 204
-    spectral_width = read_float(fp); //at 208
-    center1 = read_float(fp); //at 212
-    fseek(fp, 96, SEEK_CUR);  // at location 308
-
-    /**
-     * now read the spectrum data. Remember that sparky is in big-endian format
-     */
-    spectrum_real.clear();
-    spectrum_real.resize(ndata_frq);
-    for(int i=0;i<ndata_frq;i++)
-    {
-        float temp_float=read_float(fp);
-        /**
-         * convert from big-endian to little-endian
-        */
-        spectrum_real[i] = temp_float;
-    }
-
-    float range1 = spectral_width / observed_frequency;
-    step1 = -range1 / ndata_frq;
-    begin1 = center1 + range1 / 2;
-    stop1 = center1 - range1 / 2;
-
-    origin = center1 * observed_frequency - spectral_width / 2;
-
-    std::cout << "Spectrum width are " << spectral_width << " Hz" << std::endl;
-    std::cout << "Fields are " << observed_frequency << " mHz" << std::endl;
-    std::cout << "Direct dimension size is " << ndata_frq  << std::endl;
-    std::cout << "Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " ppm" << std::endl;
-
-    fclose(fp);
-
+    b_read_from_ft1 = true; // set this flag to true, so we know we read from ft1 file
 
     return true;
 }
@@ -2327,6 +2421,88 @@ bool fid_1d::read_spectrum_txt(std::string infname)
 //     }
 //     fout.close();
 // #endif
+
+    return true;
+}
+
+
+bool fid_1d::read_spectrum_sparky(std::string infname)
+{
+    FILE *fp;
+
+    char buffer[10];
+    int temp;
+    float center1;
+
+    fp = fopen(infname.c_str(), "rb");
+    if (fp == NULL)
+    {
+        std::cout << "Can't open " << infname << " to read." << std::endl;
+        return false;
+    }
+
+    fread(buffer, 1, 10, fp);
+    // std::cout<<buffer<<std::endl;
+
+    fread(buffer, 1, 1, fp);
+    temp = int(buffer[0]);
+    if (temp != 1)
+    {
+        std::cout << "Error in sparky format file, dimension is not 1" << std::endl;
+        return false;
+    }
+
+    fread(buffer, 1, 1, fp);
+    fseek(fp, 1, SEEK_CUR);
+    temp = int(buffer[0]);
+    if (temp != 1)
+    {
+        std::cout << "Error in sparky format file, it is not in real data" << std::endl;
+        return false;
+    }
+
+    fread(buffer, 1, 1, fp);
+    // std::cout<<"Version is "<< int(buffer[0])<<std::endl;
+    fseek(fp, 166, SEEK_CUR);  //at location 180
+
+    fread(buffer, 1, 6, fp); // nuleus name, at location 186
+    std::cout << "Direct dimension nuleus " << buffer << std::endl;
+    fseek(fp, 2, SEEK_CUR); //at 188
+    ndata_frq = read_int(fp); //at 192
+    fseek(fp, 8, SEEK_CUR); //at 200
+    observed_frequency = read_float(fp); //at 204
+    spectral_width = read_float(fp); //at 208
+    center1 = read_float(fp); //at 212
+    fseek(fp, 96, SEEK_CUR);  // at location 308
+
+    /**
+     * now read the spectrum data. Remember that sparky is in big-endian format
+     */
+    spectrum_real.clear();
+    spectrum_real.resize(ndata_frq);
+    for(int i=0;i<ndata_frq;i++)
+    {
+        float temp_float=read_float(fp);
+        /**
+         * convert from big-endian to little-endian
+        */
+        spectrum_real[i] = temp_float;
+    }
+
+    float range1 = spectral_width / observed_frequency;
+    step1 = -range1 / ndata_frq;
+    begin1 = center1 + range1 / 2;
+    stop1 = center1 - range1 / 2;
+
+    origin = center1 * observed_frequency - spectral_width / 2;
+
+    std::cout << "Spectrum width are " << spectral_width << " Hz" << std::endl;
+    std::cout << "Fields are " << observed_frequency << " mHz" << std::endl;
+    std::cout << "Direct dimension size is " << ndata_frq  << std::endl;
+    std::cout << "Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " ppm" << std::endl;
+
+    fclose(fp);
+
 
     return true;
 }
@@ -2566,6 +2742,30 @@ bool fid_1d::write_json(std::string fname)
     return true;
 }
 
+std::string fid_1d::write_json_as_string()
+{
+    Json::Value root;
+    root["ndata"] = ndata;
+    root["ndata_frq"] = ndata_frq;
+    root["ndata_original"] = ndata_original;
+    root["ndata_power_of_2"]=ndata_power_of_2; //We suppose ZF=2 in processing
+    /**
+     * ref1 is the end of the spectrum
+     * carrier_frequency is the middle of the spectrum
+     * SW is the total width of the spectrum
+     * All in Hz.
+     * If read in from a file other than ft1, all will be set to 0
+    */
+    root["carrier_frequency"] = carrier_frequency;
+    root["observed_frequency"]=observed_frequency;
+    root["spectral_width"]=spectral_width; //in Hz
+
+    Json::StreamWriterBuilder writer;
+    std::string output = Json::writeString(writer, root);
+    
+    return output;
+}
+
 /**
  * To save memory after peaks picking or fitting. User by 3D picker/fitter classes
 */
@@ -2582,3 +2782,59 @@ const std::vector<float> & fid_1d::get_spectrum() const
 {
     return spectrum_real;
 }
+
+#ifdef WEBASSEMBLY
+
+/**
+ * Function calls for web assembly to read header and data directly from variables without addtional copy
+ */
+uintptr_t fid_1d::get_data_of_real()
+{
+    return reinterpret_cast<uintptr_t>(spectrum_real.data());
+}
+uintptr_t fid_1d::get_data_of_imag()
+{
+    return reinterpret_cast<uintptr_t>(spectrum_imag.data());
+}
+uintptr_t fid_1d::get_data_of_header()
+{
+    return reinterpret_cast<uintptr_t>(nmrpipe_header_data.data());
+}
+
+
+/**
+ * Exposed functions
+*/
+EMSCRIPTEN_BINDINGS(dp_1d_module_fid) {
+
+    class_<fid_base>("fid_base")
+        .constructor();
+
+    class_<shared_data_1d>("shared_data_1d")
+        .constructor()
+        .class_property("n_verbose", &shared_data_1d::n_verbose);
+
+
+    class_<fid_1d, base<fid_base> >("fid_1d")
+        .constructor()
+        .function("init", &fid_1d::init)
+        .class_property("n_verbose", &shared_data_1d::n_verbose)
+        .function("read_first_spectrum_from_buffer", &fid_1d::read_first_spectrum_from_buffer) //for dp_1d and vf_1d
+        //below are for fid processing
+        .function("set_up_apodization_from_string", &fid_1d::set_up_apodization_from_string)
+        .function("read_bruker_files_as_strings", &fid_1d::read_bruker_files_as_strings)
+        .function("get_fid_data_type", &fid_1d::get_fid_data_type) //to get data type of fid (float64 or int32)
+        .function("set_fid_data", &fid_1d::set_fid_data) //to process fid
+        .function("run_zf", &fid_1d::run_zf)
+        .function("run_fft_and_rm_bruker_filter", &fid_1d::run_fft_and_rm_bruker_filter)
+        .function("write_json_as_string", &fid_1d::write_json_as_string) 
+        .function("get_nspectra", &fid_1d::get_nspectra)
+        .function("get_ndata_frq", &fid_1d::get_ndata_frq)
+        .function("write_nmrpipe_ft1", &fid_1d::write_nmrpipe_ft1) //write nmrPipe ft1 file
+        .function("get_data_of_header", &fid_1d::get_data_of_header)
+        .function("get_data_of_real", &fid_1d::get_data_of_real)
+        .function("get_data_of_imag", &fid_1d::get_data_of_imag)
+        ;
+
+}
+#endif // WEBASSEMBLY
