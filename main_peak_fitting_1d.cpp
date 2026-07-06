@@ -78,12 +78,12 @@ int main(int argc, char **argv)
     args3.push_back("Read peaks list from this file");
 
     args.push_back("-spectrum-begin");
-    args2.push_back("100.0");
-    args3.push_back("spectrum extraction begin in ppm (100.0)");
+    args2.push_back("10000.0");
+    args3.push_back("spectrum extraction begin in ppm (10000.0)");
 
     args.push_back("-spectrum-end");
-    args2.push_back("-10.0");
-    args3.push_back("spectrum extraction end in ppm (-10.0)");
+    args2.push_back("-10000.0");
+    args3.push_back("spectrum extraction end in ppm (-10000.0)");
 
     args.push_back("-negative");
     args2.push_back("no");
@@ -134,7 +134,7 @@ int main(int argc, char **argv)
     args3.push_back("Write a reconstructed spectrum file named as input file name + _recon.ft2 (only work when input is in ft2 format)");
 
     args.push_back("-remove");
-    args2.push_back("no");
+    args2.push_back("yes");
     args3.push_back("Remove failed peaks in the output file. Default is no");
 
     args.push_back("-folder");

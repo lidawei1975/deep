@@ -55,7 +55,13 @@ public:
     bool phase_spectrum(const double phase_left, const double phase_right);
     bool set_up_parameters(const int max_loop, const int max_peak, const int max_dist,const bool b_end, const bool b_smooth_baseline=false);
     bool auto_phase_correction();                                                    // main working function
-    std::array<double, 2> get_phase_correction() const { return phase_correction; }; // phase_correction[0] is total left phase, phase_correction[1] is total right phase
+    std::vector<double> get_phase_correction() const { 
+        /**
+         * phase_correction is an array of two elements, we return it as a vector
+        */
+        std::vector<double> phase_correction_vec(phase_correction.begin(), phase_correction.end());
+        return phase_correction_vec; 
+    }; // phase_correction[0] is total left phase, phase_correction[1] is total right phase
 };
 
 #endif

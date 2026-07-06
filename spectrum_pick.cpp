@@ -20,6 +20,14 @@
 #include "dnn_picker.h"
 #include "spectrum_pick.h"
 
+#ifdef WEBASSEMBLY
+/**
+ * Bind to emscripten with exposed class methods.
+ */
+#include <emscripten/bind.h>
+using namespace emscripten;
+#endif
+
 /**
  * Pseudo-voigt function implementation
 */
@@ -541,3 +549,126 @@ bool spectrum_pick::print_peaks_picking(std::string outfname)
     return 1;
 };
 
+/**
+ * @brief Return picked peaks in .tab format as a std::string, for use from JavaScript.
+ * This is the string counterpart of print_peaks_picking().
+ */
+std::string spectrum_pick::print_peaks_as_string()
+{
+    if (user_comments.size() == 0)
+    {
+        user_comments.resize(p1.size(), "peak");
+    }
+
+    std::vector<int> ndx;
+    ldw_math_spectrum_2d::sortArr(p_intensity, ndx);
+    std::reverse(ndx.begin(), ndx.end());
+
+    /**
+     * Get peak positional (pixel) in original spectrum
+    */
+    std::vector<double> p1_original_spectrum, p2_original_spectrum;
+    for (int i = 0; i < (int)p1.size(); i++)
+    {
+        p1_original_spectrum.push_back(p1[i] * interpolation_step_direct);
+        p2_original_spectrum.push_back(p2[i] * interpolation_step_indirect);
+    }
+
+    /**
+     * Rescale sigmax, sigmay, gammax, gammay back to original spectrum
+    */
+    std::vector<double> sigmax_orig = sigmax;
+    std::vector<double> sigmay_orig = sigmay;
+    std::vector<double> gammax_orig = gammax;
+    std::vector<double> gammay_orig = gammay;
+    for (int i = 0; i < (int)sigmax.size(); i++)
+    {
+        sigmax_orig[i] *= interpolation_step_direct;
+        sigmay_orig[i] *= interpolation_step_indirect;
+        gammax_orig[i] *= interpolation_step_direct;
+        gammay_orig[i] *= interpolation_step_indirect;
+    }
+
+    std::string outstr;
+    char buffer[512];
+
+    // .tab header
+    sprintf(buffer, "DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n", ndata_frq, begin1, stop1);
+    outstr += buffer;
+    sprintf(buffer, "DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n", ndata_frq_indirect, begin2, stop2);
+    outstr += buffer;
+    sprintf(buffer, "VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT ASS CONFIDENCE POINTER\n");
+    outstr += buffer;
+    sprintf(buffer, "FORMAT %%5d %%9.3f %%9.3f %%10.6f %%10.6f %%7.3f %%7.3f %%4d %%4d %%4d %%4d %%+e %%s %%4.2f %%3s\n");
+    outstr += buffer;
+
+    for (unsigned int ii = 0; ii < ndx.size(); ii++)
+    {
+        int i = ndx[ii];
+        double s1 = 1.0692 * gammax_orig[i] + sqrt(0.8664 * gammax_orig[i] * gammax_orig[i] + 5.5452 * sigmax_orig[i] * sigmax_orig[i]);
+        double s2 = 1.0692 * gammay_orig[i] + sqrt(0.8664 * gammay_orig[i] * gammay_orig[i] + 5.5452 * sigmay_orig[i] * sigmay_orig[i]);
+        sprintf(buffer, "%5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %s %4.2f <--\n",
+                ii + 1,
+                p1_original_spectrum[i] + 1, p2_original_spectrum[i] + 1,
+                p1_ppm[i], p2_ppm[i],
+                s1, s2,
+                int(p1_original_spectrum[i] - 3), int(p1_original_spectrum[i] + 3),
+                int(p2_original_spectrum[i] - 3), int(p2_original_spectrum[i] + 3),
+                p_intensity[i], user_comments[i].c_str(),
+                std::min(p_confidencex[i], p_confidencey[i]));
+        outstr += buffer;
+    }
+
+    return outstr;
+}
+
+#ifdef WEBASSEMBLY
+/**
+ * Exposed functions for WebAssembly / JavaScript use.
+ * Mirrors the pattern in spectrum_pick_1d.cpp.
+ */
+EMSCRIPTEN_BINDINGS(dp_module_pick) {
+
+    class_<spectrum_fwhh, base<fid_2d>>("spectrum_fwhh")
+        .constructor();
+
+    class_<spectrum_pick, base<spectrum_fwhh>>("spectrum_pick")
+        .constructor()
+        /**
+         * Set scale factors for positive peaks.
+         * user_scale:  minimal peak height above noise (default 5.5).
+         * user_scale2: noise-floor boundary cutoff (default 3.0).
+        */
+        .function("set_scale", &spectrum_pick::set_scale)
+        /**
+         * Set scale factors for negative peaks.
+        */
+        .function("set_scale_negative", &spectrum_pick::set_scale_negative)
+        /**
+         * Directly override the estimated noise level.
+        */
+        .function("set_noise_level", &spectrum_pick::set_noise_level)
+        /**
+         * Choose ANN model: 1 = wide peaks (6-20 ppp), 2 = narrow peaks (4-12 ppp).
+        */
+        .function("set_model_selection", &spectrum_pick::set_model_selection)
+        /**
+         * Adjust points-per-peak-width to the given target value using cubic spline
+         * interpolation. Call once or twice before ann_peak_picking.
+        */
+        .function("adjust_ppp_of_spectrum", &spectrum_pick::adjust_ppp_of_spectrum)
+        /**
+         * Run the ANN-based 2D peak picker.
+         * flag:         0 = use line-angle heuristic, 1 = off, 2 = inertia method.
+         * flag_t1_noise: 1 = remove T1-noise streaks column-by-column.
+         * b_negative:   true = also pick negative peaks.
+        */
+        .function("ann_peak_picking", &spectrum_pick::ann_peak_picking)
+        /**
+         * Return the picked-peak list in nmrDraw .tab format as a string.
+         * This is the JS-friendly alternative to print_peaks_picking(filename).
+        */
+        .function("print_peaks_as_string", &spectrum_pick::print_peaks_as_string);
+
+}
+#endif // WEBASSEMBLY

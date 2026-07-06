@@ -6,8 +6,9 @@
 #include <map>
 #include <string>
 #include <cstdint>
+#include <cmath>
 
-#include "fid_1d.h"
+#include "fid_base.h"
 
 namespace ldw_math_spectrum_2d
 {
@@ -150,6 +151,11 @@ protected:
     */
     double extraction_from;
     double extraction_to;
+    bool extraction_use_ppm;
+    double extraction_from_ppm;
+    double extraction_to_ppm;
+    int extraction_from_pos;
+    int extraction_to_pos;
 
     /**
      * Current dimension of the data
@@ -168,28 +174,17 @@ protected:
     std::vector<int> nuslists;
     std::vector<int> nusflags; 
 
+    /**
+     * NUS list2 for simulated NUS data. This is used when we want to simulate NUS data by applying a NUS mask to fully sampled data.
+     * We share same nusflags for both real NUS data and simulated NUS data, but we use different nuslists and nuslists2 to keep track of the NUS points.
+     */
+    std::vector<int> nuslists2;
+
 
     /**
      * PART 2. Spectral data. always convert to float in our calculations
     */
     std::vector<float> fid_data_float; 
-
-    /**
-     * Follow nmrPipe convention, we convert the data into the following 4 vectors from fid_data_float
-     * fid_data_real_real, fid_data_real_imag, fid_data_imag_real, fid_data_imag_imag
-    */
-    std::vector<float> fid_data_real_real;
-    std::vector<float> fid_data_real_imag;
-    std::vector<float> fid_data_imag_real;
-    std::vector<float> fid_data_imag_imag;
-
-    /**
-     * There are intermediate data (after fft along direct dimension, before fft along indirect dimension)
-    */
-    std::vector<float> intermediate_data_real_real;
-    std::vector<float> intermediate_data_real_imag;
-    std::vector<float> intermediate_data_imag_real;
-    std::vector<float> intermediate_data_imag_imag;
 
     /**
      * These 4 vectors are used to save the frequency domain data (fft result)
@@ -226,6 +221,7 @@ protected:
     float noise_level;  //spectrum noise level, 1.4826*medium(abs(spect))
     std::vector<double> noise_level_columns; //noise level of each column
     std::vector<double> noise_level_rows; //noise level of each row
+    std::vector<float> ft2_buffer; // buffer for WebAssembly FT2 export
     
 
     /**
@@ -246,7 +242,7 @@ protected:
     */
     bool write_pipe_from_spect(std::vector<std::vector<float> > spect, std::string fname); 
     bool process_dictionary(); //convert udict_acqus_direct and udict_acqus_indirect to my own variables
-    bool process_fid_data(); //convert fid_data_float to fid_data_real_real, fid_data_real_imag, fid_data_imag_real, fid_data_imag_imag
+    bool process_fid_data(); //convert fid_data_float to active stage container (spectrum_*)
 
     std::string infname; //file name
     double user_scale,user_scale2; //minimal peak intesntiy in picking 
@@ -320,6 +316,8 @@ public:
     */
     bool read_nus_list(std::string fname);
     bool read_nus_list_from_string(const std::string &nus_string);
+    bool read_nus_simu_list(std::string fname);
+    bool read_nus_simu_list_from_string(const std::string &nus_simu_string);
 
     /**
      * This function will get reference to two apodization objects
@@ -354,15 +352,30 @@ public:
             std::cerr << "Error: from and to must be in [0,1) and from<to." << std::endl;
             return false;
         }
+        extraction_use_ppm = false;
         extraction_from=from;
         extraction_to=to;
         return true;
-    }   
+    }
+
+    inline bool extract_region_ppm(double from_ppm, double to_ppm)
+    {
+        if(std::isnan(from_ppm) || std::isnan(to_ppm) || std::isinf(from_ppm) || std::isinf(to_ppm) || from_ppm == to_ppm)
+        {
+            std::cerr << "Error: invalid ppm extraction range." << std::endl;
+            return false;
+        }
+        extraction_use_ppm = true;
+        extraction_from_ppm = from_ppm;
+        extraction_to_ppm = to_ppm;
+        return true;
+    }
 
     /**
      * Load user provided phase correction values from a file
     */
     bool read_phase_correction(std::string fname);
+    bool read_phase_correction_from_string(const std::string &phase_correction_text);
     
 
     /**
@@ -382,15 +395,17 @@ public:
      */
     bool read_bruker_files_as_strings(const std::string &contents_pulse, const std::string &contents_acqus, const std::string &contents_acqus2);
     bool read_bruker_fid_data(const std::vector<float> &fid_data_float_in);
+    bool read_bruker_fid_data_bytes(const std::vector<unsigned char> &fid_data_bytes);
 
     /**
      * We can also read a nmrPipe format file
     */
     bool read_nmrpipe_file(const std::string &nmrpipe_fid_file_name);
+    bool read_nmrpipe_file_from_buffer(const std::vector<unsigned char> &nmrpipe_bytes);
 
     bool water_suppression();
 
-    bool polynorminal_baseline(int order);
+    bool polynorminal_baseline(int order = -1, bool b_trace_by_trace = true, double flatt_a = 1e9, double flatt_b = 1.5, int region_identification_flag = 1);
 
     bool full_process(bool b_di_direct=false, bool b_di_indirect=false);
 
@@ -403,12 +418,11 @@ public:
     bool prepare_header_for_nmrpipe();
 
     bool write_nmrpipe_ft2(std::string outfname);
-
-    bool write_nmrpipe_intermediate(std::string outfname);
+    uintptr_t write_nmrpipe_ft2_to_buffer();
+    uintptr_t write_nmrpipe_ft2_to_buffer_index(int spec_index);
+    int get_ft2_size_in_float32();
 
     bool write_nmrpipe_fid(std::string outfname);
-
-    bool write_nmrpipe_ft2_virtual(std::vector<float> &header, std::vector<float> &data);
 
     bool run_apodization(FID_APODIZATION_TYPE apodization_type, double p1,double p2=0.0,double p3=0.0,double p4=0.0,double p5=0.0,double p6=0.0);
 
@@ -417,6 +431,7 @@ public:
     std::string write_json_as_string();
 
     bool write_pseudo3d_json(std::string fname);
+    std::string write_pseudo3d_json_as_string();
 
     inline bool set_aqseq(std::string aqseq_in)
     {
@@ -503,7 +518,6 @@ public:
     bool save_mnova(std::string fname);
  
     bool read_spectrum(std::string); //read spectrum only
-    bool read_nmr_ft2_virtual(std::vector<float> header,const std::vector<float> &data);
     
     /**
      * Public function to write spectrum to a file.
@@ -512,6 +526,11 @@ public:
     
     inline float * get_spect_data()
     {
+        if (!(b_frq == true && b_frq_indirect == true))
+        {
+            std::cerr << "Error: get_spect_data requires FREQUENCY stage." << std::endl;
+            return nullptr;
+        }
         return spect;
     };
     

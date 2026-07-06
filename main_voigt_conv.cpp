@@ -16,12 +16,15 @@ extern "C"
     double voigt(double x, double sigma, double gamma);
 };
 
+
+#ifndef WEBASSEMBLY
 /**
  * This program will read in one peak from STDIN (3 numbers for each peak: sigma, gamma, grid size; plus one for drop cutoff)
  * grid size will be decided by this program if input is <=0
  * There is no need to input peak height. This program will normalize the peak to 1.0.
  * and output the peak shape to STDOUT (JSON format of an array, each element is 2 arrays: x and y)
  */
+
 
 #include "DeepConfig.h"
 
@@ -107,3 +110,86 @@ int main(int argc, char **argv)
         return 1;
     }
 }
+
+#else
+
+/**
+* Bind to emscripten with exposed class methods.
+*/
+#include <emscripten/bind.h>
+using namespace emscripten;
+
+class VoigtConvForWasm
+{
+
+private:
+    double sigma, gamma, drop_cutoff;
+    std::vector<double> y; //calculated y values
+
+public:
+    VoigtConvForWasm() 
+    {
+        sigma = 1.0;
+        gamma = 1.0;
+        drop_cutoff = 0.01; //default value
+    };
+
+    ~VoigtConvForWasm() {};
+
+    bool init(double sigma_, double gamma_, double drop_cutoff_)
+    {
+        sigma = sigma_;
+        gamma = gamma_;
+        drop_cutoff = drop_cutoff_;
+        return true;
+    }
+
+    bool calculate()
+    {
+        y.clear();
+        y.push_back(1.0); //voigt(0, sigma, gamma) is always 1.0 after normalization
+        for (int i = 1; i < 100; i++)
+        {   
+            double y_center = voigt(0, sigma, gamma);
+            double v = voigt(i, sigma, gamma) / y_center;
+            if (v < drop_cutoff)
+            {
+                break;
+            }
+            y.push_back(v);
+        }
+        return true;
+    }
+
+    /**
+     * Get the size of the y vector. For webassembly binding, this is used to get the size of the y vector.
+     * @return the size of the y vector.
+     */
+    int getYSize() const
+    {
+        return y.size();
+    }
+
+    /**
+     * Get the y values as a pointer to the data. For webassembly binding, this is used to get the y values.
+     * @return a pointer to the data of the y vector.
+     */
+    uintptr_t getYValues()
+    {
+        return  reinterpret_cast<uintptr_t>(y.data());
+    }
+};
+
+
+EMSCRIPTEN_BINDINGS(voigt_conv)
+{
+    class_<VoigtConvForWasm>("VoigtConvForWasm")
+        .constructor<>()
+        .function("init", &VoigtConvForWasm::init)
+        .function("calculate", &VoigtConvForWasm::calculate)
+        .function("getYSize", &VoigtConvForWasm::getYSize)
+        .function("getYValues", &VoigtConvForWasm::getYValues);
+}
+
+
+#endif

@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <cctype>
 
 #include "commandline.h"
 #include "fid_2d.h"
@@ -32,6 +33,10 @@ int main(int argc, char **argv)
     args.push_back("-nus");
     args2.push_back("nuslist");
     args3.push_back("non-uniform sampling list file name. None means no nus (fully sampled).");
+
+    args.push_back("-nus-simu");
+    args2.push_back("nuslist-simu");
+    args3.push_back("This is used when we want to simulate NUS data by applying a NUS mask to fully sampled data. None means no simulated NUS.");
 
     args.push_back("-aqseq");
     args2.push_back("321");
@@ -63,7 +68,7 @@ int main(int argc, char **argv)
 
     args.push_back("-ext");
     args2.push_back("0.00 1.00");
-    args3.push_back("extract region from and to numbers, full is 0.0 1.0");
+    args3.push_back("extract direct dimension region: use normalized range (0.0 1.0) or ppm range (e.g. 8.8ppm 6.0ppm)");
 
 
     args.push_back("-apod");
@@ -100,7 +105,19 @@ int main(int argc, char **argv)
 
     args.push_back("-poly");
     args2.push_back("-1");
-    args3.push_back("polynomial order for baseline correction. < 0 means no baseline correction.");
+    args3.push_back("polynomial order for baseline correction. -1 (default): FLATT baseline correction, < -1: no baseline correction.");
+
+    args.push_back("-a");
+    args2.push_back("1e9");
+    args3.push_back("regularizer parameter a for FLATT baseline correction.");
+
+    args.push_back("-b");
+    args2.push_back("1.5");
+    args3.push_back("asymmetric constraint penalty parameter b for FLATT baseline correction.");
+
+    args.push_back("-region-flag");
+    args2.push_back("1");
+    args3.push_back("region identification flag for FLATT baseline: 0: current, 1: Method 1 (default), 5: Method 5.");
 
 
     cmdline.init(args, args2, args3);
@@ -179,14 +196,64 @@ int main(int argc, char **argv)
         int n_ext = fid_1d_helper::split(ext_string, ext_string_split, ' ');
         if(n_ext != 2)
         {
-            std::cout << "Error: ext must have two numbers. Skip user input" << std::endl;
+            std::cout << "Error: -ext must provide two values. Skip user input." << std::endl;
         }
         else
         {
-            double ext_from=std::stod(ext_string_split[0]);
-            double ext_to=std::stod(ext_string_split[1]);
-            fid.extract_region(ext_from,ext_to);
-            std::cout<<"Extract region from: " << ext_from << " to: " << ext_to << " along direct dimension." << std::endl;
+            auto to_lower = [](std::string s) {
+                std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+                return s;
+            };
+
+            auto parse_ext_token = [&](const std::string &token, double &value, bool &is_ppm) {
+                std::string token_l = to_lower(token);
+                is_ppm = false;
+                if (token_l.size() >= 3 && token_l.substr(token_l.size() - 3) == "ppm")
+                {
+                    is_ppm = true;
+                    token_l = token_l.substr(0, token_l.size() - 3);
+                }
+                try
+                {
+                    value = std::stod(token_l);
+                }
+                catch (const std::exception &)
+                {
+                    return false;
+                }
+                return true;
+            };
+
+            double ext_from = 0.0;
+            double ext_to = 1.0;
+            bool ext_from_is_ppm = false;
+            bool ext_to_is_ppm = false;
+
+            const bool ok_from = parse_ext_token(ext_string_split[0], ext_from, ext_from_is_ppm);
+            const bool ok_to = parse_ext_token(ext_string_split[1], ext_to, ext_to_is_ppm);
+
+            if(!ok_from || !ok_to)
+            {
+                std::cout << "Error: cannot parse -ext values. Use either fractions (0.0 1.0) or ppm values (8.8ppm 6.0ppm). Skip user input." << std::endl;
+            }
+            else if(ext_from_is_ppm != ext_to_is_ppm)
+            {
+                std::cout << "Error: -ext values must use the same unit (both fractions or both ppm). Skip user input." << std::endl;
+            }
+            else if(ext_from_is_ppm)
+            {
+                if(fid.extract_region_ppm(ext_from, ext_to))
+                {
+                    std::cout << "Extract region requested (direct dimension): " << ext_from << "ppm to " << ext_to << "ppm" << std::endl;
+                }
+            }
+            else
+            {
+                if(fid.extract_region(ext_from, ext_to))
+                {
+                    std::cout << "Extract region requested (direct dimension): normalized [" << ext_from << ", " << ext_to << "]" << std::endl;
+                }
+            }
         }
 
         /**
@@ -209,6 +276,18 @@ int main(int argc, char **argv)
         {
             std::cout<<"Read nus file: " << nus_file_name << std::endl;
             fid.read_nus_list(nus_file_name);
+        }
+
+        /**
+         * Set up simulated nus
+         */
+        std::string nus_simu_file_name=cmdline.query("-nus-simu");
+        std::string nus_simu_file_name_lower = nus_simu_file_name;
+        std::transform(nus_simu_file_name_lower.begin(), nus_simu_file_name_lower.end(), nus_simu_file_name_lower.begin(), ::tolower);
+        if(nus_simu_file_name_lower != "none" && nus_simu_file_name_lower != "no" && nus_simu_file_name_lower != "null")
+        {
+            std::cout<<"Read simulated nus file: " << nus_simu_file_name << std::endl;
+            fid.read_nus_simu_list(nus_simu_file_name);
         }
 
 
@@ -303,14 +382,24 @@ int main(int argc, char **argv)
         }
 
         int n_poly=std::stoi(cmdline.query("-poly"));
-        if(n_poly >= 0)
+        if(n_poly >= 0 || n_poly == -1)
         {
-            if(n_poly>3)
+            if(n_poly>4)
             {
-                n_poly=3; /** only support 0,1,2,3 at this time */
+                n_poly=4; /** only support 0,1,2,3,4 at this time */
             }
-            fid.polynorminal_baseline(n_poly);
-            std::cout<<"Apply polynomial baseline correction with order: " << n_poly << std::endl;
+            double flatt_a = std::stod(cmdline.query("-a"));
+            double flatt_b = std::stod(cmdline.query("-b"));
+            int region_flag = std::stoi(cmdline.query("-region-flag"));
+            fid.polynorminal_baseline(n_poly, true, flatt_a, flatt_b, region_flag);
+            if (n_poly == -1)
+            {
+                std::cout<<"Apply FLATT baseline correction (default) with a=" << flatt_a << ", b=" << flatt_b << ", region flag=" << region_flag << std::endl;
+            }
+            else
+            {
+                std::cout<<"Apply polynomial baseline correction with order: " << n_poly << std::endl;
+            }
         }
         else
         {
@@ -327,7 +416,7 @@ int main(int argc, char **argv)
             std::cout<<"Write file: " << outfname << std::endl;
             if(process_flag == "direct")
             {
-                fid.write_nmrpipe_intermediate(outfname);
+                fid.write_nmrpipe_ft2(outfname);
             }
             else if(process_flag == "none")
             {

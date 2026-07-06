@@ -16,6 +16,15 @@
 #include "spectrum_baseline_1d.h"
 #include "spectrum_phasing_1d.h"
 
+#ifdef WEBASSEMBLY
+/**
+* Bind to emscripten with exposed class methods.
+*/
+#include <emscripten/bind.h>
+using namespace emscripten;
+#endif
+
+
 template <class myType>
 void sortArr(std::vector<myType> &arr, std::vector<int> &ndx)
 {
@@ -528,6 +537,8 @@ bool spectrum_phasing_1d::assess_two_end_phase_error(const int from, const int t
 
         left_stds.push_back(left_std);
         right_stds.push_back(right_std);
+
+        // std::cout<<"At phase "<<j<<", left std="<<left_std<<", right std="<<right_std<<std::endl;
         
     }
     return true;
@@ -823,6 +834,14 @@ bool spectrum_phasing_1d::assess_phase_at_peaks(std::vector<int> &left_cross, st
 
 bool spectrum_phasing_1d::auto_phase_correction()
 {
+    bool b_flipped = false;
+    std::cout << "Starting auto phase correction..." << std::endl;
+    std::cout <<" Noise level: "<<noise_level<<std::endl;
+    if(noise_level<=0.01)
+    {
+        std::cout<<"Noise level is not set. We will calcuate it from the spectrum."<<std::endl;
+        est_noise_level();
+    }
 
 #ifdef DEBUG
     double debug_messup_left=-70.0;
@@ -845,10 +864,11 @@ bool spectrum_phasing_1d::auto_phase_correction()
             spectrum_real[i] = -spectrum_real[i];
             spectrum_imag[i] = -spectrum_imag[i];
         }
+        b_flipped = true;
+        std::cout << "Flipped spectrum because sum is negative." << std::endl;
     }
 
 
-    
     /**
      * @brief initial phase correction using grid seartch to minimize entropy
      * This is a const function, so it will not change any member variables
@@ -1146,7 +1166,7 @@ bool spectrum_phasing_1d::auto_phase_correction()
             /**
              * Get a baseline of spe_real_phased
              */
-            class spectrum_baseline_1d x(2048); //2048 is the max number of points in the baseline estimation. set a smaller number to speed up calculation
+            class spectrum_baseline_1d x(2048,32); //2048 is the max number of points in the baseline estimation. set a smaller number to speed up calculation
             x.n_verbose=0; //no output
             // x.init(10.0,3.0,0.0);  //not necessary for baseline calculation
             x.set_spectrum_from_data(spe_real_phased,begin1,step1,stop1);
@@ -1185,6 +1205,15 @@ bool spectrum_phasing_1d::auto_phase_correction()
         }
     }
 
+    /**
+     * If spectrum was flipped at the beginning, we need to add 180 degrees to both ends
+     * This will change PH0 by 180 degrees but will not change PH1
+     */
+    if(b_flipped)
+    {
+        phase_correction[0] += 180.0;
+        phase_correction[1] += 180.0;
+    }
     return true;
 };
 
@@ -1427,3 +1456,46 @@ bool spectrum_phasing_1d::auto_flip_spectrum()
     }
     return true;
 }
+
+
+#ifdef WEBASSEMBLY
+
+
+/**
+ * Exposed functions
+*/
+EMSCRIPTEN_BINDINGS(dp_1d_module_phasing) {
+
+    /**
+     * Baseclass spectrum_fwhh_1d is exposed in spectrum_pick_1d.cpp
+    */
+
+    class_<spectrum_phasing_1d,base<spectrum_fwhh_1d>>("spectrum_phasing_1d")
+        .constructor()
+        .class_property("n_verbose", &shared_data_1d::n_verbose)
+        .function("init", &spectrum_phasing_1d::init)
+        .function("auto_flip_spectrum", &spectrum_phasing_1d::auto_flip_spectrum)
+        .function("set_up_parameters", &spectrum_phasing_1d::set_up_parameters)
+        .function("auto_phase_correction", &spectrum_phasing_1d::auto_phase_correction)
+        .function("phase_spectrum", &spectrum_phasing_1d::phase_spectrum)
+        .function("get_phase_correction", &spectrum_phasing_1d::get_phase_correction)
+        /**
+         * Below are from base class fid_1d
+        */
+        .function("read_first_spectrum_from_buffer",&spectrum_phasing_1d::read_first_spectrum_from_buffer)  
+        .function("set_up_apodization_from_string", &spectrum_phasing_1d::set_up_apodization_from_string)
+        .function("read_bruker_files_as_strings", &spectrum_phasing_1d::read_bruker_files_as_strings)
+        .function("get_fid_data_type", &spectrum_phasing_1d::get_fid_data_type) 
+        .function("set_fid_data", &spectrum_phasing_1d::set_fid_data) 
+        .function("run_zf", &spectrum_phasing_1d::run_zf)
+        .function("run_fft_and_rm_bruker_filter", &spectrum_phasing_1d::run_fft_and_rm_bruker_filter)
+        .function("write_json_as_string", &spectrum_phasing_1d::write_json_as_string) 
+        .function("get_nspectra", &spectrum_phasing_1d::get_nspectra)
+        .function("get_ndata_frq", &spectrum_phasing_1d::get_ndata_frq)
+        .function("write_nmrpipe_ft1", &spectrum_phasing_1d::write_nmrpipe_ft1) //write nmrPipe ft1 file
+        .function("get_data_of_header", &spectrum_phasing_1d::get_data_of_header)
+        .function("get_data_of_real", &spectrum_phasing_1d::get_data_of_real)
+        .function("get_data_of_imag", &spectrum_phasing_1d::get_data_of_imag)
+        ;
+}
+#endif // WEBASSEMBLY

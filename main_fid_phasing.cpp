@@ -108,7 +108,7 @@ int main(int argc, char **argv)
     cmdline.print();
     if (cmdline.query("-h") != "yes")
     {
-        fid_2d fid;
+        spectrum_phasing fid;
         std::string fid_infname = cmdline.query("-in");
         std::string aqseq = cmdline.query("-aqseq");
         
@@ -183,25 +183,6 @@ int main(int argc, char **argv)
         std::cout<<"Run FFT and remove Bruker digitizer filter." << std::endl;
 
 
-        /**
-         * Extract ft2 file as a virtual file
-        */
-        std::array<float,512> header;
-        std::vector<float> data;
-        fid.write_nmrpipe_ft2_virtual(header, data);
-        // fid.write_nmrpipe_ft2("temp.ft2",false);
-
-        
-        class spectrum_phasing phase_obj;
-        /**
-         * Baseclass spectrum_io function to read spectrum, without noise estimation (which is not good for un-phased spectrum)
-        */
-        phase_obj.read_nmr_ft2_virtual(header,data);
-        
-        // class spectrum_phasing phase_obj2;
-        // phase_obj2.init("temp.ft2",false);
-        // phase_obj.assess_match(phase_obj2);
-
         if (cmdline.query("-user").substr(0, 1) == "y" || cmdline.query("-user").substr(0, 1) == "Y")
         {
             std::vector<std::string> strs;
@@ -216,14 +197,14 @@ int main(int argc, char **argv)
             {
                 std::cout << "Warning: 1st order phase correction for indirect dimension is usually 0." << std::endl;
             }
-            phase_obj.set_user_phase_correction(std::stod(strs[0]), std::stod(strs[1]), std::stod(strs[2]), std::stod(strs[3]));
+            fid.set_user_phase_correction(std::stod(strs[0]), std::stod(strs[1]), std::stod(strs[2]), std::stod(strs[3]));
         }
         else
         {
             /**
              * main working function
             */
-            phase_obj.auto_phase_correction_v2();
+            fid.auto_phase_correction_v2();
             std::cout<<"Auto phase correction done!"<<std::endl;
         }
 
@@ -234,7 +215,7 @@ int main(int argc, char **argv)
         if(outfname != "none" && outfname != "null")
         {
             std::cout<<"Write FT2 file: " << outfname << std::endl;
-            phase_obj.write_pipe(outfname,cmdline.query("-real_only")[0] == 'y' || cmdline.query("-real_only")[0] == 'Y');
+            fid.write_pipe(outfname,cmdline.query("-real_only")[0] == 'y' || cmdline.query("-real_only")[0] == 'Y');
             std::cout<<"Phased spectrum saved to "<<outfname<<std::endl;
         }
 
@@ -244,7 +225,7 @@ int main(int argc, char **argv)
         std::string out_phase_fname = cmdline.query("-out_phase");
         if(out_phase_fname != "none" && out_phase_fname != "null")
         {
-            phase_obj.save_phase_correction_result(out_phase_fname);
+            fid.save_phase_correction_result(out_phase_fname);
             std::cout<<"Phase correction values saved to "<<out_phase_fname<<std::endl;
         }
 

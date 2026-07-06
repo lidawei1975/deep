@@ -16,7 +16,7 @@
 #include "spectrum_simple_picking.h"
 
 
-namespace ldw_math{
+namespace ldw_math_simple_pick{
     
     std::vector<std::vector<double> > laplacian_of_gaussian(int n,double sigma)
     {
@@ -271,7 +271,7 @@ bool spectrum_simple_pick::laplacing_of_gaussian_convolution(std::vector< std::v
 
     std::cout<<"in LoG filtering, sigma is "<<sigma<<" (width is "<<width<<")"<<std::endl;
 
-    std::vector<std::vector<double> > lap=ldw_math::laplacian_of_gaussian(n,sigma);
+    std::vector<std::vector<double> > lap=ldw_math_simple_pick::laplacian_of_gaussian(n,sigma);
 
     s.resize(ndata_frq_indirect);
     for (unsigned int i = 0; i < ndata_frq_indirect; i++)
@@ -344,8 +344,8 @@ bool spectrum_simple_pick::sub_pixel_0()
         }
     }
 
-    median_width_x=std::sqrt(ldw_math::calcualte_median(sx)/2.0)*2.355;
-    median_width_y=std::sqrt(ldw_math::calcualte_median(sy)/2.0)*2.355;
+    median_width_x=std::sqrt(ldw_math_simple_pick::calcualte_median(sx)/2.0)*2.355;
+    median_width_y=std::sqrt(ldw_math_simple_pick::calcualte_median(sy)/2.0)*2.355;
 
     std::cout<<"Median peak width is estimated to be "<<median_width_x<<" "<<median_width_y<< " from picking."<<std::endl;
 
@@ -366,8 +366,8 @@ bool spectrum_simple_pick::get_mean_width_from_picking()
             sy.push_back(sigmay[i]);
         }
     }
-    median_width_x=std::sqrt(ldw_math::calcualte_median(sx)/2.0)*2.355;
-    median_width_y=std::sqrt(ldw_math::calcualte_median(sy)/2.0)*2.355;
+    median_width_x=std::sqrt(ldw_math_simple_pick::calcualte_median(sx)/2.0)*2.355;
+    median_width_y=std::sqrt(ldw_math_simple_pick::calcualte_median(sy)/2.0)*2.355;
 
     std::cout<<"Median peak width is estimated to be "<<median_width_x<<" "<<median_width_y<< " from picking."<<std::endl;
 

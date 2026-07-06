@@ -154,7 +154,19 @@ int main(int argc, char **argv)
         x.set_scale(user_scale,user_scale2);
         x.set_scale_negative(user_scale_negative,user_scale2_negative);
         x.set_model_selection(model_selection);
-        if(x.init(infname)) //read and zero filling
+
+     
+        // std::ifstream ifs(infname, std::ios::binary);
+        // std::vector<unsigned char> nmrpipe_bytes;
+        // if (!ifs)
+        // {
+        //     std::cerr << "Error: cannot open input file " << infname << std::endl;
+        //     return 1;
+        // }
+        // nmrpipe_bytes.assign(std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>());
+
+        // if (x.read_nmrpipe_file_from_buffer(nmrpipe_bytes))
+        if (x.init(infname))
         {
             if (noise_level>1e-20) { x.set_noise_level(noise_level);}
 

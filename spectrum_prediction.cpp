@@ -408,7 +408,7 @@ void spectrum_prediction::calcualte_contour(Json::Value &root_i,std::vector<floa
     /**
      * Also need to track size of raw data of each compound.
     */
-    root_i["size"] = raw_data.size();
+    root_i["size"] = (int)raw_data.size();
 
     std::cout<<"contour calculated."<<std::endl;
 

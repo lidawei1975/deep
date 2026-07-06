@@ -229,7 +229,7 @@ int main(int argc, char **argv)
         {
             x.set_up_parameters(n_loop, n_peak, n_dist,b_end,b_smooth_baseline);
             x.auto_phase_correction();
-            std::array<double, 2> phase_correction = x.get_phase_correction();
+            std::vector<double> phase_correction = x.get_phase_correction();
             std::cout << "phase correction left: " << phase_correction[0] << " right: " << phase_correction[1] << std::endl;
         }
         x.write_spectrum(outfname);

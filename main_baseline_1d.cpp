@@ -48,7 +48,7 @@ int main(int argc, char **argv)
     args3.push_back("input baseline file names. If provided, apply it to the input spectra and skip the baseline calculation.");
 
     args.push_back("-a");
-    args2.push_back("1e14");
+    args2.push_back("1e12");
     args3.push_back("baseline smoothness parameter. Default is 1e14.");
     
     args.push_back("-b");

@@ -1,14 +1,18 @@
 #include <vector>
 
-#include "ceres/ceres.h"
-#include "glog/logging.h"
+#ifdef LMMIN
+    #include "lmminimizer.h"
+#else
+    #include "ceres/ceres.h"
+    #include "glog/logging.h"
 
-using ceres::CostFunction;
-using ceres::NumericDiffCostFunction;
-using ceres::DynamicNumericDiffCostFunction;
-using ceres::Problem;
-using ceres::Solve;
-using ceres::Solver;
+    using ceres::CostFunction;
+    using ceres::NumericDiffCostFunction;
+    using ceres::DynamicNumericDiffCostFunction;
+    using ceres::Problem;
+    using ceres::Solve;
+    using ceres::Solver;
+#endif
 
 #include "peak_manipulation.h"
 

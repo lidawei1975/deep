@@ -743,7 +743,7 @@ bool gaussian_fit_1d::run_peak_fitting(bool flag_first)
                     }
                     sigmax[i] = 1.0; //prevent division by zero in following calculations
                     gammax[i] = 1.0; //prevent division by zero in following calculations
-                    err[i] = std::numeric_limits<double>::max();
+                    err[i] = std::numeric_limits<float>::max();
                 }
             }
         }
@@ -890,6 +890,17 @@ bool gaussian_fit_1d::run_single_peak()
     }
 
     //[peak index][spe index] for each peak and num_sum
+    /**
+     * Debug code
+     */
+    if(n_verbose>=2)
+    {
+        std::cout << "Before fitting single peak: " << std::endl;
+        std::cout << "Initial position: " << x[0] << std::endl;
+        std::cout << "Initial amplitude: " << a[0][0] << std::endl;
+        std::cout << "Initial sigma: " << sigmax[0] << std::endl;
+        std::cout << "Initial gamma: " << gammax[0] << std::endl;
+    }
 
     if (type == gaussian_type) // gaussian
     {
@@ -904,6 +915,15 @@ bool gaussian_fit_1d::run_single_peak()
         one_fit_voigt(xdim, &zz, x[0], a[0][0], sigmax[0], gammax[0], err[0], 0, 0);
     }
     nround = 1;
+
+    if(n_verbose>=2)
+    {
+        std::cout << "After fitting single peak: " << std::endl;
+        std::cout << "Fitted position: " << x[0] << std::endl;
+        std::cout << "Fitted amplitude: " << a[0][0] << std::endl;
+        std::cout << "Fitted sigma: " << sigmax[0] << std::endl;
+        std::cout << "Fitted gamma: " << gammax[0] << std::endl;
+    }
 
     return true;
 };
@@ -2290,9 +2310,26 @@ bool spectrum_fit_1d::peak_partition_1d_for_fit(double spectrum_begin,double spe
             noise_boudaries.push_back(std::min(j + 10, ndata_frq));
         }
     }
+
+    /**
+     * If noise_boudaries[0] <= signa_boudaries[0], remove the first noise_boudaries
+     * This can happen when the spectrum starts with a signal. We skip it because it is usually not reliable (edge effect)
+    */
+    if (noise_boudaries.size() > 0 && signa_boudaries.size() > 0)
+    {
+        if (noise_boudaries[0] <= signa_boudaries[0])
+        {
+            noise_boudaries.erase(noise_boudaries.begin());
+        }
+    }
+
+    /**
+     * If signa_boudaries.size() > noise_boudaries.size(), we remove last signa_boudaries
+     * this can happen when the spectrum ends with a signal. We skip it because it is usually not reliable (edge effect)
+    */
     if (noise_boudaries.size() < signa_boudaries.size())
     {
-        noise_boudaries.push_back(std::min(ndata_frq,spectrum_end_index));
+        signa_boudaries.erase(signa_boudaries.end() - 1);
     }
 
     bool b = true;
@@ -2301,7 +2338,7 @@ bool spectrum_fit_1d::peak_partition_1d_for_fit(double spectrum_begin,double spe
         b = false;
         for (int j = signa_boudaries.size() - 1; j >= 1; j--)
         {
-            if (signa_boudaries[j] <= noise_boudaries[j - 1])
+            if (signa_boudaries[j] <= noise_boudaries[j - 1] + n_patch*2)
             {
                 signa_boudaries.erase(signa_boudaries.begin() + j);
                 noise_boudaries.erase(noise_boudaries.begin() + j - 1);
@@ -2312,7 +2349,7 @@ bool spectrum_fit_1d::peak_partition_1d_for_fit(double spectrum_begin,double spe
     // combine noise_boudaries and signa_boudaries if too close
     for (int j = signa_boudaries.size() - 1; j >= 1; j--)
     {
-        if (signa_boudaries[j] - noise_boudaries[j - 1] < 1)
+        if (signa_boudaries[j] <= noise_boudaries[j - 1] + n_patch*2)
         {
             signa_boudaries.erase(signa_boudaries.begin() + j);
             noise_boudaries.erase(noise_boudaries.begin() + j - 1);

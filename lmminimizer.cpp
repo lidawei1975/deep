@@ -1,4 +1,7 @@
 #include <cmath>
+#include <Eigen/Dense>
+#include <Eigen/Sparse>
+#include <Eigen/SparseCholesky>
 #include "lmminimizer.h"
 
 
@@ -12,9 +15,24 @@ levmarq::levmarq()
 	down = 1 / 4.0;
 	target_derr = 1e-12;
 	TOL = 1e-12;
+	has_bounds = false;
 };
 
 levmarq::~levmarq(){};
+
+void levmarq::set_bounds(const std::vector<double>& lb, const std::vector<double>& ub)
+{
+	lower_bounds = lb;
+	upper_bounds = ub;
+	has_bounds = true;
+}
+
+void levmarq::clear_bounds()
+{
+	has_bounds = false;
+	lower_bounds.clear();
+	upper_bounds.clear();
+}
 
 
 /* perform least-squares minimization using the Levenberg-Marquardt
@@ -32,10 +50,11 @@ levmarq::~levmarq(){};
    For default values, call levmarq_init(lmstat).
  */
 int levmarq::solve(int npar, double **par, int ny, double *dysq,
-			ldwcostfunction &func)
+			ldwcostfunction &func, int linear_solver_flag)
 {
 	int i, j, it, ill;
 	double mult, weight, err, newerr, derr;
+	const int solver_flag = (linear_solver_flag == 1) ? 1 : 0;
 
 	double *h = new double[npar * npar];
 	double *ch = new double[npar * npar];
@@ -97,6 +116,29 @@ int levmarq::solve(int npar, double **par, int ny, double *dysq,
 			}
 		}
 
+		if (has_bounds)
+		{
+			for (i = 0; i < npar; i++)
+			{
+				if (i < lower_bounds.size())
+				{
+					bool at_lower = (par[i][0] <= lower_bounds[i] + TOL);
+					bool at_upper = (par[i][0] >= upper_bounds[i] - TOL);
+
+					if ((at_lower && d[i] < 0) || (at_upper && d[i] > 0))
+					{
+						d[i] = 0;
+						for (j = 0; j < npar; j++)
+						{
+							if (i >= j) h[i * npar + j] = 0;
+							else h[j * npar + i] = 0;
+						}
+						h[i * npar + i] = 1.0;
+					}
+				}
+			}
+		}
+
 		/*  make a step "delta."  If the step is rejected, increase
 		   lambda and try again */
 		mult = 1 + lambda;
@@ -106,14 +148,31 @@ int levmarq::solve(int npar, double **par, int ny, double *dysq,
 			for (i = 0; i < npar; i++)
 				h[i*npar+i] = h[i*npar+i] * mult;
 
-			ill = cholesky_decomp(npar, ch, h);
+			if (solver_flag == 0)
+			{
+				ill = cholesky_decomp(npar, ch, h);
+				if (!ill)
+				{
+					solve_axb_cholesky(npar, ch, delta, d);
+				}
+			}
+			else
+			{
+				ill = solve_axb_simplicial_ldlt(npar, h, delta, d);
+			}
 
 			if (!ill)
 			{
-				solve_axb_cholesky(npar, ch, delta, d);
 				for (i = 0; i < npar; i++)
 				{
 					newpar[i][0] = par[i][0] + delta[i];
+					if (has_bounds && i < lower_bounds.size())
+					{
+						if (newpar[i][0] < lower_bounds[i])
+							newpar[i][0] = lower_bounds[i];
+						if (newpar[i][0] > upper_bounds[i])
+							newpar[i][0] = upper_bounds[i];
+					}
 				}
 				newerr = error_func(newpar, ny, dysq, func);
 				derr = newerr - err;
@@ -417,6 +476,29 @@ int levmarq::solve(int nshared_par, int npar, double **par, int ny, double *dysq
 			}
 		}
 
+		if (has_bounds)
+		{
+			for (i = 0; i < npar; i++)
+			{
+				if (i < lower_bounds.size())
+				{
+					bool at_lower = (par[i][0] <= lower_bounds[i] + TOL);
+					bool at_upper = (par[i][0] >= upper_bounds[i] - TOL);
+
+					if ((at_lower && d[i] < 0) || (at_upper && d[i] > 0))
+					{
+						d[i] = 0;
+						for (j = 0; j < npar; j++)
+						{
+							if (i >= j) h[i * npar + j] = 0;
+							else h[j * npar + i] = 0;
+						}
+						h[i * npar + i] = 1.0;
+					}
+				}
+			}
+		}
+
 		/**
 		 *   make a step "delta."  If the step is rejected, increase
 		 * lambda and try again
@@ -436,6 +518,13 @@ int levmarq::solve(int nshared_par, int npar, double **par, int ny, double *dysq
 				for (i = 0; i < npar; i++)
 				{
 					newpar[i][0] = par[i][0] + delta[i];
+					if (has_bounds && i < lower_bounds.size())
+					{
+						if (newpar[i][0] < lower_bounds[i])
+							newpar[i][0] = lower_bounds[i];
+						if (newpar[i][0] > upper_bounds[i])
+							newpar[i][0] = upper_bounds[i];
+					}
 				}
 
 				newerr = 0.0;
@@ -526,28 +615,13 @@ int levmarq::solve(int nshared_par, int npar, double **par, int ny, double *dysq
 */
 void levmarq::solve_axb_cholesky(int n, double *matrix_l, double *x, double *b)
 {
-	int i, j;
-	double sum;
+	Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> matrix_map(matrix_l, n, n);
+	Eigen::Map<Eigen::VectorXd> x_map(x, n);
+	Eigen::Map<const Eigen::VectorXd> b_map(b, n);
 
-	/* solve L*y = b for y (where x[] is used to store y) */
-
-	for (i = 0; i < n; i++)
-	{
-		sum = 0;
-		for (j = 0; j < i; j++)
-			sum += matrix_l[i*n+j] * x[j];
-		x[i] = (b[i] - sum) / matrix_l[i*n+i];
-	}
-
-	/* solve L^T*x = y for x (where x[] is used to store both y and x) */
-
-	for (i = n - 1; i >= 0; i--)
-	{
-		sum = 0;
-		for (j = i + 1; j < n; j++)
-			sum += matrix_l[j*n+i] * x[j];
-		x[i] = (x[i] - sum) / matrix_l[i*n+i];
-	}
+	Eigen::LDLT<Eigen::MatrixXd> ldlt;
+	ldlt.compute(matrix_map);
+	x_map = ldlt.solve(b_map);
 }
 
 /* This function takes a symmetric, positive-definite matrix "a" and returns
@@ -557,27 +631,62 @@ void levmarq::solve_axb_cholesky(int n, double *matrix_l, double *x, double *b)
 */
 int levmarq::cholesky_decomp(int n, double *matrix_l, double *matrix_a)
 {
-	int i, j, k;
-	double sum;
+	Eigen::MatrixXd a(n, n);
 
-	for (i = 0; i < n; i++)
+	for (int i = 0; i < n; ++i)
 	{
-		for (j = 0; j < i; j++)
+		for (int j = 0; j <= i; ++j)
 		{
-			sum = 0;
-			for (k = 0; k < j; k++)
-				sum += matrix_l[i*n+k] * matrix_l[j*n+k];
-			matrix_l[i*n+j] = (matrix_a[i*n+j] - sum) / matrix_l[j*n+j];
+			a(i, j) = matrix_a[i * n + j];
+			a(j, i) = a(i, j);
 		}
-
-		sum = 0;
-		for (k = 0; k < i; k++)
-			sum += matrix_l[i*n+k] * matrix_l[i*n+k];
-		sum = matrix_a[i*n+i] - sum;
-		if (sum < TOL)
-			return 1; /* not positive-definite */
-		matrix_l[i*n+i] = sqrt(sum);
 	}
+
+	Eigen::LDLT<Eigen::MatrixXd> ldlt;
+	ldlt.compute(a);
+	if (ldlt.info() != Eigen::Success)
+		return 1;
+
+	if (ldlt.vectorD().minCoeff() < TOL)
+		return 1; /* not positive-definite */
+
+	Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> matrix_l_map(matrix_l, n, n);
+	matrix_l_map = a;
+
 	return 0;
 }
 
+
+int levmarq::solve_axb_simplicial_ldlt(int n, double *matrix_a, double *x, double *b)
+{
+	typedef Eigen::Triplet<double> Triplet;
+	std::vector<Triplet> triplets;
+	triplets.reserve(n * (n + 1));
+
+	for (int r = 0; r < n; ++r)
+	{
+		for (int c = 0; c <= r; ++c)
+		{
+			const double val = matrix_a[r * n + c];
+			triplets.push_back(Triplet(r, c, val));
+			if (r != c)
+			{
+				triplets.push_back(Triplet(c, r, val));
+			}
+		}
+	}
+
+	Eigen::SparseMatrix<double> sparse_a(n, n);
+	sparse_a.setFromTriplets(triplets.begin(), triplets.end());
+
+	Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> sparse_ldlt;
+	sparse_ldlt.compute(sparse_a);
+	if (sparse_ldlt.info() != Eigen::Success)
+		return 1;
+
+	Eigen::Map<Eigen::VectorXd> x_map(x, n);
+	Eigen::Map<const Eigen::VectorXd> b_map(b, n);
+	x_map = sparse_ldlt.solve(b_map);
+
+	return (sparse_ldlt.info() == Eigen::Success) ? 0 : 1;
+}

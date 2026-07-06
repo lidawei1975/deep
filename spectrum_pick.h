@@ -32,6 +32,7 @@ public:
     bool simple_peak_picking(bool b_negative=false);
     bool ann_peak_picking(int flag=0,int flag_t1_noise=0, bool b_negative=false);
     bool print_peaks_picking(std::string);
+    std::string print_peaks_as_string();
     bool voigt_convolution(double a, double x, double y, double sigmax, double sigmay, double gammax, double gammay, std::vector<double> &kernel,int &i0,int &i1, int &j0, int &j1) const;
 
     /**

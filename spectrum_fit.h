@@ -218,15 +218,18 @@ public:
   ~spectrum_fit();
 
   bool init_all_spectra(std::vector<std::string> fnames);
+  bool init_all_spectra_from_buffers(const std::vector<unsigned char> &nmrpipe_bytes, int nspectra);
 
   bool initflags_fit(int n, double r, double c, int im);
   bool init_error(int, int, int, int);
-  bool print_peaks(std::string fnames, bool b_recon, std::string fold_name="./");
+  std::string print_peaks(std::string fnames, bool b_recon,std::string fold_name="./", bool b_to_string = false);
   // bool print_intensities(std::string outfname);
   bool generate_recon_and_diff_spectrum(std::string);
   bool fit_gather_original();
   bool fit_gather(int);
   bool peak_reading(std::string);
+  bool peak_reading_pipe_string(const std::string &peak_text);
+  bool peak_reading_pipe_stream(std::istream &input_stream);
   bool peak_fitting();
 
   inline void set_peak_width(double x, double y)

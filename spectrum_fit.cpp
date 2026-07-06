@@ -549,7 +549,7 @@ bool gaussian_fit::one_fit_gaussian_intensity_only(int xsize,int ysize,std::vect
         }
     }
     a=s2/s1;
-    return true;
+        return true;
 };
 
 
@@ -3338,7 +3338,12 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
         std::vector<int> peak_remove_flag;
         peak_remove_flag.resize(x.size(),0);
 
-        std::vector< std::vector< std::vector<double> > > zzs(npeak); //zzs[peak_ndx][spectrum_ndx][data_point]
+        std::vector<std::vector<std::vector<double>>> zzs;
+        zzs.resize(x.size());
+        for(int i_peak = 0; i_peak < x.size(); i_peak++)
+        {
+            zzs[i_peak].resize(nspectra);
+        }
 
         std::vector<int> i0s,i1s,j0s,j1s; //save fitting region of each peak
 
@@ -3439,7 +3444,7 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                     }
                 }
                 num_sum[i_peak][spectrum_index] = total_z;
-                zzs[i_peak].push_back(tz);//zzs[peak_index][spec_ndx][data_ndx]
+                zzs[i_peak][spectrum_index] = std::move(tz);
             }
         }
 
@@ -3459,25 +3464,25 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
             double current_x=x.at(i_peak)-i0;
             double current_y=y.at(i_peak)-j0;
 
+            // Find spectral_max using per-peak spectra
             double spectral_max = 0.0;
-            for(int i=0;i<zzs[i_peak].size();i++)
+            for(int spec_idx = 0; spec_idx < nspectra; spec_idx++)
             {
-                for(int j=0;j<zzs[i_peak][i].size();j++)
+                for(int j = 0; j < zzs[i_peak][spec_idx].size(); j++)
                 {
-                    if(zzs[i_peak][i][j]>spectral_max)
+                    if(zzs[i_peak][spec_idx][j] > spectral_max)
                     {
-                        spectral_max=zzs[i_peak][i][j];
+                        spectral_max = zzs[i_peak][spec_idx][j];
                     }
                 }   
             }
-            /**
-             * Rescale zzs[i_peak] and a[i_peak] by spectral_max
-            */
-            for(int i=0;i<zzs[i_peak].size();i++)
+            
+            // Rescale zzs and a[i_peak] by spectral_max
+            for(int spec_idx = 0; spec_idx < nspectra; spec_idx++)
             {
-                for(int j=0;j<zzs[i_peak][i].size();j++)
+                for(int j = 0; j < zzs[i_peak][spec_idx].size(); j++)
                 {
-                    zzs[i_peak][i][j]/=spectral_max;
+                    zzs[i_peak][spec_idx][j] /= spectral_max;
                 }
             }
             
@@ -3485,11 +3490,9 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
             {
                 amp[i_peak*nspectra+i]/=spectral_max;
             }
-            /**
-             * Get subset of amp for peak i_peak
-             */
+            
+            // Get subset of amp for peak i_peak
             std::vector<double> amp_subvector(amp.begin() + i_peak * nspectra, amp.begin() + (i_peak + 1) * nspectra);
-
 
             if (peak_shape == gaussian_type)
             {
@@ -3504,9 +3507,7 @@ bool gaussian_fit::multi_spectra_run_multi_peaks(int loop_max)
                 multiple_fit_voigt_lorentz(current_xdim, current_ydim, zzs[i_peak], current_x, current_y, amp_subvector, sigmax.at(i_peak), sigmay.at(i_peak), gammax.at(i_peak), gammay.at(i_peak), &e,loop);
             }
 
-            /**
-             * Restore a[i_peak][0] to original scale.
-            */
+            // Restore a[i_peak][0] to original scale.
             for(int i=0;i<nspectra;i++)
             {
                 amp[i_peak*nspectra+i]=amp_subvector[i]*spectral_max;
@@ -3795,6 +3796,49 @@ bool spectrum_fit::init_all_spectra(std::vector<std::string> fnames_)
     }
 
 };
+
+bool spectrum_fit::init_all_spectra_from_buffers(const std::vector<unsigned char> &nmrpipe_bytes, int nspectra_in)
+{
+    fnames.clear();
+    spects.clear();
+    nspect = 0;
+
+    if (nmrpipe_bytes.empty() || nspectra_in <= 0)
+    {
+        std::cout << "Error: no input spectrum buffers provided." << std::endl;
+        return false;
+    }
+
+    if (nmrpipe_bytes.size() % static_cast<size_t>(nspectra_in) != 0)
+    {
+        std::cout << "Error: nmrPipe byte buffer size is not divisible by spectrum count." << std::endl;
+        return false;
+    }
+
+    const size_t bytes_per_spectrum = nmrpipe_bytes.size() / static_cast<size_t>(nspectra_in);
+
+    for (int i = 0; i < nspectra_in; i++)
+    {
+        std::vector<unsigned char> one_spectrum(
+            nmrpipe_bytes.begin() + static_cast<std::vector<unsigned char>::difference_type>(i * bytes_per_spectrum),
+            nmrpipe_bytes.begin() + static_cast<std::vector<unsigned char>::difference_type>((i + 1) * bytes_per_spectrum));
+
+        fnames.push_back("buffer_" + std::to_string(i) + ".ft2");
+        if (!fid_2d::read_nmrpipe_file_from_buffer(one_spectrum))
+        {
+            std::cout << "Can't read spectrum buffer " << i << std::endl;
+            return false;
+        }
+        spects.push_back(spectrum_real_real);
+    }
+
+    if (spects.size() > 0)
+    {
+        nspect = spects.size();
+        return true;
+    }
+    return false;
+}
 
 
 
@@ -4646,8 +4690,10 @@ bool spectrum_fit::generate_recon_and_diff_spectrum(std::string folder_name)
 
 
 
-bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string fold_name)
+std::string spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string fold_name, bool b_to_string)
 {
+
+    std::string output_string;
 
     std::istringstream iss;
     iss.str(outfname);
@@ -4805,6 +4851,113 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
             }
         }
 
+        if (b_to_string && c == -1)
+        {
+            std::ostringstream tab_out;
+            char linebuf[8192];
+
+            std::snprintf(linebuf, sizeof(linebuf), "DATA  X_AXIS 1H           1 %5d %8.3fppm %8.3fppm\n", ndata_frq, begin1, stop1);
+            tab_out << linebuf;
+            std::snprintf(linebuf, sizeof(linebuf), "DATA  Y_AXIS 15N          1 %5d %8.3fppm %8.3fppm\n", ndata_frq_indirect, begin2, stop2);
+            tab_out << linebuf;
+
+            if (peak_shape == voigt_type || peak_shape == exact_type || peak_shape == voigt_lorentz_type)
+            {
+                tab_out << "VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL SIGMAX SIGMAY GAMMAX GAMMAY NROUND POINTER";
+                if (spects.size() > 1)
+                {
+                    for (int i = 0; i < spects.size(); i++)
+                    {
+                        std::snprintf(linebuf, sizeof(linebuf), " Z_A%d", i);
+                        tab_out << linebuf;
+                    }
+                }
+                tab_out << "\n";
+
+                tab_out << "FORMAT %5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %f %f %f %f %4d %3s";
+                if (spects.size() > 1)
+                {
+                    for (int i = 0; i < spects.size(); i++)
+                    {
+                        tab_out << " %7.4f";
+                    }
+                }
+                tab_out << "\n";
+
+                for (unsigned int i0 = 0; i0 < p1.size(); i0++)
+                {
+                    int i = ndx[i0];
+                    float s1 = 0.5346 * gammax[i] * 2 + std::sqrt(0.2166 * 4 * gammax[i] * gammax[i] + sigmax[i] * sigmax[i] * 8 * 0.6931);
+                    float s2 = 0.5346 * gammay[i] * 2 + std::sqrt(0.2166 * 4 * gammay[i] * gammay[i] + sigmay[i] * sigmay[i] * 8 * 0.6931);
+
+                    std::snprintf(linebuf, sizeof(linebuf),
+                                  "%5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %f %f %f %f %4d <--",
+                                  peak_index[i] + 1, p1[i] + 1, p2[i] + 1, p1_ppm[i], p2_ppm[i], s1, s2,
+                                  int(p1[i] - 3), int(p1[i] + 3), int(p2[i] - 3), int(p2[i] + 3), amplitudes[i], err[i], user_comments[i].c_str(), group[i], num_sums[i][0], fitted_volume[i], sigmax[i], sigmay[i], gammax[i], gammay[i], nround[i]);
+                    tab_out << linebuf;
+
+                    if (spects.size() > 1)
+                    {
+                        for (int j = 0; j < spects.size(); j++)
+                        {
+                            std::snprintf(linebuf, sizeof(linebuf), " %7.4f", amplitudes_all_spectra[i][j]);
+                            tab_out << linebuf;
+                        }
+                    }
+                    tab_out << "\n";
+                }
+            }
+            else if (peak_shape == gaussian_type)
+            {
+                tab_out << "VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL NROUND POINTER";
+                if (spects.size() > 1)
+                {
+                    for (int i = 0; i < spects.size(); i++)
+                    {
+                        std::snprintf(linebuf, sizeof(linebuf), " Z_A%d", i);
+                        tab_out << linebuf;
+                    }
+                }
+                tab_out << "\n";
+
+                tab_out << "FORMAT %5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %4d %3s";
+                if (spects.size() > 1)
+                {
+                    for (int i = 0; i < spects.size(); i++)
+                    {
+                        tab_out << " %7.4f";
+                    }
+                }
+                tab_out << "\n";
+
+                for (unsigned int i0 = 0; i0 < p1.size(); i0++)
+                {
+                    int i = ndx[i0];
+                    float s1 = sigmax[i] * 2.355f;
+                    float s2 = sigmay[i] * 2.355f;
+
+                    std::snprintf(linebuf, sizeof(linebuf),
+                                  "%5d %9.3f %9.3f %10.6f %10.6f %7.3f %7.3f %4d %4d %4d %4d %+e %+e %s %4d %+e %+e %4d <--",
+                                  peak_index[i] + 1, p1[i] + 1, p2[i] + 1, p1_ppm[i], p2_ppm[i], s1, s2,
+                                  int(p1[i] - 3), int(p1[i] + 3), int(p2[i] - 3), int(p2[i] + 3), amplitudes[i], err[i], user_comments[i].c_str(), group[i], num_sums[i][0], fitted_volume[i], nround[i]);
+                    tab_out << linebuf;
+
+                    if (spects.size() > 1)
+                    {
+                        for (int j = 0; j < spects.size(); j++)
+                        {
+                            std::snprintf(linebuf, sizeof(linebuf), " %7.4f", amplitudes_all_spectra[i][j]);
+                            tab_out << linebuf;
+                        }
+                    }
+                    tab_out << "\n";
+                }
+            }
+
+            output_string = tab_out.str();
+            return output_string;
+        }
+
 
 
         for (int m = 0; m < file_names.size(); m++)
@@ -4823,7 +4976,7 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
 
                 {
                     //fprintf(fp,"#x y ppm_x ppm_y intensity sigmax sigmay (gammx gammay) fitted_volume num_volume type group\n");
-                    fprintf(fp, "VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL SIMGAX SIGMAY GAMMAX GAMMAY NROUND POINTER");
+                    fprintf(fp, "VARS   INDEX X_AXIS Y_AXIS X_PPM Y_PPM XW YW  X1 X3 Y1 Y3 HEIGHT DHEIGHT ASS CLUSTID INTEGRAL VOL SIGMAX SIGMAY GAMMAX GAMMAY NROUND POINTER");
                     if (spects.size() > 1)
                     {
                         for (int i = 0; i < spects.size(); i++)
@@ -4971,25 +5124,9 @@ bool spectrum_fit::print_peaks(std::string outfname, bool b_recon, std::string f
         }
     }
 
-    return 1;
+    return output_string;
 };
 
-// bool spectrum_fit::print_intensities(std::string outfname)
-// {
-//     FILE *fp=fopen(outfname.c_str(), "w");
-//     for(int i=0;i<p_intensity_all_spectra.size();i++)
-//     {
-//         fprintf(fp,"%10d ",i+1);
-//         for(int k=0;k<p_intensity_all_spectra[i].size();k++)
-//         {
-//             float temp=p_intensity_all_spectra[i][k]*(voigt(0.0,sigmax[i],gammax[i])*voigt(0.0,sigmay[i],gammay[i]));
-//             fprintf(fp,"%+e ",temp);
-//         }
-//         fprintf(fp,"\n");
-//     }
-//     fclose(fp);
-//     return true;
-// }
 
 bool spectrum_fit::assess_size()
 {
@@ -5010,6 +5147,270 @@ bool spectrum_fit::assess_size()
         b=false;
     }
     return b;
+}
+
+bool spectrum_fit::peak_reading_pipe_stream(std::istream &input_stream)
+{
+    std::string line, p;
+    std::vector<std::string> ps;
+    std::stringstream iss;
+
+    int index = -1;
+    int xpos = -1;
+    int ypos = -1;
+    int xpos_ppm = -1;
+    int ypos_ppm = -1;
+    int xw = -1;
+    int yw = -1;
+    int height = -1;
+    int ass = -1;
+
+    p1.clear();
+    p2.clear();
+    p1_ppm.clear();
+    p2_ppm.clear();
+    p_intensity.clear();
+    sigmax.clear();
+    sigmay.clear();
+    gammax.clear();
+    gammay.clear();
+    user_comments.clear();
+    peak_index.clear();
+    p_intensity_all_spectra.clear();
+
+    bool b_format = false;
+    int c = 0;
+    while (std::getline(input_stream, line))
+    {
+        if (line.find("REMARK") == 0 || line.length() <= 4)
+            continue;
+
+        if (line.find("DATA") == 0 || line.find("FORMAT") == 0)
+            continue;
+
+        if (line.find("VARS") == 0)
+        {
+            iss.clear();
+            iss.str(line);
+            ps.clear();
+            while (iss >> p)
+            {
+                ps.push_back(p);
+            }
+
+            if (!ps.empty())
+            {
+                ps.erase(ps.begin());
+            }
+            for (int i = 0; i < ps.size(); i++)
+            {
+                if (ps[i] == "INDEX")
+                    index = i;
+                else if (ps[i] == "X_AXIS")
+                    xpos = i;
+                else if (ps[i] == "Y_AXIS")
+                    ypos = i;
+                else if (ps[i] == "X_PPM")
+                    xpos_ppm = i;
+                else if (ps[i] == "Y_PPM")
+                    ypos_ppm = i;
+                else if (ps[i] == "XW")
+                    xw = i;
+                else if (ps[i] == "YW")
+                    yw = i;
+                else if (ps[i] == "HEIGHT")
+                    height = i;
+                else if (ps[i] == "ASS")
+                    ass = i;
+            }
+
+            if ((xpos == -1 || ypos == -1) && (xpos_ppm == -1 || ypos_ppm == -1))
+            {
+                std::cout << "One or more required variables are missing." << std::endl;
+                return false;
+            }
+            b_format = true;
+            continue;
+        }
+
+        if (b_format == false)
+            continue;
+
+        iss.clear();
+        iss.str(line);
+        ps.clear();
+        while (iss >> p)
+        {
+            ps.push_back(p);
+        }
+
+        if (ps.size() < 4)
+            continue;
+
+        c++;
+
+        if (xpos != -1 && ypos != -1)
+        {
+            p1.push_back(atof(ps[xpos].c_str()) - 1);
+            p2.push_back(atof(ps[ypos].c_str()) - 1);
+        }
+        if (xpos_ppm != -1 && ypos_ppm != -1)
+        {
+            p1_ppm.push_back(atof(ps[xpos_ppm].c_str()));
+            p2_ppm.push_back(atof(ps[ypos_ppm].c_str()));
+        }
+
+        if (height != -1)
+        {
+            p_intensity.push_back(atof(ps[height].c_str()));
+        }
+        else
+        {
+            p_intensity.push_back(0.0);
+        }
+
+        if (xw != -1)
+        {
+            float s = atof(ps[xw].c_str());
+            sigmax.push_back(s / 2.35);
+        }
+        else
+        {
+            sigmax.push_back(3.0);
+        }
+
+        if (yw != -1)
+        {
+            float s = atof(ps[yw].c_str());
+            sigmay.push_back(s / 2.35);
+        }
+        else
+        {
+            sigmay.push_back(3.0);
+        }
+
+        if (ass != -1)
+        {
+            user_comments.push_back(ps[ass]);
+        }
+        else
+        {
+            user_comments.push_back("peaks" + std::to_string(c));
+        }
+    }
+
+    if (p1_ppm.size() > 0)
+    {
+        p1.clear();
+        p2.clear();
+
+        for (unsigned int i = 0; i < p1_ppm.size(); i++)
+        {
+            p1.push_back((p1_ppm[i] - begin1) / step1);
+            p2.push_back((p2_ppm[i] - begin2) / step2);
+        }
+    }
+    else
+    {
+        p1_ppm.clear();
+        p2_ppm.clear();
+
+        for (unsigned int i = 0; i < p1.size(); i++)
+        {
+            double f1 = begin1 + step1 * (p1[i]);
+            double f2 = begin2 + step2 * (p2[i]);
+            p1_ppm.push_back(f1);
+            p2_ppm.push_back(f2);
+        }
+    }
+
+    if (height == -1)
+    {
+        for (int i = 0; i < p1.size(); i++)
+        {
+            int n1 = int(p1[i] + 0.5) - 1;
+            int n2 = int(p2[i] + 0.5) - 1;
+            if (n1 < 0)
+                n1 = 0;
+            if (n1 > ndata_frq - 1)
+                n1 = ndata_frq - 1;
+            if (n2 < 0)
+                n2 = 0;
+            if (n2 > ndata_frq_indirect - 1)
+                n2 = ndata_frq_indirect - 1;
+            p_intensity[i] = spect[n2 * ndata_frq + n1];
+        }
+    }
+
+    gammax.resize(p1.size(), 1e-20);
+    gammay.resize(p1.size(), 1e-20);
+
+    for (int i = p_intensity.size() - 1; i >= 0; i--)
+    {
+        if (p1[i] < 1 || p1[i] > ndata_frq - 2 || p2[i] < 1 || p2[i] > ndata_frq_indirect - 2)
+        {
+            p1.erase(p1.begin() + i);
+            p2.erase(p2.begin() + i);
+            if (i < p1_ppm.size()) p1_ppm.erase(p1_ppm.begin() + i);
+            if (i < p2_ppm.size()) p2_ppm.erase(p2_ppm.begin() + i);
+            p_intensity.erase(p_intensity.begin() + i);
+            sigmax.erase(sigmax.begin() + i);
+            sigmay.erase(sigmay.begin() + i);
+            gammax.erase(gammax.begin() + i);
+            gammay.erase(gammay.begin() + i);
+            user_comments.erase(user_comments.begin() + i);
+        }
+    }
+
+    for (int i = 0; i < p_intensity.size(); i++)
+    {
+        peak_index.push_back(i);
+    }
+
+    peak_cannot_move_flag.resize(p_intensity.size(), 0);
+    for (int i = 0; i < p_intensity.size(); i++)
+    {
+        int ntemp = int(round(p1[i])) + int(round(p2[i])) * ndata_frq;
+        if (fabs(p_intensity[i]) / fabs(spects[0][ntemp]) < 0.5)
+        {
+            peak_cannot_move_flag[i] = 1;
+        }
+    }
+
+    for (int i = 0; i < p1.size(); i++)
+    {
+        std::vector<double> temp;
+        temp.push_back(p_intensity[i]);
+        for (int n = 1; n < spects.size(); n++)
+        {
+            int n1 = int(p1[i] + 0.5) - 1;
+            int n2 = int(p2[i] + 0.5) - 1;
+            if (n1 < 0) n1 = 0;
+            if (n1 > ndata_frq - 1) n1 = ndata_frq - 1;
+            if (n2 < 0) n2 = 0;
+            if (n2 > ndata_frq_indirect - 1) n2 = ndata_frq_indirect - 1;
+            temp.push_back(spects[n][n2 * ndata_frq + n1]);
+        }
+        p_intensity_all_spectra.push_back(temp);
+    }
+
+    std::vector<double> sx, sy;
+    for (unsigned int i = 0; i < p1.size(); i++)
+    {
+        float s1 = 0.5346 * gammax[i] * 2 + std::sqrt(0.2166 * 4 * gammax[i] * gammax[i] + sigmax[i] * sigmax[i] * 8 * 0.6931);
+        float s2 = 0.5346 * gammay[i] * 2 + std::sqrt(0.2166 * 4 * gammay[i] * gammay[i] + sigmay[i] * sigmay[i] * 8 * 0.6931);
+        sx.push_back(s1);
+        sy.push_back(s2);
+    }
+    median_width_x = ldw_math_spectrum_2d::calcualte_median(sx);
+    median_width_y = ldw_math_spectrum_2d::calcualte_median(sy);
+
+    if (median_width_x < 3.0)
+        median_width_x = 3.0;
+    if (median_width_y < 3.0)
+        median_width_y = 3.0;
+
+    return p1.size() > 0;
 }
 
 bool spectrum_fit::peak_reading(std::string infname)
@@ -5238,170 +5639,20 @@ bool spectrum_fit::peak_reading_sparky(std::string fname)
 
 bool spectrum_fit::peak_reading_pipe(std::string fname)
 {
-    std::string line,p;
-    std::vector< std::string> ps;
-    std::stringstream iss;
-
-    int index=-1;
-    int xpos=-1;
-    int ypos=-1;
-    int xpos_ppm=-1;
-    int ypos_ppm=-1;
-    int xw=-1;
-    int yw=-1;
-    int height=-1;
-    int ass=-1;
-
     std::ifstream fin(fname);
 
     if(!fin)
     {
         return false;
     }
-
-    bool b_format=false;
-    user_comments.clear();
-    int c=0;
-    while(getline(fin,line))
-    {
-        if(line.find("REMARK")==0 || line.length()<=4 ) continue;
-    
-        if(line.find("DATA")==0)
-        {
-            //process if needed.
-            continue;
-        }
-
-        if(line.find("FORMAT")==0) continue;
-        
-
-        if(line.find("VARS")==0)
-        {
-            iss.str(line);
-            while(iss>>p)
-            {
-                ps.push_back(p);
-            }
-        
-            ps.erase(ps.begin()); //remove first words (VARS)
-            for(int i=0;i<ps.size();i++)
-            {
-                if(ps[i]=="INDEX") {index=i;}
-                else if(ps[i]=="X_AXIS") {xpos=i;}
-                else if(ps[i]=="Y_AXIS") {ypos=i;}
-                else if(ps[i]=="X_PPM") {xpos_ppm=i;}
-                else if(ps[i]=="Y_PPM") {ypos_ppm=i;}
-                else if(ps[i]=="XW") {xw=i;}
-                else if(ps[i]=="YW") {yw=i;}       
-                else if(ps[i]=="HEIGHT") {height=i;}   
-                else if(ps[i]=="ASS") {ass=i;}   
-            }
-            if( (xpos==-1 || ypos==-1) && (xpos_ppm==-1 || ypos_ppm==-1) )
-            {
-                std::cout<<"One or more required varibles are missing."<<std::endl;
-                return false;
-            }
-            b_format=true;
-            continue;
-        }
-
-        if(b_format==false) continue;    
-
-        
-        iss.clear();
-        iss.str(line);
-        ps.clear();
-        while(iss>>p)
-        {
-            ps.push_back(p);
-        }
-
-        if(ps.size()<4) continue; //empty line??
-
-        c++;
-
-        if(xpos!=-1 && ypos!=-1)
-        {
-            p1.push_back(atof(ps[xpos].c_str())-1);
-            p2.push_back(atof(ps[ypos].c_str())-1);
-        }
-        if(xpos_ppm!=-1 && ypos_ppm!=-1)
-        {
-            p1_ppm.push_back(atof(ps[xpos_ppm].c_str()));
-            p2_ppm.push_back(atof(ps[ypos_ppm].c_str()));
-        }
-
-
-        if(height!=-1)
-        {
-            p_intensity.push_back(atof(ps[height].c_str()));   
-        }
-        else p_intensity.push_back(0.0);
-
-        if(xw!=-1) 
-        {      
-            float s=atof(ps[xw].c_str());
-            sigmax.push_back(s/2.35);
-        }
-        else sigmax.push_back(3.0);
-        
-        if(yw!=-1)
-        {
-            float s=atof(ps[yw].c_str());
-            sigmay.push_back(s/2.35);
-        }
-        else sigmay.push_back(3.0);
-
-        if(ass!=-1)
-        {
-            user_comments.push_back(ps[ass]);
-        }
-        else
-        {
-            user_comments.push_back("peaks"+std::to_string(c));
-        }
-    }
-
-    if(p1_ppm.size()>0) //fill in point from ppm. 
-    {
-        p1.clear();
-        p2.clear();
-
-        for (unsigned int i = 0; i < p1_ppm.size(); i++)
-        {
-            p1.push_back((p1_ppm[i] - begin1) / step1); //direct dimension
-            p2.push_back((p2_ppm[i] - begin2) / step2); //indirect dimension
-        }
-    }
-    else //fill in ppm from points
-    {
-        p1_ppm.clear();
-        p2_ppm.clear();
-
-        for (unsigned int i = 0; i < p1.size(); i++)
-        {
-            double f1 = begin1 + step1 * (p1[i]);  //direct dimension
-            double f2 = begin2 + step2 * (p2[i]);  //indirect dimension
-            p1_ppm.push_back(f1);
-            p2_ppm.push_back(f2);
-        }
-    }
-
-    //fill in intensity information from spectrum
-    if(height==-1)
-    {
-        for(int i=0;i<p1.size();i++)
-        {
-            int n1=int(p1[i]+0.5)-1; // -1 because start at 0 in this program but start from 1 in pipe's tab file.
-            int n2=int(p2[i]+0.5)-1;
-            if(n1<0) n1=0; if(n1>ndata_frq-1) n1=ndata_frq-1;
-            if(n2<0) n2=0; if(n2>ndata_frq_indirect-1) n2=ndata_frq_indirect-1; //water proof
-            p_intensity[i]=spect[n2*ndata_frq+n1]; //n1 is direct dimension; n2 is indirect
-        }
-    }
-
-    return true;
+    return peak_reading_pipe_stream(fin);
 }
+
+    bool spectrum_fit::peak_reading_pipe_string(const std::string &peak_text)
+    {
+        std::istringstream input_stream(peak_text);
+        return peak_reading_pipe_stream(input_stream);
+    }
 
 bool spectrum_fit::peak_reading_json(std::string infname)
 {
@@ -5460,37 +5711,34 @@ bool spectrum_fit::peak_reading_json(std::string infname)
 */
 EMSCRIPTEN_BINDINGS(dp_module_fit) {
 
+    function("voigt", &voigt);
+    function("generate_spectrum_gaussian", &ldw_math_spectrum_fit::generate_spectrum_gaussian);
+    function("generate_spectrum_voigt", &ldw_math_spectrum_fit::generate_spectrum_voigt);
+
     /**
      * Note: base class function init is exposed in spectrum_pick_1d.cpp, so it is not included here.
     */
     class_<shared_data_2d>("shared_data_2d")
         .constructor();
 
-    class_<gaussian_fit,base<shared_data_2d>>("gaussian_fit")
+    class_<spectrum_fit, base<fid_2d>>("spectrum_fit")
         .constructor()
-        .function("init", &gaussian_fit::init)
-        .function("set_everything_wasm", &gaussian_fit::set_everything_wasm)
-        .function("set_peak_paras", &gaussian_fit::set_peak_paras)
-        .function("run", &gaussian_fit::run)
-        .function("run_with_error_estimation", &gaussian_fit::run_with_error_estimation)
-        .function("get_nround", &gaussian_fit::get_nround)
-        .property("amp", &gaussian_fit::amp)
-        .property("sigmax", &gaussian_fit::sigmax)
-        .property("sigmay", &gaussian_fit::sigmay)
-        .property("gammax", &gaussian_fit::gammax)
-        .property("gammay", &gaussian_fit::gammay)
-        .property("x", &gaussian_fit::x)
-        .property("y", &gaussian_fit::y)
-        .property("err", &gaussian_fit::err)
-        .property("original_ndx", &gaussian_fit::original_ndx)
-        .property("xstart", &gaussian_fit::xstart)
-        .property("ystart", &gaussian_fit::ystart)
-        .property("npeak", &gaussian_fit::npeak)
+        .function("init_all_spectra_from_buffers", &spectrum_fit::init_all_spectra_from_buffers)
+        .function("initflags_fit", &spectrum_fit::initflags_fit)
+        .function("init_error", &spectrum_fit::init_error)
+        .function("set_scale", &spectrum_fit::set_scale)
+        .function("set_noise_level", &spectrum_fit::set_noise_level)
+        .function("set_peak_width", &spectrum_fit::set_peak_width)
+        .function("peak_reading_pipe_string", &spectrum_fit::peak_reading_pipe_string)
+        .function("peak_fitting", &spectrum_fit::peak_fitting)
+        .function("print_peaks", &spectrum_fit::print_peaks)
         ;
 
     
     /**
      * float vector registration is also done in spectrum_pick_1d.cpp, not here.
     */
+    register_vector<std::vector<unsigned char>>("VectorVectorUChar");
+    register_vector<std::vector<double>>("VectorVectorDouble");
 }
 #endif // WEBASSEMBLY

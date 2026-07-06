@@ -1,3 +1,23 @@
+/**
+ * TODO / NOTE ON SPECTRAL EXTRACTION HEADER BUGS:
+ * 
+ * 1. FDREALSIZE Mismatch when Extraction is Enabled:
+ *    In create_nmrpipe_dictionary(), FDREALSIZE is calculated as:
+ *        nmrpipe_dict_float["FDREALSIZE"] = ndata_frq * ndata_frq_indirect; (or ndata_frq * ndata_indirect)
+ *    However, when extraction is enabled, the actual output dimensions are reduced to n_inner_dim
+ *    and n_outer_dim. Since write_nmrpipe_ft2() only writes active extracted elements, this leads to 
+ *    a file size smaller than what FDREALSIZE declares, causing downstream tool crashes/validation errors.
+ *    Fix: Update FDREALSIZE to use n_inner_dim * n_outer_dim (or n_inner_dim * ndata_indirect).
+ * 
+ * 2. FDF2APOD Overwritten to 0.0 on Processed Files:
+ *    FDF2APOD is computed using:
+ *        int extraction_span = extraction_to_pos - extraction_from_pos;
+ *        nmrpipe_dict_float["FDF2APOD"] = extraction_span / zf;
+ *    When reading an already processed NMRPipe file, extraction_from_pos/extraction_to_pos are both 0.
+ *    This causes extraction_span = 0, which overwrites FDF2APOD to 0.0 when writing back.
+ *    Fix: Default/preserve FDF2APOD to ndata_original or its original value if no new extraction was run.  
+ */
+
 #include <vector>
 #include <valarray>
 #include <set>
@@ -14,6 +34,8 @@
 
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>
+#include <Eigen/Sparse>
+#include <Eigen/SparseCholesky>
 
 /**
  * For FFT calculation
@@ -76,6 +98,51 @@ namespace fid_2d_math {
         return true;
     };
 
+    bool detrend_slice_1d(const float *src, float *dst, int len)
+    {
+        int seg_len = 32;
+        for (int start = 0; start < len; start += seg_len)
+        {
+            int end = std::min(len, start + seg_len);
+            int n = end - start;
+            if (n >= 3)
+            {
+                Eigen::MatrixXd design(n, 3);
+                Eigen::VectorXd vals(n);
+                for (int i = 0; i < n; ++i)
+                {
+                    double x_val = (n > 1) ? (2.0 * i / (n - 1) - 1.0) : 0.0;
+                    design(i, 0) = 1.0;
+                    design(i, 1) = x_val;
+                    design(i, 2) = x_val * x_val;
+                    vals(i) = static_cast<double>(src[start + i]);
+                }
+                Eigen::VectorXd coeffs = design.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(vals);
+                for (int i = 0; i < n; ++i)
+                {
+                    double x_val = (n > 1) ? (2.0 * i / (n - 1) - 1.0) : 0.0;
+                    double fitted = coeffs(0) + coeffs(1) * x_val + coeffs(2) * x_val * x_val;
+                    dst[start + i] = static_cast<float>(src[start + i] - fitted);
+                }
+            }
+            else
+            {
+                // Fall back to subtracting mean
+                double sum = 0.0;
+                for (int i = 0; i < n; ++i)
+                {
+                    sum += src[start + i];
+                }
+                double mean = sum / n;
+                for (int i = 0; i < n; ++i)
+                {
+                    dst[start + i] = static_cast<float>(src[start + i] - mean);
+                }
+            }
+        }
+        return true;
+    }
+
     bool polynomial_baseline(
         const std::vector<float> &x,
         const std::vector<float> &y,
@@ -83,7 +150,9 @@ namespace fid_2d_math {
         int xdim,
         int ydim,
         int order,
-        std::vector<float> &baseline_parameters
+        std::vector<float> &baseline_parameters,
+        float noise_level = -1.0f,
+        std::vector<char> *selected_mask = nullptr
         )
     {
         /**
@@ -95,38 +164,154 @@ namespace fid_2d_math {
         int n = xdim * ydim;
         int m = order*2 + 1;
 
-        Eigen::MatrixXd d(n,m);
-        Eigen::VectorXd b(n);
+        std::vector<int> valid_indices;
+        if (noise_level > 0.0f)
+        {
+            std::vector<char> valid_point(n, 0);
+            double threshold = 4.0 * noise_level;
+
+            // Segment size for block processing
+            int block_size_row = 16;
+            int block_size_col = 16;
+            if (xdim < 16) block_size_row = xdim;
+            if (ydim < 16) block_size_col = ydim;
+
+            for (int r_start = 0; r_start < xdim; r_start += block_size_row)
+            {
+                int r_end = std::min(xdim, r_start + block_size_row);
+                int r_len = r_end - r_start;
+                for (int c_start = 0; c_start < ydim; c_start += block_size_col)
+                {
+                    int c_end = std::min(ydim, c_start + block_size_col);
+                    int c_len = c_end - c_start;
+
+                    int count = r_len * c_len;
+                    if (count <= 0) continue;
+
+                    double sum = 0.0;
+                    for (int r = r_start; r < r_end; ++r)
+                    {
+                        for (int c = c_start; c < c_end; ++c)
+                        {
+                            sum += static_cast<double>(z[r * ydim + c]);
+                        }
+                    }
+                    double mean = sum / count;
+
+                    double sq_sum = 0.0;
+                    for (int r = r_start; r < r_end; ++r)
+                    {
+                        for (int c = c_start; c < c_end; ++c)
+                        {
+                            double diff = static_cast<double>(z[r * ydim + c]) - mean;
+                            sq_sum += diff * diff;
+                        }
+                    }
+                    double rmsd = std::sqrt(sq_sum / count);
+
+                    if (rmsd <= threshold)
+                    {
+                        for (int r = r_start; r < r_end; ++r)
+                        {
+                            for (int c = c_start; c < c_end; ++c)
+                            {
+                                valid_point[r * ydim + c] = 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            valid_indices.reserve(n);
+            for (int i = 0; i < n; ++i)
+            {
+                if (valid_point[i])
+                {
+                    valid_indices.push_back(i);
+                }
+            }
+
+            // Fallback 1: if too few points, select individual points under threshold
+            if (valid_indices.size() < static_cast<size_t>(m))
+            {
+                valid_indices.clear();
+                for (int i = 0; i < n; ++i)
+                {
+                    if (std::abs(z[i]) <= threshold)
+                    {
+                        valid_indices.push_back(i);
+                    }
+                }
+            }
+
+            // Fallback 2: if still too few, use all points
+            if (valid_indices.size() < static_cast<size_t>(m))
+            {
+                valid_indices.clear();
+                for (int i = 0; i < n; ++i)
+                {
+                    valid_indices.push_back(i);
+                }
+            }
+        }
+        else
+        {
+            valid_indices.reserve(n);
+            for (int i = 0; i < n; ++i)
+            {
+                valid_indices.push_back(i);
+            }
+        }
+
+        if (selected_mask != nullptr)
+        {
+            selected_mask->assign(n, 0);
+            for (int i : valid_indices)
+            {
+                (*selected_mask)[i] = 1;
+            }
+        }
+
+        int n_valid = static_cast<int>(valid_indices.size());
+        Eigen::MatrixXd d(n_valid, m);
+        Eigen::VectorXd b(n_valid);
         Eigen::VectorXd solution(m);
 
         /**
-         * Copy z to b
+         * Copy selected z to b
          */
-        for(int i=0;i<n;i++)
+        for (int row = 0; row < n_valid; ++row)
         {
-            b(i) = z[i];
+            int i = valid_indices[row];
+            b(row) = z[i];
         }
 
         /**
          * Fill d
          */
-        for(int i=0;i<n;i++)
+        for (int row = 0; row < n_valid; ++row)
         {
-            d(i,0) = 1.0;
+            int i = valid_indices[row];
+            d(row,0) = 1.0;
             if(order>=1)
             {
-                d(i,1) = x[i];
-                d(i,2) = y[i];
+                d(row,1) = x[i];
+                d(row,2) = y[i];
             }
             if(order>=2)
             {
-                d(i,3) = x[i]*x[i];
-                d(i,4) = y[i]*y[i];
+                d(row,3) = x[i]*x[i];
+                d(row,4) = y[i]*y[i];
             }
             if(order>=3)
             {
-                d(i,5) = x[i]*x[i]*x[i];
-                d(i,6) = y[i]*y[i]*y[i];
+                d(row,5) = x[i]*x[i]*x[i];
+                d(row,6) = y[i]*y[i]*y[i];
+            }
+            if(order>=4)
+            {
+                d(row,7) = x[i]*x[i]*x[i]*x[i];
+                d(row,8) = y[i]*y[i]*y[i]*y[i];
             }
         }
 
@@ -145,6 +330,580 @@ namespace fid_2d_math {
         }
 
         return true;
+    }
+
+    bool polynomial_baseline_1d(
+        const float *data,
+        int ndata,
+        int order,
+        std::vector<float> &baseline,
+        double threshold,
+        int segment_size,
+        std::vector<char> *selected_mask = nullptr
+        )
+    {
+        if (order < 0 || ndata <= 0 || segment_size <= 0)
+        {
+            return false;
+        }
+
+        std::vector<char> valid_point(ndata, 0);
+
+        for (int start = 0; start < ndata; start += segment_size)
+        {
+            const int end = std::min(ndata, start + segment_size);
+            const int seg_len = end - start;
+            if (seg_len <= 0)
+            {
+                continue;
+            }
+
+            double sum = 0.0;
+            for (int r = 0; r < seg_len; ++r)
+            {
+                sum += static_cast<double>(data[start + r]);
+            }
+            const double mean = sum / static_cast<double>(seg_len);
+
+            double sq_sum = 0.0;
+            for (int r = 0; r < seg_len; ++r)
+            {
+                const double diff = static_cast<double>(data[start + r]) - mean;
+                sq_sum += diff * diff;
+            }
+            const double rmsd = std::sqrt(sq_sum / static_cast<double>(seg_len));
+
+            if (rmsd <= threshold)
+            {
+                for (int r = 0; r < seg_len; ++r)
+                {
+                    valid_point[start + r] = 1;
+                }
+            }
+        }
+
+        std::vector<int> valid_indices;
+        valid_indices.reserve(ndata);
+        for (int i = 0; i < ndata; ++i)
+        {
+            if (valid_point[i])
+            {
+                valid_indices.push_back(i);
+            }
+        }
+
+        const int n_terms = order + 1;
+        if (valid_indices.size() < static_cast<size_t>(n_terms))
+        {
+            valid_indices.clear();
+            for (int i = 0; i < ndata; ++i)
+            {
+                if (std::abs(data[i]) <= threshold)
+                {
+                    valid_indices.push_back(i);
+                }
+            }
+        }
+
+        if (valid_indices.size() < static_cast<size_t>(n_terms))
+        {
+            valid_indices.clear();
+            for (int i = 0; i < ndata; ++i)
+            {
+                valid_indices.push_back(i);
+            }
+        }
+
+        if (selected_mask != nullptr)
+        {
+            selected_mask->assign(static_cast<size_t>(ndata), 0);
+            for (int i : valid_indices)
+            {
+                (*selected_mask)[static_cast<size_t>(i)] = 1;
+            }
+        }
+
+        const int n_valid = static_cast<int>(valid_indices.size());
+        Eigen::MatrixXd design(n_valid, n_terms);
+        Eigen::VectorXd values(n_valid);
+
+        for (int row = 0; row < n_valid; ++row)
+        {
+            const int i = valid_indices[row];
+            const double x = (ndata > 1) ? (2.0 * static_cast<double>(i) / static_cast<double>(ndata - 1) - 1.0) : 0.0;
+            double term = 1.0;
+            values(row) = static_cast<double>(data[i]);
+            for (int j = 0; j < n_terms; ++j)
+            {
+                design(row, j) = term;
+                term *= x;
+            }
+        }
+
+        Eigen::VectorXd solution = design.jacobiSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(values);
+
+        baseline.assign(ndata, 0.0f);
+        for (int i = 0; i < ndata; ++i)
+        {
+            const double x = (ndata > 1) ? (2.0 * static_cast<double>(i) / static_cast<double>(ndata - 1) - 1.0) : 0.0;
+            double term = 1.0;
+            double fitted = 0.0;
+            for (int j = 0; j < n_terms; ++j)
+            {
+                fitted += solution(j) * term;
+                term *= x;
+            }
+            baseline[i] = static_cast<float>(fitted);
+        }
+
+        return true;
+    }
+
+    bool solve_pentadiagonal(
+        int n,
+        const std::vector<double>& diag,
+        const std::vector<double>& sub1,
+        const std::vector<double>& sub2,
+        const Eigen::VectorXd& m,
+        Eigen::VectorXd& x
+    ) {
+        if (n <= 0) return false;
+
+        std::vector<double> delta(n, 0.0);
+        std::vector<double> c(n - 1, 0.0);
+        std::vector<double> g(n - 2, 0.0);
+
+        // i = 0
+        delta[0] = diag[0];
+        if (std::abs(delta[0]) < 1e-15) return false;
+        c[0] = sub1[0] / delta[0];
+        g[0] = sub2[0] / delta[0];
+
+        // i = 1
+        if (n >= 2) {
+            delta[1] = diag[1] - c[0] * c[0] * delta[0];
+            if (std::abs(delta[1]) < 1e-15) return false;
+            c[1] = (sub1[1] - g[0] * c[0] * delta[0]) / delta[1];
+            if (n > 2) {
+                g[1] = sub2[1] / delta[1];
+            }
+        }
+
+        // i = 2 to n - 3
+        for (int i = 2; i < n - 2; i++) {
+            delta[i] = diag[i] - c[i-1] * c[i-1] * delta[i-1] - g[i-2] * g[i-2] * delta[i-2];
+            if (std::abs(delta[i]) < 1e-15) return false;
+            c[i] = (sub1[i] - g[i-1] * c[i-1] * delta[i-1]) / delta[i];
+            g[i] = sub2[i] / delta[i];
+        }
+
+        // i = n - 2
+        if (n >= 3) {
+            int i = n - 2;
+            delta[i] = diag[i] - c[i-1] * c[i-1] * delta[i-1] - g[i-2] * g[i-2] * delta[i-2];
+            if (std::abs(delta[i]) < 1e-15) return false;
+            c[i] = (sub1[i] - g[i-1] * c[i-1] * delta[i-1]) / delta[i];
+        }
+
+        // i = n - 1
+        if (n >= 2) {
+            int i = n - 1;
+            delta[i] = diag[i] - c[i-1] * c[i-1] * delta[i-1] - g[i-2] * g[i-2] * delta[i-2];
+            if (std::abs(delta[i]) < 1e-15) return false;
+        }
+
+        // Solve L * y = m (forward substitution)
+        std::vector<double> y(n, 0.0);
+        y[0] = m[0];
+        if (n >= 2) {
+            y[1] = m[1] - c[0] * y[0];
+        }
+        for (int i = 2; i < n; i++) {
+            y[i] = m[i] - c[i-1] * y[i-1] - g[i-2] * y[i-2];
+        }
+
+        // Solve D * z = y
+        std::vector<double> z(n, 0.0);
+        for (int i = 0; i < n; i++) {
+            z[i] = y[i] / delta[i];
+        }
+
+        // Solve L^T * x = z (backward substitution)
+        x.resize(n);
+        x[n-1] = z[n-1];
+        if (n >= 2) {
+            x[n-2] = z[n-2] - c[n-2] * x[n-1];
+        }
+        for (int i = n - 3; i >= 0; i--) {
+            x[i] = z[i] - c[i] * x[i+1] - g[i] * x[i+2];
+        }
+
+        return true;
+    }
+
+    bool flatt_identify_regions_1d(
+        const float *data,
+        int ndata,
+        std::vector<bool> &pos_peaks,
+        std::vector<bool> &neg_peaks,
+        std::vector<bool> &water_regions,
+        double noise_level,
+        int window_size = 17,
+        double var_threshold = -1.0,
+        std::vector<int> *out_region_mask = nullptr
+    ) {
+        if (ndata <= 0) return false;
+
+        // 1. Run FLATT to get region_mask
+        double threshold = var_threshold;
+        if (threshold < 0) {
+            threshold = 4.0 * noise_level;
+        }
+
+        int W = window_size;
+        if (W % 2 == 0) W += 1;
+        double x_bar = (W + 1) / 2.0;
+        double sum_x_sq = W * (W * W - 1) / 12.0;
+        int half_win = (W - 1) / 2;
+
+        std::vector<int> region_mask(ndata, 0);
+
+        for (int start_idx = 0; start_idx <= ndata - W; start_idx++) {
+            double sum_y = 0.0;
+            for (int i = 0; i < W; i++) {
+                sum_y += data[start_idx + i];
+            }
+            double y_bar = sum_y / W;
+
+            double num = 0.0;
+            for (int i = 0; i < W; i++) {
+                num += (i + 1 - x_bar) * data[start_idx + i];
+            }
+            double slope = num / sum_x_sq;
+            double intercept = y_bar - slope * x_bar;
+
+            double rss = 0.0;
+            for (int i = 0; i < W; i++) {
+                double fitted = slope * (i + 1) + intercept;
+                double res = data[start_idx + i] - fitted;
+                rss += res * res;
+            }
+            double res_variance = std::sqrt(rss / (W - 1));
+
+            double slope_threshold = 3.0 * noise_level;
+            int center_idx = start_idx + half_win;
+            if (res_variance >= threshold || std::abs(slope) > slope_threshold) {
+                if (slope > 0) {
+                    region_mask[center_idx] = 1;
+                } else {
+                    region_mask[center_idx] = -1;
+                }
+            } else {
+                region_mask[center_idx] = 0;
+            }
+        }
+
+        // 2. Classify regions
+        pos_peaks.assign(ndata, false);
+        neg_peaks.assign(ndata, false);
+        water_regions.assign(ndata, false);
+
+        // Identify contiguous non-zero blocks (connected components)
+        std::vector<int> labeled(ndata, 0);
+        int num_blocks = 0;
+        bool in_block = false;
+        for (int i = 0; i < ndata; i++) {
+            if (region_mask[i] != 0) {
+                if (!in_block) {
+                    num_blocks++;
+                    in_block = true;
+                }
+                labeled[i] = num_blocks;
+            } else {
+                in_block = false;
+            }
+        }
+
+        // Process each contiguous block
+        for (int b = 1; b <= num_blocks; b++) {
+            std::vector<int> block_indices;
+            for (int i = 0; i < ndata; i++) {
+                if (labeled[i] == b) {
+                    block_indices.push_back(i);
+                }
+            }
+            if (block_indices.empty()) continue;
+
+            // Extract segments of constant sign within this block
+            std::vector<int> block_values;
+            for (int idx : block_indices) {
+                block_values.push_back(region_mask[idx]);
+            }
+
+            std::vector<int> transitions;
+            for (size_t i = 0; i < block_values.size() - 1; i++) {
+                if (block_values[i] != block_values[i+1]) {
+                    transitions.push_back(i);
+                }
+            }
+
+            std::vector<int> segment_starts;
+            std::vector<int> segment_ends;
+            segment_starts.push_back(0);
+            for (int t : transitions) {
+                segment_ends.push_back(t);
+                segment_starts.push_back(t + 1);
+            }
+            segment_ends.push_back(block_values.size() - 1);
+
+            int num_segments = segment_starts.size();
+            std::vector<int> segment_signs(num_segments);
+            std::vector<int> segment_lengths(num_segments);
+            for (int s = 0; s < num_segments; s++) {
+                segment_signs[s] = block_values[segment_starts[s]];
+                segment_lengths[s] = segment_ends[s] - segment_starts[s] + 1;
+            }
+
+            bool is_pos_peak = false;
+            bool is_neg_peak = false;
+            bool is_water = false;
+
+            if (num_segments >= 3) {
+                is_water = true;
+            } else if (num_segments >= 1) {
+                int s_first = segment_signs.front();
+                int s_last = segment_signs.back();
+
+                if (s_first == 1 && s_last == -1) {
+                    if (num_segments == 2) {
+                        if (segment_lengths[0] >= 2 && segment_lengths[1] >= 2) {
+                            is_pos_peak = true;
+                        }
+                    } else {
+                        is_pos_peak = true;
+                    }
+                } else if (s_first == -1 && s_last == 1) {
+                    if (num_segments == 2) {
+                        if (segment_lengths[0] >= 2 && segment_lengths[1] >= 2) {
+                            is_neg_peak = true;
+                        }
+                    } else {
+                        is_neg_peak = true;
+                    }
+                }
+            }
+
+            if (is_pos_peak) {
+                for (int idx : block_indices) pos_peaks[idx] = true;
+            } else if (is_neg_peak) {
+                for (int idx : block_indices) neg_peaks[idx] = true;
+            } else if (is_water) {
+                for (int idx : block_indices) water_regions[idx] = true;
+            }
+        }
+
+        if (out_region_mask != nullptr) {
+            *out_region_mask = region_mask;
+        }
+
+        return true;
+    }
+
+    void expand_neg_peaks_1d(
+        const std::vector<bool> &pos_peaks,
+        std::vector<bool> &neg_peaks,
+        const std::vector<bool> &water_regions,
+        int ndata,
+        int expand_steps = 16
+    ) {
+        for (int step = 1; step <= expand_steps; step++) {
+            std::vector<int> neg_indices;
+            for (int i = 0; i < ndata; i++) {
+                if (neg_peaks[i]) {
+                    neg_indices.push_back(i);
+                }
+            }
+
+            std::vector<int> to_add_left;
+            std::vector<int> to_add_right;
+
+            for (int idx : neg_indices) {
+                int left = idx - 1;
+                if (left >= 0 && !pos_peaks[left] && !water_regions[left]) {
+                    to_add_left.push_back(left);
+                }
+                int right = idx + 1;
+                if (right < ndata && !pos_peaks[right] && !water_regions[right]) {
+                    to_add_right.push_back(right);
+                }
+            }
+
+            for (int idx : to_add_left) neg_peaks[idx] = true;
+            for (int idx : to_add_right) neg_peaks[idx] = true;
+        }
+    }
+
+    bool flatt_solver_1d(
+        const float *data,
+        int ndata,
+        std::vector<float> &baseline,
+        const std::vector<bool> &pos_peaks,
+        const std::vector<bool> &neg_peaks,
+        const std::vector<bool> &water_regions,
+        double noise_level,
+        double flatt_a = 1e9,
+        double flatt_b = 1.5
+    ) {
+        double max_val = 0.0;
+        for (int i = 0; i < ndata; i++) {
+            if (std::abs(data[i]) > max_val) {
+                max_val = std::abs(data[i]);
+            }
+        }
+        if (max_val <= 0.0) max_val = 1.0;
+
+        std::vector<double> signal(ndata);
+        for (int i = 0; i < ndata; i++) {
+            signal[i] = data[i] / max_val;
+        }
+
+        double noise = noise_level / max_val;
+        if (noise <= 0.0) noise = 1e-4;
+        double aa = flatt_a / noise;
+        double b = flatt_b / noise;
+
+        // Initialize static subdiagonals
+        std::vector<double> sub1(ndata - 1);
+        sub1[0] = -4.0 * aa;
+        if (ndata > 2) {
+            sub1[ndata - 2] = -4.0 * aa;
+            for (int i = 1; i < ndata - 2; i++) {
+                sub1[i] = -8.0 * aa;
+            }
+        }
+
+        std::vector<double> sub2(ndata - 2, 2.0 * aa);
+
+        Eigen::VectorXd calculated_baseline = Eigen::VectorXd::Constant(ndata, 0.1);
+
+        for (int loop = 0; loop < 10; loop++) {
+            // Build diagonal
+            std::vector<double> diag(ndata);
+            diag[0] = 2.0 * aa;
+            if (ndata >= 2) {
+                diag[ndata - 1] = 2.0 * aa;
+            }
+            if (ndata >= 3) {
+                diag[1] = 10.0 * aa;
+                diag[ndata - 2] = 10.0 * aa;
+            }
+            for (int i = 2; i < ndata - 2; i++) {
+                diag[i] = 12.0 * aa;
+            }
+
+            // Apply constraints
+            Eigen::VectorXd m = Eigen::VectorXd::Zero(ndata);
+            for (int i = 0; i < ndata; i++) {
+                if (water_regions[i]) {
+                    m(i) = 1.0;
+                } else if (neg_peaks[i]) {
+                    if (calculated_baseline(i) < signal[i]) {
+                        diag[i] += 2.0 * b;
+                        m(i) = 2.0 * b * signal[i] + 1.0;
+                    } else {
+                        m(i) = 1.0;
+                    }
+                } else {
+                    if (calculated_baseline(i) > signal[i]) {
+                        diag[i] += 2.0 * b;
+                        m(i) = 2.0 * b * signal[i] + 1.0;
+                    } else {
+                        m(i) = 1.0;
+                    }
+                }
+            }
+
+            // Solve using custom pentadiagonal solver
+            Eigen::VectorXd next_baseline;
+            if (solve_pentadiagonal(ndata, diag, sub1, sub2, m, next_baseline)) {
+                calculated_baseline = next_baseline;
+            } else {
+                break;
+            }
+        }
+
+        // Restore scale
+        baseline.resize(ndata);
+        for (int i = 0; i < ndata; i++) {
+            baseline[i] = static_cast<float>(calculated_baseline(i) * max_val);
+        }
+
+        return true;
+    }
+
+    std::vector<bool> erode_3x3_cross(const std::vector<bool> &mask, int rows, int cols) {
+        std::vector<bool> result(rows * cols, false);
+        for (int y = 0; y < rows; y++) {
+            for (int x = 0; x < cols; x++) {
+                if (mask[y * cols + x]) {
+                    bool keep = true;
+                    // top
+                    if (y > 0 && !mask[(y - 1) * cols + x]) keep = false;
+                    // bottom
+                    if (y < rows - 1 && !mask[(y + 1) * cols + x]) keep = false;
+                    // left
+                    if (x > 0 && !mask[y * cols + (x - 1)]) keep = false;
+                    // right
+                    if (x < cols - 1 && !mask[y * cols + (x + 1)]) keep = false;
+                    
+                    if (keep) result[y * cols + x] = true;
+                }
+            }
+        }
+        return result;
+    }
+
+    std::vector<bool> dilate_3x3_cross(const std::vector<bool> &mask, int rows, int cols) {
+        std::vector<bool> result = mask;
+        for (int y = 0; y < rows; y++) {
+            for (int x = 0; x < cols; x++) {
+                if (mask[y * cols + x]) {
+                    if (y > 0) result[(y - 1) * cols + x] = true;
+                    if (y < rows - 1) result[(y + 1) * cols + x] = true;
+                    if (x > 0) result[y * cols + (x - 1)] = true;
+                    if (x < cols - 1) result[y * cols + (x + 1)] = true;
+                }
+            }
+        }
+        return result;
+    }
+
+    std::vector<bool> opening_3x3_cross(const std::vector<bool> &mask, int rows, int cols) {
+        return dilate_3x3_cross(erode_3x3_cross(mask, rows, cols), rows, cols);
+    }
+
+    std::vector<bool> closing_3x3_cross(const std::vector<bool> &mask, int rows, int cols) {
+        return erode_3x3_cross(dilate_3x3_cross(mask, rows, cols), rows, cols);
+    }
+
+    bool flatt_baseline_1d(
+        const float *data,
+        int ndata,
+        std::vector<float> &baseline,
+        double noise_level,
+        int window_size = 17,
+        double var_threshold = -1.0,
+        double flatt_a = 1e9,
+        double flatt_b = 1.5
+    ) {
+        std::vector<bool> pos_peaks(ndata, false);
+        std::vector<bool> neg_peaks(ndata, false);
+        std::vector<bool> water_regions(ndata, false);
+        if (!flatt_identify_regions_1d(data, ndata, pos_peaks, neg_peaks, water_regions, noise_level, window_size, var_threshold)) {
+            return false;
+        }
+        expand_neg_peaks_1d(pos_peaks, neg_peaks, water_regions, ndata, 16);
+        return flatt_solver_1d(data, ndata, baseline, pos_peaks, neg_peaks, water_regions, noise_level, flatt_a, flatt_b);
     }
 };
 
@@ -262,6 +1021,42 @@ namespace ldw_math_spectrum_2d
 
 };
 
+
+/**
+ * IMPORTANT:
+ * We have udict_acqus_direct, and udict_acqus_direct, which are dictionary to store information from Bruker acqus(2,3,4) files.
+ * We also have nmrpipe_dict_string and nmrpipe_dict_float, which are used to store information for nmrPipe header. 
+ * They are equivalent to nmrpipe_header_data, but in a more convenient format.
+ * 
+ * Then we have our own variables, such as spectral_width, observed_frequency, carrier_frequency, which are used for our own processing and will be written to nmrPipe header in the end.
+ * They are read from udict_acqus_direct and udict_acqus_indirect, or from nmrPipe header when read in from nmrPipe file. They will be used in our processing and also written to nmrPipe header in the end.
+ * 
+ * 
+ * In nmrPipe header, direct dimension information is always in
+ * FDF2SW, FDF2OBS, FDF2CAR, FDF2FTSIZE, FDF2APOD, FDF2ZF, FDF2QUADFLAG
+ * and first indirect dimension information is in 
+ * FDF1SW, FDF1OBS, FDF1CAR, FDF1FTSIZE, FDF1APOD, FDF1ZF, FDF1QUADFLAG 
+ * and second indirect dimension information is in
+ * FDF3SW, FDF3OBS, FDF3CAR, FDF3FTSIZE, FDF3APOD, FDF3ZF, FDF3QUADFLAG
+ * 
+ * no matter whether the data is transposed or not. When transposed, we will swap the value of direct and indirect dimension in our processing,
+ * but still write them to the same place in nmrPipe header.
+ * 
+ * However, FDSIZE is always the inner dimension size, and FDSPECNUM is the outer dimension size, 
+ * no matter whether the data is transposed (1,2,3,4) or not (2,1,3,4)
+ * or when we run -ext command along direct dimension (in that case, FDSIZE < FDF2FTSIZE for non-transposed data, FDSPECNUM < FDF2FTSIZE for transposed data)
+ * Some 2D experiments have the order of (2,3,1,4), in that case, we will use FDF3??? for indirect dimension and FDF2??? for direct dimension. 
+ * 
+ * FDF?FTSIZE is always 0 for time domain data, 
+ * FDF?ZF is negative of total number of points in time domain (after zero filling) for that dimension,
+ * FDF?APOD is the number of points in frequency domain for that dimension, which is usually same as FDF?TDSIZE,
+ */
+
+
+
+
+
+
 /**
  * Constructor and destructor
  */
@@ -302,9 +1097,20 @@ fid_2d::fid_2d()
     b_imaginary_indirect = true; //default. keep imaginary data
 
     nuslists.clear(); //clear nuslists, not really needed ??
+    nusflags.clear(); //clear nusflags, not really needed ??
+    nuslists2.clear(); //clear nuslists2, not really needed ??
+
 
     apodization_code = 0;
     apodization_code_indirect = 0;
+
+    extraction_use_ppm = false;
+    extraction_from = 0.0;
+    extraction_to = 1.0;
+    extraction_from_ppm = 0.0;
+    extraction_to_ppm = 0.0;
+    extraction_from_pos = 0;
+    extraction_to_pos = 0;
 
     noise_level = -0.1; // negative nosie means we don't have it yet
 
@@ -372,6 +1178,55 @@ bool fid_2d::read_nus_list_from_string(const std::string &nus_string)
     return true;
 }
 
+/**
+ * Read nus simu list from a file. One line per sampling point or one element per sampling point in one line
+ */
+bool fid_2d::read_nus_simu_list(std::string fname)
+{
+    std::ifstream infile(fname);
+    /**
+     * Real all lines from the file
+     */
+    std::string contents = std::string((std::istreambuf_iterator<char>(infile)), std::istreambuf_iterator<char>());
+    infile.close();
+    
+    if (contents.empty())
+    {
+        std::cerr << "Error: nus simu list file is empty or does not exist." << std::endl;
+        return false;
+    }
+    return read_nus_simu_list_from_string(contents);
+}
+
+/**
+ * Read nus simu list from a string
+ * The string should be a space separated list of integers or new line separated list of integers
+ */
+bool fid_2d::read_nus_simu_list_from_string(const std::string &nus_simu_string)
+{
+    std::istringstream iss(nus_simu_string);
+    std::string line;
+    nuslists2.clear();
+    while (std::getline(iss, line))
+    {
+        std::istringstream iss_line(line);
+        int temp;
+        while (iss_line >> temp)
+        {
+            nuslists2.push_back(temp);
+        }
+    }
+
+    std::cout<<"Read "<<nuslists2.size()<<" simulated nus points from string"<<std::endl;
+    for(int i=0;i<nuslists2.size();i++)
+    {
+        std::cout<<nuslists2[i]<<" ";
+    }
+    std::cout<<std::endl;
+
+    return true;
+}
+
 
 /**
  * Load user provided phase correction values from a file
@@ -381,8 +1236,20 @@ bool fid_2d::read_nus_list_from_string(const std::string &nus_string)
 bool fid_2d::read_phase_correction(std::string fname)
 {
     std::ifstream infile(fname);
-    infile >> user_p0_direct >> user_p1_direct >> user_p0_indirect >> user_p1_indirect;
-    std::cout<<"User provided phase correction values: "<<user_p0_direct<<" "<<user_p1_direct<<" "<<user_p0_indirect<<" "<<user_p1_indirect<<std::endl;
+    std::string contents = std::string((std::istreambuf_iterator<char>(infile)), std::istreambuf_iterator<char>());
+    infile.close();
+    return read_phase_correction_from_string(contents);
+}
+
+bool fid_2d::read_phase_correction_from_string(const std::string &phase_correction_text)
+{
+    std::istringstream iss(phase_correction_text);
+    if (!(iss >> user_p0_direct >> user_p1_direct >> user_p0_indirect >> user_p1_indirect))
+    {
+        std::cout << "Error: phase correction string must contain 4 numbers" << std::endl;
+        return false;
+    }
+    std::cout << "User provided phase correction values: " << user_p0_direct << " " << user_p1_direct << " " << user_p0_indirect << " " << user_p1_indirect << std::endl;
     return true;
 }
 
@@ -462,7 +1329,7 @@ bool fid_2d::read_bruker_folder(std::string folder_name)
      * Read acqus file and store the content. Required for indirect dimension
      */
     std::string acqus_file2_name = folder_name + "/acqu2s";
-    status = stat(acqus_file_name.c_str(), &sb);
+    status = stat(acqus_file2_name.c_str(), &sb);
     if (status != 0)
     {
         std::cerr << "Error: cannot find acqu2s file in folder " << folder_name << std::endl;
@@ -525,9 +1392,9 @@ bool fid_2d::read_bruker_files_as_strings(const std::string &contents_pulse, con
     bool b1=process_jcamp_as_string(contents_acqus, udict_acqus_direct);
     bool b2=process_jcamp_as_string(contents_acqus2, udict_acqus_indirect);
 
-    process_dictionary();
+    bool b3=process_dictionary();
 
-    return b1 && b2;
+    return b1 && b2 && b3;
 };
 
 /**
@@ -536,7 +1403,99 @@ bool fid_2d::read_bruker_files_as_strings(const std::string &contents_pulse, con
  */
 bool fid_2d::read_bruker_fid_data(const std::vector<float> &fid_data_float_in)
 {
-    fid_data_float = std::move(fid_data_float_in);
+    const int points_per_spectrum = ndata_bruker * ndata_bruker_indirect;
+    if (points_per_spectrum <= 0)
+    {
+        std::cout << "Error: invalid Bruker dimensions. Call read_bruker_files_as_strings first." << std::endl;
+        return false;
+    }
+    if (fid_data_float_in.empty() || (fid_data_float_in.size() % points_per_spectrum) != 0)
+    {
+        std::cout << "Error: Bruker float payload size does not match expected dimensions" << std::endl;
+        return false;
+    }
+
+    nspectra = static_cast<int>(fid_data_float_in.size() / points_per_spectrum);
+    fid_data_float = fid_data_float_in;
+
+    std::cout << "Read " << nspectra << " spectra from memory payload" << std::endl;
+    std::cout << " ndata_bruker = " << ndata_bruker << " ndata_bruker_indirect = " << ndata_bruker_indirect << std::endl;
+
+    return process_fid_data();
+}
+
+bool fid_2d::read_bruker_fid_data_bytes(const std::vector<unsigned char> &fid_data_bytes)
+{
+    if (fid_data_bytes.empty())
+    {
+        std::cout << "Error: empty Bruker FID payload" << std::endl;
+        return false;
+    }
+
+    const int points_per_spectrum = ndata_bruker * ndata_bruker_indirect;
+    if (points_per_spectrum <= 0)
+    {
+        std::cout << "Error: invalid Bruker dimensions. Call read_bruker_files_as_strings first." << std::endl;
+        return false;
+    }
+
+    fid_data_float.clear();
+
+    if (data_type == FID_DATA_TYPE_INT32)
+    {
+        if ((fid_data_bytes.size() % sizeof(int32_t)) != 0)
+        {
+            std::cout << "Error: Bruker INT32 payload byte size is not aligned" << std::endl;
+            return false;
+        }
+        const size_t n_points = fid_data_bytes.size() / sizeof(int32_t);
+        if (n_points == 0 || (n_points % points_per_spectrum) != 0)
+        {
+            std::cout << "Error: Bruker INT32 payload size does not match expected dimensions" << std::endl;
+            return false;
+        }
+
+        nspectra = static_cast<int>(n_points / points_per_spectrum);
+        fid_data_float.resize(n_points, 0.0f);
+        for (size_t i = 0; i < n_points; i++)
+        {
+            int32_t v = 0;
+            std::memcpy(&v, fid_data_bytes.data() + i * sizeof(int32_t), sizeof(int32_t));
+            fid_data_float[i] = static_cast<float>(v);
+        }
+    }
+    else if (data_type == FID_DATA_TYPE_FLOAT64)
+    {
+        if ((fid_data_bytes.size() % sizeof(double)) != 0)
+        {
+            std::cout << "Error: Bruker FLOAT64 payload byte size is not aligned" << std::endl;
+            return false;
+        }
+        const size_t n_points = fid_data_bytes.size() / sizeof(double);
+        if (n_points == 0 || (n_points % points_per_spectrum) != 0)
+        {
+            std::cout << "Error: Bruker FLOAT64 payload size does not match expected dimensions" << std::endl;
+            return false;
+        }
+
+        nspectra = static_cast<int>(n_points / points_per_spectrum);
+        fid_data_float.resize(n_points, 0.0f);
+        for (size_t i = 0; i < n_points; i++)
+        {
+            double v = 0.0;
+            std::memcpy(&v, fid_data_bytes.data() + i * sizeof(double), sizeof(double));
+            fid_data_float[i] = static_cast<float>(v);
+        }
+    }
+    else
+    {
+        std::cout << "Error: unsupported Bruker data type" << std::endl;
+        return false;
+    }
+
+    std::cout << "Read " << nspectra << " spectra from byte payload" << std::endl;
+    std::cout << " ndata_bruker = " << ndata_bruker << " ndata_bruker_indirect = " << ndata_bruker_indirect << std::endl;
+
     return process_fid_data();
 }
 
@@ -573,10 +1532,17 @@ bool fid_2d::read_bruker_files(const std::string &pulse_program_name,const std::
         }
     }
     
-    read_jcamp(acqus_file_name, udict_acqus_direct);
-    read_jcamp(acqus_file2_name, udict_acqus_indirect);
+    if(!read_jcamp(acqus_file_name, udict_acqus_direct) || !read_jcamp(acqus_file2_name, udict_acqus_indirect))
+    {
+        std::cerr << "Error: cannot read acqus or acqu2s file" << std::endl;
+        return false;
+    }
 
-    process_dictionary();
+    if(!process_dictionary())
+    {
+        std::cerr << "Error: cannot process dictionary" << std::endl;
+        return false;
+    }
 
     /**
      * now we can actually read the fid data
@@ -739,85 +1705,73 @@ bool fid_2d::process_fid_data()
      */
     if(ndata_bruker_indirect_original > ndata_bruker_indirect)
     {
-        fid_data_float.resize(nspectra * ndata_bruker * ndata_bruker_indirect_original, 0.0f);
         /**
-         * We do in-place expansion, so we work from the last spectrum to the first
-         * and from the last trace to the first within each spectrum
+         * Use a temporary buffer to safely expand data regardless of nuslists order.
+         * This avoids the assumption that nuslists is sorted and prevents data corruption
+         * from in-place moves.
          */
-        for(int m=nspectra-1;m>=0;m--)
+        std::vector<float> temp_compressed = fid_data_float;
+        fid_data_float.clear();
+        fid_data_float.resize(nspectra * ndata_bruker * ndata_bruker_indirect_original, 0.0f);
+        
+        /**
+         * Copy each sampled trace from compressed buffer to its correct location in expanded buffer
+         * We iterate over nuslists in forward order, which works regardless of whether
+         * it is sorted or not
+         */
+        for(int m=0; m<nspectra; m++)
         {
             int spectrum_start_target = m * ndata_bruker * ndata_bruker_indirect_original;
             int spectrum_start_source = m * ndata_bruker * ndata_bruker_indirect;
-            for(int n=nuslists.size()-1;n>=0;n--)
+            
+            for(int n=0; n<nuslists.size(); n++)
             {
                 /**
-                 * At index*2: imaginary part of indirect dimension
-                */
-                int nn=n*2+1;
-                int mm=nuslists[n]*2+1;
-                int trace_start_source = spectrum_start_source + nn * ndata_bruker;
-                int trace_start_target = spectrum_start_target + mm * ndata_bruker;
-                if(trace_start_target > trace_start_source)
-                {
-                    std::memcpy(fid_data_float.data()+trace_start_target,fid_data_float.data()+trace_start_source,sizeof(float)*ndata_bruker);
-                    /**
-                     * Set data at trace_start_source to 0.0f
-                    */
-                    std::fill(fid_data_float.begin()+trace_start_source,fid_data_float.begin()+trace_start_source+ndata_bruker,0.0f);
-                }
-
+                 * Source location in compressed buffer: index n*2 (real) and n*2+1 (imaginary)
+                 * Target location in expanded buffer: index nuslists[n]*2 (real) and nuslists[n]*2+1 (imaginary)
+                 */
+                
                 /**
-                 * At index*2-1: real part of indirect dimension
-                */
-                nn=n*2;
-                mm=nuslists[n]*2;
-                trace_start_source = spectrum_start_source + nn * ndata_bruker;
-                trace_start_target = spectrum_start_target + mm * ndata_bruker;
-                if(trace_start_target > trace_start_source)
-                {
-                    std::memcpy(fid_data_float.data()+trace_start_target,fid_data_float.data()+trace_start_source,sizeof(float)*ndata_bruker);
-                    /**
-                     * Set data at trace_start_source to 0.0f
-                    */
-                    std::fill(fid_data_float.begin()+trace_start_source,fid_data_float.begin()+trace_start_source+ndata_bruker,0.0f);
-                }
-
-
+                 * Copy real part (at index n*2 in compressed)
+                 */
+                int compressed_trace_real = n * 2;
+                int expanded_trace_real = nuslists[n] * 2;
+                int source_start_real = spectrum_start_source + compressed_trace_real * ndata_bruker;
+                int target_start_real = spectrum_start_target + expanded_trace_real * ndata_bruker;
+                std::memcpy(fid_data_float.data() + target_start_real,
+                           temp_compressed.data() + source_start_real,
+                           sizeof(float) * ndata_bruker);
+                
                 /**
-                 * else, do nothing, because trace_start_target == trace_start_source
-                */
+                 * Copy imaginary part (at index n*2+1 in compressed)
+                 */
+                int compressed_trace_imag = n * 2 + 1;
+                int expanded_trace_imag = nuslists[n] * 2 + 1;
+                int source_start_imag = spectrum_start_source + compressed_trace_imag * ndata_bruker;
+                int target_start_imag = spectrum_start_target + expanded_trace_imag * ndata_bruker;
+                std::memcpy(fid_data_float.data() + target_start_imag,
+                           temp_compressed.data() + source_start_imag,
+                           sizeof(float) * ndata_bruker);
             }
         }
+        
         /**
          * Restore ndata_bruker_indirect to its original size
          */
         ndata_bruker_indirect = ndata_bruker_indirect_original;
         ndata_indirect = ndata_bruker_indirect / 2;
     }
-    
-    /**
-     * Define nusflags, for convenience. nusflags.size() == ndata_indirect
-     * and nusflags[i] == 1 means the i-th trace is sampled, 0 means the i-th trace is not sampled
-     */
-    if(nuslists.size()>0)
-    {
-        nusflags.clear();
-        nusflags.resize(ndata_indirect, 0);
-        for(int i=0;i<nuslists.size();i++)
-        {
-            nusflags[nuslists[i]]=1;
-        }
-    }
-    else
-    { 
-        /**
-         * nuslists is empty. This is a fully sampled experiments, so all traces are sampled.
-        */
-        nusflags.clear();
-        nusflags.resize(ndata_indirect, 1);
-    }
 
-   
+    /**
+     * Keep this cached value in sync with the possibly expanded indirect size.
+     * It is used by downstream loops (FnMODE conversion and rr/ri/ir/ii split).
+     */
+    ndata_bruker_indirect_by2 = ndata_bruker_indirect;
+    if (ndata_bruker_indirect % 2 == 1)
+    {
+        ndata_bruker_indirect_by2 = ndata_bruker_indirect - 1;
+    }
+       
     /**
      * Adjust indirect dimension data format according to FnMODE
      * fid_data_float[ndata_bruker_indirect][ndata_bruker]. Data is interleaved along both dimensions (real,imaginary,real,imaginary,...)
@@ -871,16 +1825,13 @@ bool fid_2d::process_fid_data()
     }
 
     /**
-     * Convert fid_data_float to:
-     * fid_data_real_real, fid_data_real_imag, fid_data_imag_real, fid_data_imag_imag
-     * (This is lazy. It is better to read data into fid_data_real_real,... directly, but memory is not a big issue here.)
-     * fid_data_float is interleaved (rr, ri of 1st trace, ir, ii of 1st trace, rr, ri of 2nd trace, ir, ii of 2nd trace, ...)
-     * ndata = ndata_bruker / 2; ndata_indirect = ndata_bruker_indirect / 2;
+     * Convert fid_data_float to active stage container (spectrum_* in FID stage).
+     * fid_data_float is interleaved (rr, ri of 1st trace, ir, ii of 1st trace, rr, ri of 2nd trace, ...)
      */
-    fid_data_real_real.resize(nspectra * ndata * ndata_indirect, 0.0f);
-    fid_data_real_imag.resize(nspectra * ndata * ndata_indirect, 0.0f);
-    fid_data_imag_real.resize(nspectra * ndata * ndata_indirect, 0.0f);
-    fid_data_imag_imag.resize(nspectra * ndata * ndata_indirect, 0.0f);
+    spectrum_real_real.resize(nspectra * ndata * ndata_indirect, 0.0f);
+    spectrum_real_imag.resize(nspectra * ndata * ndata_indirect, 0.0f);
+    spectrum_imag_real.resize(nspectra * ndata * ndata_indirect, 0.0f);
+    spectrum_imag_imag.resize(nspectra * ndata * ndata_indirect, 0.0f);
     for(int k=0;k<nspectra;k++)
     {
         int data_start = k * ndata_bruker * ndata_bruker_indirect;
@@ -891,10 +1842,10 @@ bool fid_2d::process_fid_data()
             int trace_start2 = i/2 * ndata;
             for (int j = 0; j < ndata_bruker; j += 2)
             {
-                fid_data_real_real[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + i * ndata_bruker + j];
-                fid_data_real_imag[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + i * ndata_bruker + j + 1];
-                fid_data_imag_real[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + (i + 1) * ndata_bruker + j];
-                fid_data_imag_imag[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + (i + 1) * ndata_bruker + j + 1];
+                spectrum_real_real[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + i * ndata_bruker + j];
+                spectrum_real_imag[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + i * ndata_bruker + j + 1];
+                spectrum_imag_real[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + (i + 1) * ndata_bruker + j];
+                spectrum_imag_imag[data_start2 + trace_start2 + j / 2] = fid_data_float[data_start + (i + 1) * ndata_bruker + j + 1];
             }
         }
     }
@@ -904,7 +1855,56 @@ bool fid_2d::process_fid_data()
      */
     fid_data_float.clear();
 
+    b_frq = false;
+    b_frq_indirect = false;
+    ndata_frq = 0;
+    ndata_frq_indirect = 0;
+    b_nmrPipe_transposed = false;
+    n_outer_dim = ndata_indirect;
+    n_inner_dim = ndata;
+    spect = spectrum_real_real.data();
 
+    /**
+     * Define nusflags, for convenience. nusflags.size() == ndata_indirect
+     * and nusflags[i] == 1 means the i-th trace is sampled, 0 means the i-th trace is not sampled
+     */
+    if(nuslists.size()>0)
+    {
+        nusflags.clear();
+        nusflags.resize(ndata_indirect, 0);
+        for(int i=0;i<nuslists.size();i++)
+        {
+            nusflags[nuslists[i]]=1;
+        }
+    }
+    /**
+     * For simulate nus, we have full data, but we want to mark some traces as non-sampled for testing. So we use nuslists2 to mark non-sampled traces, and set nusflags to 0 for those traces.
+     * Note that nuslists2 is for simulated nus, so it marks non-sampled traces, while nuslists is for real nus, so it marks sampled traces. This is a bit confusing
+     */
+    else if(nuslists2.size()>0)
+    {
+        nusflags.clear();
+        nusflags.resize(ndata_indirect, 0);  // mark all as non-sampled first
+        for(int i=0;i<nuslists2.size();i++)
+        {
+            if(nuslists2[i] >= 0 && nuslists2[i] < ndata_indirect)  // bounds check
+            {
+                nusflags[nuslists2[i]]=1;  // mark as sampled if it is in nuslists2
+            }
+            else
+            {
+                std::cerr << "Warning: nuslists2[" << i << "]=" << nuslists2[i] << " is out of range [0," << ndata_indirect << "), skipping." << std::endl;
+            }
+        }
+    }
+    else
+    { 
+        /**
+         * nuslists is empty. This is a fully sampled experiments, so all traces are sampled.
+        */
+        nusflags.clear();
+        nusflags.resize(ndata_indirect, 1);
+    }
 
     return true;
 }
@@ -1177,6 +2177,7 @@ bool fid_2d::read_nmrpipe_file(const std::string &fname)
     if (n_read != 512)
     {
         std::cout << "Error: cannot read 512 float from file " << fname << std::endl;
+        fclose(fp);
         return false;
     }
 
@@ -1189,17 +2190,17 @@ bool fid_2d::read_nmrpipe_file(const std::string &fname)
 
     set_varibles_from_nmrpipe_dictionary();
 
+
     /**
      * Read time domain data if FDF2FTFLAG = 0 and FDF1FTFLAG = 0
      * We suppose all data is complex at this time
      */
     if (b_frq == false && b_frq_indirect == false)
     {
-
-        fid_data_real_real.resize(ndata * ndata_indirect, 0.0f);
-        fid_data_real_imag.resize(ndata * ndata_indirect, 0.0f);
-        fid_data_imag_real.resize(ndata * ndata_indirect, 0.0f);
-        fid_data_imag_imag.resize(ndata * ndata_indirect, 0.0f);
+        spectrum_real_real.resize(ndata * ndata_indirect, 0.0f);
+        spectrum_real_imag.resize(ndata * ndata_indirect, 0.0f);
+        spectrum_imag_real.resize(ndata * ndata_indirect, 0.0f);
+        spectrum_imag_imag.resize(ndata * ndata_indirect, 0.0f);
 
 
         for (int i = 0; i < ndata_indirect; i++)
@@ -1207,11 +2208,18 @@ bool fid_2d::read_nmrpipe_file(const std::string &fname)
             /**
              * At this time, we suppose the data is complex for time domain data
             */
-            fread(fid_data_real_real.data(), sizeof(float), ndata, fp);
-            fread(fid_data_real_imag.data(), sizeof(float), ndata, fp);
-            fread(fid_data_imag_real.data(), sizeof(float), ndata, fp);
-            fread(fid_data_imag_imag.data(), sizeof(float), ndata, fp);
+            if (fread(spectrum_real_real.data() + i * ndata, sizeof(float), ndata, fp) != static_cast<size_t>(ndata) ||
+                fread(spectrum_real_imag.data() + i * ndata, sizeof(float), ndata, fp) != static_cast<size_t>(ndata) ||
+                fread(spectrum_imag_real.data() + i * ndata, sizeof(float), ndata, fp) != static_cast<size_t>(ndata) ||
+                fread(spectrum_imag_imag.data() + i * ndata, sizeof(float), ndata, fp) != static_cast<size_t>(ndata))
+            {
+                std::cout << "Error: cannot read time domain data from file " << fname << std::endl;
+                fclose(fp);
+                return false;
+            }
         }
+        b_frq = false;
+        b_frq_indirect = false;
     }
     /**
      * Read frq data if FDF2FTFLAG = 1 and FDF1FTFLAG = 1
@@ -1229,21 +2237,42 @@ bool fid_2d::read_nmrpipe_file(const std::string &fname)
 
         for (int i = 0; i < n_outer_dim; i++)
         {
-            fread(spectrum_real_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp);
+            if (fread(spectrum_real_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp) != static_cast<size_t>(n_inner_dim))
+            {
+                std::cout << "Error: cannot read spectrum_real_real data from file " << fname << std::endl;
+                fclose(fp);
+                return false;
+            }
             if(b_imaginary==true)
             {
-                fread(spectrum_real_imag.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp);
+                if (fread(spectrum_real_imag.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp) != static_cast<size_t>(n_inner_dim))
+                {
+                    std::cout << "Error: cannot read spectrum_real_imag data from file " << fname << std::endl;
+                    fclose(fp);
+                    return false;
+                }
             }
             if(b_imaginary_indirect==true)
             {
-                fread(spectrum_imag_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp);
-                
+                if (fread(spectrum_imag_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp) != static_cast<size_t>(n_inner_dim))
+                {
+                    std::cout << "Error: cannot read spectrum_imag_real data from file " << fname << std::endl;
+                    fclose(fp);
+                    return false;
+                }
             }
             if(b_imaginary==true && b_imaginary_indirect==true)
             {
-                fread(spectrum_imag_imag.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp);
+                if (fread(spectrum_imag_imag.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp) != static_cast<size_t>(n_inner_dim))
+                {
+                    std::cout << "Error: cannot read spectrum_imag_imag data from file " << fname << std::endl;
+                    fclose(fp);
+                    return false;
+                }
             }
         }
+        b_frq = true;
+        b_frq_indirect = true;
     }
         /**
      * Read intermediate data if FDF2FTFLAG = 1 and FDF1FTFLAG = 0
@@ -1251,25 +2280,186 @@ bool fid_2d::read_nmrpipe_file(const std::string &fname)
      */
     else if (b_frq == true && b_frq_indirect == false)
     {
-        intermediate_data_real_real.resize(ndata_frq * ndata_indirect, 0.0f);
-        intermediate_data_real_imag.resize(ndata_frq * ndata_indirect, 0.0f);
-        intermediate_data_imag_real.resize(ndata_frq * ndata_indirect, 0.0f);
-        intermediate_data_imag_imag.resize(ndata_frq * ndata_indirect, 0.0f);
+        spectrum_real_real.resize(ndata_frq * ndata_indirect, 0.0f);
+        spectrum_real_imag.resize(ndata_frq * ndata_indirect, 0.0f);
+        spectrum_imag_real.resize(ndata_frq * ndata_indirect, 0.0f);
+        spectrum_imag_imag.resize(ndata_frq * ndata_indirect, 0.0f);
 
         std::cout<<"n_out_dim = "<<n_outer_dim<<" n_in_dim = "<<n_inner_dim<<std::endl;
 
         for (int i = 0; i < n_outer_dim; i++)
         {
-            fread(intermediate_data_real_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp);
+            if (fread(spectrum_real_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp) != static_cast<size_t>(n_inner_dim))
+            {
+                std::cout << "Error: cannot read spectrum_real_real data from file " << fname << std::endl;
+                fclose(fp);
+                return false;
+            }
             if(b_imaginary==true)
             {
-                fread(intermediate_data_real_imag.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp);
-                fread(intermediate_data_imag_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp);
-                fread(intermediate_data_imag_imag.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp);
+                if (fread(spectrum_real_imag.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp) != static_cast<size_t>(n_inner_dim) ||
+                    fread(spectrum_imag_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp) != static_cast<size_t>(n_inner_dim) ||
+                    fread(spectrum_imag_imag.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp) != static_cast<size_t>(n_inner_dim))
+                {
+                    std::cout << "Error: cannot read complex intermediate data from file " << fname << std::endl;
+                    fclose(fp);
+                    return false;
+                }
             }
             else
             {
-                fread(intermediate_data_imag_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp);    
+                if (fread(spectrum_imag_real.data() + i * n_inner_dim, sizeof(float), n_inner_dim, fp) != static_cast<size_t>(n_inner_dim))
+                {
+                    std::cout << "Error: cannot read spectrum_imag_real data from file " << fname << std::endl;
+                    fclose(fp);
+                    return false;
+                }
+            }
+        }
+        b_frq = true;
+        b_frq_indirect = false;
+    }
+    else
+    {
+        std::cout << "Error: FDF2FTFLAG = " << nmrpipe_dict_float["FDF2FTFLAG"] << ", FDF1FTFLAG = " << nmrpipe_dict_float["FDF1FTFLAG"] << " is not supported" << std::endl;
+        fclose(fp);
+        return false;
+    }
+
+    b_read_bruker_acqus_and_fid = false;
+    b_read_nmrpipe_fid = true;
+
+    nspectra = 1; // only one spectrum, not a pseudo 3D NMR
+
+    spect = spectrum_real_real.data(); //alias to active stage container
+
+    nusflags.clear();
+    nusflags.resize(ndata_indirect, 1);
+
+    estimate_noise_level();
+
+    fclose(fp);
+
+    return true;
+}
+
+bool fid_2d::read_nmrpipe_file_from_buffer(const std::vector<unsigned char> &nmrpipe_bytes)
+{
+    const size_t header_bytes = 512 * sizeof(float);
+    if (nmrpipe_bytes.size() < header_bytes)
+    {
+        std::cout << "Error: nmrPipe buffer is too small to contain header" << std::endl;
+        return false;
+    }
+
+    nmrpipe_header_data.clear();
+    nmrpipe_header_data.resize(512, 0.0f);
+    std::memcpy(nmrpipe_header_data.data(), nmrpipe_bytes.data(), header_bytes);
+
+    nmrPipe::nmrpipe_header_to_dictionary(nmrpipe_header_data.data(), nmrpipe_dict_string, nmrpipe_dict_float);
+
+    if (nmrpipe_dict_float["FDDIMCOUNT"] != 2.0)
+    {
+        std::cout << "FDDIMCOUNT = " << nmrpipe_dict_float["FDDIMCOUNT"] << ", this is not true 2D data" << std::endl;
+    }
+
+    set_varibles_from_nmrpipe_dictionary();
+
+
+    size_t offset = header_bytes;
+    auto read_trace = [&](float *dst, int n_elem) -> bool {
+        const size_t need = static_cast<size_t>(n_elem) * sizeof(float);
+        if (offset + need > nmrpipe_bytes.size())
+        {
+            return false;
+        }
+        std::memcpy(dst, nmrpipe_bytes.data() + offset, need);
+        offset += need;
+        return true;
+    };
+
+    if (b_frq == false && b_frq_indirect == false)
+    {
+        spectrum_real_real.resize(ndata * ndata_indirect, 0.0f);
+        spectrum_real_imag.resize(ndata * ndata_indirect, 0.0f);
+        spectrum_imag_real.resize(ndata * ndata_indirect, 0.0f);
+        spectrum_imag_imag.resize(ndata * ndata_indirect, 0.0f);
+
+        for (int i = 0; i < ndata_indirect; i++)
+        {
+            if (!read_trace(spectrum_real_real.data() + i * ndata, ndata) ||
+                !read_trace(spectrum_real_imag.data() + i * ndata, ndata) ||
+                !read_trace(spectrum_imag_real.data() + i * ndata, ndata) ||
+                !read_trace(spectrum_imag_imag.data() + i * ndata, ndata))
+            {
+                std::cout << "Error: insufficient nmrPipe payload for time-domain data" << std::endl;
+                return false;
+            }
+        }
+    }
+    else if (b_frq == true && b_frq_indirect == true)
+    {
+        ndata_frq = n_inner_dim;
+        ndata_frq_indirect = n_outer_dim;
+
+        spectrum_real_real.resize(ndata_frq * ndata_frq_indirect, 0.0f);
+        spectrum_real_imag.resize(ndata_frq * ndata_frq_indirect, 0.0f);
+        spectrum_imag_real.resize(ndata_frq * ndata_frq_indirect, 0.0f);
+        spectrum_imag_imag.resize(ndata_frq * ndata_frq_indirect, 0.0f);
+
+        for (int i = 0; i < n_outer_dim; i++)
+        {
+            if (!read_trace(spectrum_real_real.data() + i * n_inner_dim, n_inner_dim))
+            {
+                std::cout << "Error: insufficient nmrPipe payload for rr data" << std::endl;
+                return false;
+            }
+            if (b_imaginary == true && !read_trace(spectrum_real_imag.data() + i * n_inner_dim, n_inner_dim))
+            {
+                std::cout << "Error: insufficient nmrPipe payload for ri data" << std::endl;
+                return false;
+            }
+            if (b_imaginary_indirect == true && !read_trace(spectrum_imag_real.data() + i * n_inner_dim, n_inner_dim))
+            {
+                std::cout << "Error: insufficient nmrPipe payload for ir data" << std::endl;
+                return false;
+            }
+            if (b_imaginary == true && b_imaginary_indirect == true && !read_trace(spectrum_imag_imag.data() + i * n_inner_dim, n_inner_dim))
+            {
+                std::cout << "Error: insufficient nmrPipe payload for ii data" << std::endl;
+                return false;
+            }
+        }
+
+    }
+    else if (b_frq == true && b_frq_indirect == false)
+    {
+        spectrum_real_real.resize(ndata_frq * ndata_indirect, 0.0f);
+        spectrum_real_imag.resize(ndata_frq * ndata_indirect, 0.0f);
+        spectrum_imag_real.resize(ndata_frq * ndata_indirect, 0.0f);
+        spectrum_imag_imag.resize(ndata_frq * ndata_indirect, 0.0f);
+
+        for (int i = 0; i < n_outer_dim; i++)
+        {
+            if (!read_trace(spectrum_real_real.data() + i * n_inner_dim, n_inner_dim))
+            {
+                std::cout << "Error: insufficient nmrPipe payload for intermediate rr data" << std::endl;
+                return false;
+            }
+            if (b_imaginary == true)
+            {
+                if (!read_trace(spectrum_real_imag.data() + i * n_inner_dim, n_inner_dim) ||
+                    !read_trace(spectrum_imag_real.data() + i * n_inner_dim, n_inner_dim) ||
+                    !read_trace(spectrum_imag_imag.data() + i * n_inner_dim, n_inner_dim))
+                {
+                    std::cout << "Error: insufficient nmrPipe payload for intermediate complex data" << std::endl;
+                    return false;
+                }
+            }
+            else if (!read_trace(spectrum_imag_real.data() + i * n_inner_dim, n_inner_dim))
+            {
+                std::cout << "Error: insufficient nmrPipe payload for intermediate ir data" << std::endl;
+                return false;
             }
         }
     }
@@ -1281,23 +2471,37 @@ bool fid_2d::read_nmrpipe_file(const std::string &fname)
 
     b_read_bruker_acqus_and_fid = false;
     b_read_nmrpipe_fid = true;
+    nspectra = 1;
+    spect = spectrum_real_real.data();
 
-    nspectra = 1; // only one spectrum, not a pseudo 3D NMR
+    nusflags.clear();
+    nusflags.resize(ndata_indirect, 1);
 
-    spect = spectrum_real_real.data(); //alias to spectrum_real_real
+    estimate_noise_level();
 
+    std::cout<<"Successfully read nmrPipe data from buffer, n_outer_dim = "<<n_outer_dim<<" n_inner_dim = "<<n_inner_dim<<std::endl;
+    std::cout<<"ndata_frq_indirect = "<<ndata_frq_indirect<<" ndata_frq = "<<ndata_frq<<" b_imaginary = "<<b_imaginary<<" b_imaginary_indirect = "<<b_imaginary_indirect<<std::endl;
     return true;
 }
 
 /**
- * This function will fillin most PART 1 varibles from PART 3 variables
+ * This function will fillin our own variables based on nmrPipe dictionary. 
+ * We need to call this function after reading nmrPipe header and before reading nmrPipe data, because we need to know the size of data to read.
  */
 bool fid_2d::set_varibles_from_nmrpipe_dictionary()
 {
     /**
      * These are not used in nmrPipe dictionary ?
     */
-    grpdly = -1.0;                                        //<0 means not set
+    if(nmrpipe_dict_float.find("GRPDLY") != nmrpipe_dict_float.end())
+    {
+        grpdly = nmrpipe_dict_float["GRPDLY"];
+        if(grpdly <= 0.0)
+        {
+            grpdly = -1.0;  // 0.0f means not set in nmrPipe header. We use < 0 as flag.
+        }
+    }
+    
     data_type = FID_DATA_TYPE::FID_DATA_TYPE_NOT_DEFINED; // not defined
     receiver_gain = 1.0;
 
@@ -1308,19 +2512,25 @@ bool fid_2d::set_varibles_from_nmrpipe_dictionary()
     */
     data_complexity = FID_DATA_COMPLEXITY_COMPLEX;
     b_imaginary = nmrpipe_dict_float["FDF2QUADFLAG"] == 0.0;
-    b_imaginary_indirect = nmrpipe_dict_float["FDF1QUADFLAG"] == 0.0;
+    
 
-      /**
+    /**
      * Set spectral_width, observed_frequency, carrier_frequency
      */
     spectral_width = nmrpipe_dict_float["FDF2SW"];
     observed_frequency = nmrpipe_dict_float["FDF2OBS"];
     carrier_frequency = nmrpipe_dict_float["FDF2CAR"]*observed_frequency;
     origin_frequency = nmrpipe_dict_float["FDF2ORIG"];
-    spectral_width_indirect = nmrpipe_dict_float["FDF1SW"];
-    observed_frequency_indirect = nmrpipe_dict_float["FDF1OBS"];
-    carrier_frequency_indirect = nmrpipe_dict_float["FDF1CAR"]*observed_frequency_indirect;
-    origin_frequency_indirect = nmrpipe_dict_float["FDF1ORIG"];
+
+    if(nmrpipe_dict_float["FDF2FTFLAG"] == 1.0)
+    {
+        b_frq = true;
+    }
+    else
+    {
+        b_frq = false;
+    }
+   
 
     /**
      * Set begin1, step1, stop1, begin2, step2, stop2
@@ -1334,28 +2544,25 @@ bool fid_2d::set_varibles_from_nmrpipe_dictionary()
         observed_frequency_indirect = nmrpipe_dict_float["FDF3OBS"];
         carrier_frequency_indirect = nmrpipe_dict_float["FDF3CAR"] * observed_frequency_indirect;
         origin_frequency_indirect = nmrpipe_dict_float["FDF3ORIG"];
+        b_imaginary_indirect = nmrpipe_dict_float["FDF3QUADFLAG"] == 0.0;
+        b_frq_indirect = nmrpipe_dict_float["FDF3FTFLAG"] == 1.0;
+    }
+    else //must be 1
+    {
+        spectral_width_indirect = nmrpipe_dict_float["FDF1SW"];
+        observed_frequency_indirect = nmrpipe_dict_float["FDF1OBS"];
+        carrier_frequency_indirect = nmrpipe_dict_float["FDF1CAR"]*observed_frequency_indirect;
+        origin_frequency_indirect = nmrpipe_dict_float["FDF1ORIG"];
+        b_imaginary_indirect = nmrpipe_dict_float["FDF1QUADFLAG"] == 0.0;
+        b_frq_indirect = nmrpipe_dict_float["FDF1FTFLAG"] == 1.0;
     }
 
-    /**
-     * Check for FT flag. 
-    */
-    b_frq = false;
-    if(nmrpipe_dict_float["FDF2FTFLAG"] == 1.0)
-    {
-        b_frq = true;
-    }
-    b_frq_indirect = false;
-    if(nmrpipe_dict_float["FDF1FTFLAG"] == 1.0 && indirect_ndx==1)
-    {
-        b_frq_indirect = true;
-    }
-    if(nmrpipe_dict_float["FDF3FTFLAG"] == 1.0 && indirect_ndx==3)
-    {
-        b_frq_indirect = true;
-    }
+    
 
     /**
-     * This is true for nmrPipe data, both frq or time domain data
+     * This is true for nmrPipe data, both frq or time domain data, transposed or not, 
+     * when both dimensions are complex, FDSPECNUM is 2 * n_outer_dim; 
+     * when one dimension is real, FDSPECNUM is n_outer_dim; when both dimensions are real, FDSPECNUM is n_outer_dim
     */
     n_outer_dim = int(nmrpipe_dict_float["FDSPECNUM"]);
     n_inner_dim = int(nmrpipe_dict_float["FDSIZE"]);
@@ -1395,13 +2602,13 @@ bool fid_2d::set_varibles_from_nmrpipe_dictionary()
 
     if(b_frq_indirect==true){
         ndata_frq_indirect = n_indirect_dimension;
-        ndata_indirect = int(nmrpipe_dict_float["FDF1TDSIZE"]);
+        ndata_indirect = indirect_ndx == 1 ? int(nmrpipe_dict_float["FDF1TDSIZE"]) : int(nmrpipe_dict_float["FDF3TDSIZE"]);
     }
     else{
         ndata_indirect = n_indirect_dimension;
         ndata_frq_indirect = 0; //not used
     }
-    n_center_indirect = int(nmrpipe_dict_float["FDF1CENTER"]);
+    n_center_indirect = indirect_ndx == 1 ? int(nmrpipe_dict_float["FDF1CENTER"]) : int(nmrpipe_dict_float["FDF3CENTER"]);
 
 
     
@@ -1416,19 +2623,20 @@ bool fid_2d::set_varibles_from_nmrpipe_dictionary()
     }
 
    
-  
-
     /**
      * Need to update begin1,step1,stop1,begin2,step2,stop2 from nmrPipe dictionary
+     * if not FTed data, we use ndata to replace ndata_frq.
      */
     stop1 = origin_frequency / observed_frequency;
     begin1 = stop1 + spectral_width / observed_frequency;
-    step1 = (stop1 - begin1) / (ndata_frq); // direct dimension
+    if(b_frq == false) step1 = (stop1 - begin1) / ndata; // direct dimension
+    else step1 = (stop1 - begin1) / (ndata_frq); // direct dimension
     begin1 += step1;                        // here we have to + step because we want to be consistent with nmrpipe program,I have no idea why nmrpipe is different than topspin
 
     stop2 = origin_frequency_indirect / observed_frequency_indirect;
     begin2 = stop2 + spectral_width_indirect / observed_frequency_indirect;
-    step2 = (stop2 - begin2) / (ndata_frq_indirect); // indirect dimension
+    if (b_frq_indirect == false) step2 = (stop2 - begin2) / ndata_indirect; // indirect dimension
+    else step2 = (stop2 - begin2) / (ndata_frq_indirect); // indirect dimension
     begin2 += step2;                                 // here we have to + step because we want to be consistent with nmrpipe program,I have no idea why nmrpipe is different than topspin
 
     return true;
@@ -1709,6 +2917,15 @@ bool fid_2d::write_pseudo3d_json(std::string fname)
     return true;
 }
 
+std::string fid_2d::write_pseudo3d_json_as_string()
+{
+    Json::Value root;
+    root["spectra"] = nspectra;
+
+    Json::StreamWriterBuilder writer;
+    return Json::writeString(writer, root);
+}
+
 /**
  * @brief process 2D FID data to get 2D frequency domain spectra
  * @return true on success, false on failure
@@ -1737,6 +2954,12 @@ bool fid_2d::direct_only_process(bool b_di_direct)
 */
 bool fid_2d::indirect_only_process(bool b_indirect_direct)
 {
+    if (!(b_frq == true && b_frq_indirect == false))
+    {
+        std::cout << "Error: indirect_only_process requires INTERMEDIATE stage" << std::endl;
+        return false;
+    }
+
     /**
      * Assess that b_frq is true and b_nmrPipe_transposed is true
     */
@@ -1757,6 +2980,12 @@ bool fid_2d::indirect_only_process(bool b_indirect_direct)
 */
 bool fid_2d::other_process(bool b_di_direct,  bool b_di_indirect)
 {
+    if (!(b_frq == true && b_frq_indirect == true))
+    {
+        std::cout << "Error: other_process requires FREQUENCY stage" << std::endl;
+        return false;
+    }
+
     /**
      * Apply phase correction along direct dimension only if b_imaginary is true
     */
@@ -1829,8 +3058,13 @@ bool fid_2d::other_process(bool b_di_direct,  bool b_di_indirect)
 */
 bool fid_2d::water_suppression()
 {
+    if (!(b_frq == false && b_frq_indirect == false))
+    {
+        std::cout << "Error: water_suppression requires FID stage" << std::endl;
+        return false;
+    }
 
-    if(fid_data_real_real.size()==0 || fid_data_real_imag.size()==0 || fid_data_imag_real.size()==0 || fid_data_imag_imag.size()==0)
+    if(spectrum_real_real.size()==0 || spectrum_real_imag.size()==0 || spectrum_imag_real.size()==0 || spectrum_imag_imag.size()==0)
     {
         std::cout<<"Error: fid_data is empty"<<std::endl;
         return false;
@@ -1841,17 +3075,17 @@ bool fid_2d::water_suppression()
 
     for(int i=0;i<ndata_indirect;i++)
     {
-        fid_2d_math::movemean(fid_data_real_real.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int,32);
-        fid_2d_math::spectrum_minus(fid_data_real_real.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int);
+        fid_2d_math::movemean(spectrum_real_real.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int,32);
+        fid_2d_math::spectrum_minus(spectrum_real_real.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int);
 
-        fid_2d_math::movemean(fid_data_real_imag.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int,32);
-        fid_2d_math::spectrum_minus(fid_data_real_imag.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int);
+        fid_2d_math::movemean(spectrum_real_imag.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int,32);
+        fid_2d_math::spectrum_minus(spectrum_real_imag.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int);
 
-        fid_2d_math::movemean(fid_data_imag_real.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int,32);
-        fid_2d_math::spectrum_minus(fid_data_imag_real.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int);
+        fid_2d_math::movemean(spectrum_imag_real.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int,32);
+        fid_2d_math::spectrum_minus(spectrum_imag_real.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int);
 
-        fid_2d_math::movemean(fid_data_imag_imag.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int,32);
-        fid_2d_math::spectrum_minus(fid_data_imag_imag.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int);
+        fid_2d_math::movemean(spectrum_imag_imag.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int,32);
+        fid_2d_math::spectrum_minus(spectrum_imag_imag.data()+i*ndata+grpdly_int,ave_signal,ndata-grpdly_int);
     }
 
 
@@ -1862,87 +3096,491 @@ bool fid_2d::water_suppression()
  * Run a polynomial baseline correction on the final spectrum (real real part only)
  * @param order: order of the polynomial (0,1 or 2)
 */
-bool fid_2d::polynorminal_baseline(int order)
+bool fid_2d::polynorminal_baseline(int order, bool b_trace_by_trace, double flatt_a, double flatt_b, int region_identification_flag)
 {
-    if(spectrum_real_real.size()==0)
+    if (!(b_frq == true && b_frq_indirect == true))
+    {
+        std::cout << "Error: polynorminal_baseline requires FREQUENCY stage" << std::endl;
+        return false;
+    }
+
+    if(spectrum_real_real.empty())
     {
         std::cout<<"Error: spectrum_real_real is empty"<<std::endl;
         return false;
     }
 
-    int n_dim1 = ndata_frq_indirect;
-    int n_dim2 = ndata_frq;
-
-    int step1 = 1;
-    int step2 = 1;
-
-    /**
-     * To make SVD manageable, we need to reduce the size of the spectrum
-     * to be <=524288 (512k)
-    */
-    while(n_dim1*n_dim2>524288)
+    // Estimate noise level if not already estimated
+    if (noise_level <= 0.0)
     {
-        n_dim1 /= 2;
-        step1 *= 2;
-        n_dim2 /= 2;
-        step2 *= 2;
+        spect = spectrum_real_real.data();
+        estimate_noise_level();
     }
-
-    std::vector<float> x(n_dim1*n_dim2,0.0f);
-    std::vector<float> y(n_dim1*n_dim2,0.0f);
-    std::vector<float> z(n_dim1*n_dim2,0.0f);
-
-    for(int i=0;i<n_dim1;i++)
+    if (noise_level <= 0.0)
     {
-        for(int j=0;j<n_dim2;j++)
+        noise_level = 0.1;
+    }
+    std::cout << "Using noise level: " << noise_level << " for peak exclusion." << std::endl;
+
+    if (b_trace_by_trace)
+    {
+        double threshold = 4.0 * noise_level;
+        int trace_len = n_inner_dim;
+
+        for (int k = 0; k < nspectra; k++)
         {
-            x[i*n_dim2+j] = j;
-            y[i*n_dim2+j] = i;
-            z[i*n_dim2+j] = spectrum_real_real[i*step1*n_dim2+j*step2];
+            size_t spectrum_offset = static_cast<size_t>(k) * n_outer_dim * n_inner_dim;
+            std::vector<char> full_selected_mask(n_outer_dim * n_inner_dim, 0);
+            std::vector<float> full_baseline(n_outer_dim * n_inner_dim, 0.0f);
+            std::vector<char> full_regions_map(n_outer_dim * n_inner_dim, 0);
+
+            if (order == -1 && (region_identification_flag == 1 || region_identification_flag == 5))
+            {
+                // Method 1 or 5: 2D region identification
+                std::vector<bool> full_pos_peaks(n_outer_dim * n_inner_dim, false);
+                std::vector<bool> full_neg_peaks(n_outer_dim * n_inner_dim, false);
+                std::vector<bool> full_water_regions(n_outer_dim * n_inner_dim, false);
+
+                if (region_identification_flag == 1)
+                {
+                    // Run row-wise (F2) region identification
+                    std::vector<bool> row_pos(n_inner_dim, false);
+                    std::vector<bool> row_neg(n_inner_dim, false);
+                    std::vector<bool> row_water(n_inner_dim, false);
+
+                    std::vector<bool> f2_pos(n_outer_dim * n_inner_dim, false);
+                    std::vector<bool> f2_neg(n_outer_dim * n_inner_dim, false);
+                    std::vector<bool> f2_water(n_outer_dim * n_inner_dim, false);
+
+                    for (int i = 0; i < n_outer_dim; i++)
+                    {
+                        const float *trace_data = spectrum_real_real.data() + spectrum_offset + i * n_inner_dim;
+                        std::vector<int> row_region_mask;
+                        fid_2d_math::flatt_identify_regions_1d(trace_data, n_inner_dim, row_pos, row_neg, row_water, noise_level, 17, -1.0, &row_region_mask);
+                        for (int j = 0; j < n_inner_dim; j++)
+                        {
+                            f2_pos[i * n_inner_dim + j] = row_pos[j];
+                            f2_neg[i * n_inner_dim + j] = row_neg[j];
+                            f2_water[i * n_inner_dim + j] = row_water[j];
+                            full_selected_mask[i * n_inner_dim + j] = row_region_mask[j];
+                        }
+                    }
+
+                    // Run column-wise (F1) region identification
+                    std::vector<bool> col_pos(n_outer_dim, false);
+                    std::vector<bool> col_neg(n_outer_dim, false);
+                    std::vector<bool> col_water(n_outer_dim, false);
+
+                    std::vector<bool> f1_pos(n_outer_dim * n_inner_dim, false);
+                    std::vector<bool> f1_neg(n_outer_dim * n_inner_dim, false);
+
+                    std::vector<float> col_data(n_outer_dim);
+                    for (int j = 0; j < n_inner_dim; j++)
+                    {
+                        for (int i = 0; i < n_outer_dim; i++)
+                        {
+                            col_data[i] = spectrum_real_real[spectrum_offset + i * n_inner_dim + j];
+                        }
+                        fid_2d_math::flatt_identify_regions_1d(col_data.data(), n_outer_dim, col_pos, col_neg, col_water, noise_level, 17, -1.0);
+                        for (int i = 0; i < n_outer_dim; i++)
+                        {
+                            f1_pos[i * n_inner_dim + j] = col_pos[i];
+                            f1_neg[i * n_inner_dim + j] = col_neg[i];
+                        }
+                    }
+
+                    // Consensus
+                    for (int idx = 0; idx < n_outer_dim * n_inner_dim; idx++)
+                    {
+                        full_pos_peaks[idx] = f2_pos[idx] && f1_pos[idx];
+                        full_neg_peaks[idx] = f2_neg[idx] && f1_neg[idx];
+                        full_water_regions[idx] = f2_water[idx]; // water region has no requirement along indirect dimension
+                    }
+
+                    // 2D Dilation on full_neg_peaks (structuring element: ellipsoid Rx=16, Ry=4)
+                    std::vector<bool> dilated_neg_peaks = full_neg_peaks;
+                    for (int y = 0; y < n_outer_dim; y++)
+                    {
+                        for (int x = 0; x < n_inner_dim; x++)
+                        {
+                            if (full_neg_peaks[y * n_inner_dim + x])
+                            {
+                                for (int dy = -4; dy <= 4; dy++)
+                                {
+                                    for (int dx = -16; dx <= 16; dx++)
+                                    {
+                                        if ((dx * dx) / 256.0 + (dy * dy) / 16.0 <= 1.0)
+                                        {
+                                            int ny = y + dy;
+                                            int nx = x + dx;
+                                            if (ny >= 0 && ny < n_outer_dim && nx >= 0 && nx < n_inner_dim)
+                                            {
+                                                if (!full_pos_peaks[ny * n_inner_dim + nx] && !full_water_regions[ny * n_inner_dim + nx])
+                                                {
+                                                    dilated_neg_peaks[ny * n_inner_dim + nx] = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    full_neg_peaks = dilated_neg_peaks;
+                }
+                else if (region_identification_flag == 5)
+                {
+                    // Run row-wise (F2) region identification (F2 only)
+                    std::vector<bool> row_pos(n_inner_dim, false);
+                    std::vector<bool> row_neg(n_inner_dim, false);
+                    std::vector<bool> row_water(n_inner_dim, false);
+
+                    for (int i = 0; i < n_outer_dim; i++)
+                    {
+                        const float *trace_data = spectrum_real_real.data() + spectrum_offset + i * n_inner_dim;
+                        std::vector<int> row_region_mask;
+                        fid_2d_math::flatt_identify_regions_1d(trace_data, n_inner_dim, row_pos, row_neg, row_water, noise_level, 17, -1.0, &row_region_mask);
+                        for (int j = 0; j < n_inner_dim; j++)
+                        {
+                            full_pos_peaks[i * n_inner_dim + j] = row_pos[j];
+                            full_neg_peaks[i * n_inner_dim + j] = row_neg[j];
+                            full_water_regions[i * n_inner_dim + j] = row_water[j];
+                            full_selected_mask[i * n_inner_dim + j] = row_region_mask[j];
+                        }
+                    }
+
+                    // 2D Dilation on full_neg_peaks (structuring element: ellipsoid Rx=16, Ry=4)
+                    std::vector<bool> dilated_neg_peaks = full_neg_peaks;
+                    for (int y = 0; y < n_outer_dim; y++)
+                    {
+                        for (int x = 0; x < n_inner_dim; x++)
+                        {
+                            if (full_neg_peaks[y * n_inner_dim + x])
+                            {
+                                for (int dy = -4; dy <= 4; dy++)
+                                {
+                                    for (int dx = -16; dx <= 16; dx++)
+                                    {
+                                        if ((dx * dx) / 256.0 + (dy * dy) / 16.0 <= 1.0)
+                                        {
+                                            int ny = y + dy;
+                                            int nx = x + dx;
+                                            if (ny >= 0 && ny < n_outer_dim && nx >= 0 && nx < n_inner_dim)
+                                            {
+                                                if (!full_pos_peaks[ny * n_inner_dim + nx] && !full_water_regions[ny * n_inner_dim + nx])
+                                                {
+                                                    dilated_neg_peaks[ny * n_inner_dim + nx] = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    full_neg_peaks = dilated_neg_peaks;
+
+                    // 2D Opening on full_pos_peaks and full_neg_peaks
+                    full_pos_peaks = fid_2d_math::opening_3x3_cross(full_pos_peaks, n_outer_dim, n_inner_dim);
+                    full_neg_peaks = fid_2d_math::opening_3x3_cross(full_neg_peaks, n_outer_dim, n_inner_dim);
+
+                    // 2D Closing on full_water_regions
+                    full_water_regions = fid_2d_math::closing_3x3_cross(full_water_regions, n_outer_dim, n_inner_dim);
+                }
+
+                // Populate full_regions_map (full_selected_mask contains raw slopes)
+                for (int idx = 0; idx < n_outer_dim * n_inner_dim; idx++)
+                {
+                    if (full_pos_peaks[idx]) full_regions_map[idx] = 1;
+                    else if (full_neg_peaks[idx]) full_regions_map[idx] = 2;
+                    else if (full_water_regions[idx]) full_regions_map[idx] = 3;
+                    else full_regions_map[idx] = 0;
+                }
+
+                // Solve baseline trace-by-trace and subtract
+                for (int i = 0; i < n_outer_dim; i++)
+                {
+                    float *trace_data = spectrum_real_real.data() + spectrum_offset + i * n_inner_dim;
+                    std::vector<bool> trace_pos(n_inner_dim);
+                    std::vector<bool> trace_neg(n_inner_dim);
+                    std::vector<bool> trace_water(n_inner_dim);
+                    for (int j = 0; j < n_inner_dim; j++)
+                    {
+                        trace_pos[j] = full_pos_peaks[i * n_inner_dim + j];
+                        trace_neg[j] = full_neg_peaks[i * n_inner_dim + j];
+                        trace_water[j] = full_water_regions[i * n_inner_dim + j];
+                    }
+
+                    std::vector<float> trace_baseline;
+                    fid_2d_math::flatt_solver_1d(trace_data, n_inner_dim, trace_baseline, trace_pos, trace_neg, trace_water, noise_level, flatt_a, flatt_b);
+
+                    for (int j = 0; j < n_inner_dim; j++)
+                    {
+                        full_baseline[i * n_inner_dim + j] = trace_baseline[j];
+                        trace_data[j] -= trace_baseline[j];
+                    }
+                }
+            }
+            else
+            {
+                // Original trace-by-trace polynomial or Method 0 FLATT baseline logic
+                for (int i = 0; i < n_outer_dim; i++)
+                {
+                    float *trace_data = spectrum_real_real.data() + spectrum_offset + i * n_inner_dim;
+                    std::vector<float> trace_baseline;
+
+                    if (order == -1)
+                    {
+                        std::vector<bool> trace_pos(trace_len, false);
+                        std::vector<bool> trace_neg(trace_len, false);
+                        std::vector<bool> trace_water(trace_len, false);
+                        std::vector<int> row_region_mask;
+                        fid_2d_math::flatt_identify_regions_1d(trace_data, trace_len, trace_pos, trace_neg, trace_water, noise_level, 17, -1.0, &row_region_mask);
+                        fid_2d_math::expand_neg_peaks_1d(trace_pos, trace_neg, trace_water, trace_len, 16);
+                        
+                        for (int j = 0; j < trace_len; j++)
+                        {
+                            if (trace_pos[j]) full_regions_map[i * trace_len + j] = 1;
+                            else if (trace_neg[j]) full_regions_map[i * trace_len + j] = 2;
+                            else if (trace_water[j]) full_regions_map[i * trace_len + j] = 3;
+                            else full_regions_map[i * trace_len + j] = 0;
+
+                            full_selected_mask[i * trace_len + j] = row_region_mask[j];
+                        }
+
+                        fid_2d_math::flatt_solver_1d(trace_data, trace_len, trace_baseline, trace_pos, trace_neg, trace_water, noise_level, flatt_a, flatt_b);
+                    }
+                    else
+                    {
+                        std::vector<char> trace_mask;
+                        fid_2d_math::polynomial_baseline_1d(trace_data, trace_len, order, trace_baseline, threshold, 32, &trace_mask);
+
+                        // Copy to full mask and regions map
+                        for (int j = 0; j < trace_len; j++)
+                        {
+                            full_selected_mask[i * trace_len + j] = trace_mask[j];
+                            full_regions_map[i * trace_len + j] = (trace_mask[j] == 0) ? 1 : 0;
+                        }
+                    }
+
+                    // Copy to full baseline
+                    for (int j = 0; j < trace_len; j++)
+                    {
+                        full_baseline[i * trace_len + j] = trace_baseline[j];
+                    }
+
+                    // Subtract baseline
+                    for (int j = 0; j < trace_len; j++)
+                    {
+                        trace_data[j] -= trace_baseline[j];
+                    }
+                }
+            }
+
+#ifdef DEBUG
+            {
+                std::string regions_filename = "debug_regions_map.txt";
+                std::string map_filename = "debug_selected_map.txt";
+                std::string base_filename = "debug_baseline.txt";
+                if (nspectra > 1)
+                {
+                    regions_filename = "debug_regions_map_" + std::to_string(k) + ".txt";
+                    map_filename = "debug_selected_map_" + std::to_string(k) + ".txt";
+                    base_filename = "debug_baseline_" + std::to_string(k) + ".txt";
+                }
+                std::ofstream out_regions(regions_filename);
+                std::ofstream out_map(map_filename);
+                std::ofstream out_base(base_filename);
+                if (out_regions.good() && out_map.good() && out_base.good())
+                {
+                    for (int i = 0; i < n_outer_dim; i++)
+                    {
+                        for (int j = 0; j < n_inner_dim; j++)
+                        {
+                            int region_val = full_regions_map[i * n_inner_dim + j];
+                            out_regions << region_val << (j == n_inner_dim - 1 ? "" : " ");
+
+                            int is_selected = full_selected_mask[i * n_inner_dim + j];
+                            out_map << is_selected << (j == n_inner_dim - 1 ? "" : " ");
+
+                            float baseline_val = full_baseline[i * n_inner_dim + j];
+                            out_base << baseline_val << (j == n_inner_dim - 1 ? "" : " ");
+                        }
+                        out_regions << "\n";
+                        out_map << "\n";
+                        out_base << "\n";
+                    }
+                }
+            }
+#endif
         }
-    }
-
-
-
-    std::vector<float> baseline_params;
-    fid_2d_math::polynomial_baseline(x,y,z,n_dim1,n_dim2,order,baseline_params);
-
-    /**
-     * Substract baseline from the spectrum
-    */
-    for(int i=0;i<ndata_frq_indirect;i++)
-    {
-        for(int j=0;j<ndata_frq;j++)
+        if (order == -1)
         {
-            float baseline = baseline_params[0]; //constant term
-            if(order>=1) 
-            {
-                baseline += baseline_params[1]*j; //linear term along dim2(inner dimension)
-                baseline += baseline_params[2]*i; //linear term along dim1(outer dimension)
-            }
-            if(order>=2)
-            {
-                baseline += baseline_params[3]*j*j; //quadratic term along dim2(inner dimension)
-                baseline += baseline_params[4]*i*i; //quadratic term along dim1(outer dimension)
-                /** No cross term in NMR */
-            }
-            if(order>=3)
-            {
-                baseline += baseline_params[5]*j*j*j; //cubic term along dim2(inner dimension)
-                baseline += baseline_params[6]*i*i*i; //cubic term along dim1(outer dimension)
-                /** No cross term in NMR */
-            }
-            spectrum_real_real[i*ndata_frq+j] -= baseline;
+            std::cout << "Baseline correction done using FLATT workflow with region flag " << region_identification_flag << std::endl;
         }
+        else
+        {
+            std::cout << "Baseline correction done using 1D trace-by-trace polynorminal at order " << order << std::endl;
+        }
+        return true;
     }
-    std::cout<<"Baseline correction done using polynorminal at order "<<order<<std::endl;
+    else
+    {
+        int n_dim1 = 4;
+        int n_dim2 = 64;
 
-    return true;
+        if (n_dim1 > n_outer_dim) n_dim1 = n_outer_dim;
+        if (n_dim2 > n_inner_dim) n_dim2 = n_inner_dim;
+
+        int step1 = n_outer_dim / n_dim1;
+        if (step1 < 1) step1 = 1;
+        int step2 = n_inner_dim / n_dim2;
+        if (step2 < 1) step2 = 1;
+
+        n_dim1 = n_outer_dim / step1;
+        n_dim2 = n_inner_dim / step2;
+
+        std::vector<float> x(n_dim1*n_dim2,0.0f);
+        std::vector<float> y(n_dim1*n_dim2,0.0f);
+        std::vector<float> z(n_dim1*n_dim2,0.0f);
+
+        for(int i=0;i<n_dim1;i++)
+        {
+            for(int j=0;j<n_dim2;j++)
+            {
+                x[i*n_dim2+j] = j * step2;
+                y[i*n_dim2+j] = i * step1;
+            }
+        }
+
+        for (int k = 0; k < nspectra; k++)
+        {
+            size_t spectrum_offset = static_cast<size_t>(k) * n_outer_dim * n_inner_dim;
+
+            for(int i=0;i<n_dim1;i++)
+            {
+                for(int j=0;j<n_dim2;j++)
+                {
+                    z[i*n_dim2+j] = spectrum_real_real[spectrum_offset + i*step1*n_inner_dim + j*step2];
+                }
+            }
+
+            std::vector<float> baseline_params;
+            std::vector<char> selected_mask;
+            fid_2d_math::polynomial_baseline(x,y,z,n_dim1,n_dim2,order,baseline_params, noise_level, &selected_mask);
+
+#ifdef DEBUG
+            {
+                std::string regions_filename = "debug_regions_map.txt";
+                std::string map_filename = "debug_selected_map.txt";
+                std::string base_filename = "debug_baseline.txt";
+                if (nspectra > 1)
+                {
+                    regions_filename = "debug_regions_map_" + std::to_string(k) + ".txt";
+                    map_filename = "debug_selected_map_" + std::to_string(k) + ".txt";
+                    base_filename = "debug_baseline_" + std::to_string(k) + ".txt";
+                }
+                std::ofstream out_regions(regions_filename);
+                std::ofstream out_map(map_filename);
+                std::ofstream out_base(base_filename);
+                if (out_regions.good() && out_map.good() && out_base.good())
+                {
+                    for (int i = 0; i < n_outer_dim; i++)
+                    {
+                        int di = i / step1;
+                        if (di >= n_dim1) di = n_dim1 - 1;
+                        for (int j = 0; j < n_inner_dim; j++)
+                        {
+                            int dj = j / step2;
+                            if (dj >= n_dim2) dj = n_dim2 - 1;
+
+                            int val_idx = di * n_dim2 + dj;
+                            int is_selected = (val_idx >= 0 && val_idx < static_cast<int>(selected_mask.size())) ? selected_mask[val_idx] : 0;
+                            int region_val = (is_selected == 0) ? 1 : 0;
+                            out_regions << region_val << (j == n_inner_dim - 1 ? "" : " ");
+                            out_map << is_selected << (j == n_inner_dim - 1 ? "" : " ");
+
+                            float baseline_val = baseline_params[0];
+                            if (order >= 1)
+                            {
+                                baseline_val += baseline_params[1] * j;
+                                baseline_val += baseline_params[2] * i;
+                            }
+                            if (order >= 2)
+                            {
+                                baseline_val += baseline_params[3] * j * j;
+                                baseline_val += baseline_params[4] * i * i;
+                            }
+                            if (order >= 3)
+                            {
+                                baseline_val += baseline_params[5] * j * j * j;
+                                baseline_val += baseline_params[6] * i * i * i;
+                            }
+                            if (order >= 4)
+                            {
+                                baseline_val += baseline_params[7] * j * j * j * j;
+                                baseline_val += baseline_params[8] * i * i * i * i;
+                            }
+                            out_base << baseline_val << (j == n_inner_dim - 1 ? "" : " ");
+                        }
+                        out_regions << "\n";
+                        out_map << "\n";
+                        out_base << "\n";
+                    }
+                }
+            }
+#endif
+
+            /**
+             * Substract baseline from the spectrum
+            */
+            for(int i=0;i<n_outer_dim;i++)
+            {
+                for(int j=0;j<n_inner_dim;j++)
+                {
+                    float baseline = baseline_params[0]; //constant term
+                    if(order>=1) 
+                    {
+                        baseline += baseline_params[1]*j; //linear term along dim2(inner dimension)
+                        baseline += baseline_params[2]*i; //linear term along dim1(outer dimension)
+                    }
+                    if(order>=2)
+                    {
+                        baseline += baseline_params[3]*j*j; //quadratic term along dim2(inner dimension)
+                        baseline += baseline_params[4]*i*i; //quadratic term along dim1(outer dimension)
+                        /** No cross term in NMR */
+                    }
+                    if(order>=3)
+                    {
+                        baseline += baseline_params[5]*j*j*j; //cubic term along dim2(inner dimension)
+                        baseline += baseline_params[6]*i*i*i; //cubic term along dim1(outer dimension)
+                        /** No cross term in NMR */
+                    }
+                    if(order>=4)
+                    {
+                        baseline += baseline_params[7]*j*j*j*j; //quartic term along dim2(inner dimension)
+                        baseline += baseline_params[8]*i*i*i*i; //quartic term along dim1(outer dimension)
+                        /** No cross term in NMR */
+                    }
+                    spectrum_real_real[spectrum_offset + i*n_inner_dim + j] -= baseline;
+                }
+            }
+        }
+        std::cout<<"Baseline correction done using polynorminal at order "<<order<<std::endl;
+
+        return true;
+    }
 }
 
 
 bool fid_2d::run_direct_dimension(bool b_di_direct)
 {
+    if (!(b_frq == false && b_frq_indirect == false))
+    {
+        std::cerr << "Error: run_direct_dimension requires FID stage." << std::endl;
+        return false;
+    }
+
     /**
      * get ndata_power_of_2, which is the smallest power of 2
      * that is larger than or equal ndata
@@ -1958,24 +3596,17 @@ bool fid_2d::run_direct_dimension(bool b_di_direct)
     origin_frequency = (carrier_frequency - spectral_width * (ndata_frq - n_center) / ndata_frq);
 
 
-    /**
-     * Clear intermediate_data then allocate memory
-    */
-    intermediate_data_real_real.clear();
-    intermediate_data_real_imag.clear();
-    intermediate_data_imag_real.clear();
-    intermediate_data_imag_imag.clear();
-    intermediate_data_real_real.resize(nspectra * ndata_frq * ndata_indirect, 0.0f);
-    intermediate_data_real_imag.resize(nspectra * ndata_frq * ndata_indirect, 0.0f);
-    intermediate_data_imag_real.resize(nspectra * ndata_frq * ndata_indirect, 0.0f);
-    intermediate_data_imag_imag.resize(nspectra * ndata_frq * ndata_indirect, 0.0f);
+    std::vector<float> out_real_real(nspectra * ndata_frq * ndata_indirect, 0.0f);
+    std::vector<float> out_real_imag(nspectra * ndata_frq * ndata_indirect, 0.0f);
+    std::vector<float> out_imag_real(nspectra * ndata_frq * ndata_indirect, 0.0f);
+    std::vector<float> out_imag_imag(nspectra * ndata_frq * ndata_indirect, 0.0f);
+
 
    
     for(int k=0;k<nspectra;k++)
     {
         int fid_start = k * ndata * ndata_indirect;
         int intermediate_start = k * ndata_frq * ndata_indirect;
-        int spectrum_start = k * ndata_frq * ndata_frq_indirect; 
 
         /**
          * Apodization along direct dimension
@@ -1990,40 +3621,63 @@ bool fid_2d::run_direct_dimension(bool b_di_direct)
             */
             if(nusflags[j]==0) continue;
 
-            apodization_direct->run_apodization(fid_data_real_real.data()+fid_start+j*ndata,ndata,false /**not intevend data*/);
-            apodization_direct->run_apodization(fid_data_real_imag.data()+fid_start+j*ndata,ndata,false /**not intevend data*/);
-            apodization_direct->run_apodization(fid_data_imag_real.data()+fid_start+j*ndata,ndata,false /**not intevend data*/);
-            apodization_direct->run_apodization(fid_data_imag_imag.data()+fid_start+j*ndata,ndata,false /**not intevend data*/);
+            apodization_direct->run_apodization(spectrum_real_real.data()+fid_start+j*ndata,ndata,false /**not intevend data*/);
+            apodization_direct->run_apodization(spectrum_real_imag.data()+fid_start+j*ndata,ndata,false /**not intevend data*/);
+            apodization_direct->run_apodization(spectrum_imag_real.data()+fid_start+j*ndata,ndata,false /**not intevend data*/);
+            apodization_direct->run_apodization(spectrum_imag_imag.data()+fid_start+j*ndata,ndata,false /**not intevend data*/);
         }
         apodization_code = 1;
 
-        /**
-         * FFT along direct dimension. For real part of indirect dimension
-        */
-        fft_worker(
-            ndata_indirect, nusflags, ndata, ndata_frq,
-            fid_data_real_real.data()+fid_start,fid_data_real_imag.data()+fid_start,
-            intermediate_data_real_real.data()+intermediate_start, intermediate_data_real_imag.data()+intermediate_start,
-            true /** digital fileter*/, false /** swap*/, grpdly
-        );
-        /**
-         * FFT along direct dimension. For imaginary part of indirect dimension
-        */
-        fft_worker(
-            ndata_indirect,nusflags, ndata, ndata_frq,
-            fid_data_imag_real.data()+fid_start,fid_data_imag_imag.data()+fid_start,
-            intermediate_data_imag_real.data()+intermediate_start, intermediate_data_imag_imag.data()+intermediate_start,
-            true /** digital fileter*/, false /** swap*/, grpdly
-        );
-        /**
-         * Apply phase correction along direct dimension.
-         * Mathmatically equivalent to direct dimension phase correction code below
-        */
-        phase_correction_worker(ndata_indirect, ndata_frq, intermediate_data_real_real.data()+intermediate_start, intermediate_data_real_imag.data()+intermediate_start, user_p0_direct /** P0 */,user_p1_direct /** P1*/);
-        phase_correction_worker(ndata_indirect, ndata_frq, intermediate_data_imag_real.data()+intermediate_start, intermediate_data_imag_imag.data()+intermediate_start, user_p0_direct /** P0 */,user_p1_direct /** P1*/);
+        std::vector<int> single_trace_flag(1, 1);
+        for (int j = 0; j < ndata_indirect; j++)
+        {
+            if (nusflags[j] == 0)
+            {
+                continue;
+            }
+
+            const int fid_trace_start = fid_start + j * ndata;
+            const int intermediate_trace_start = intermediate_start + j * ndata_frq;
+
+            /**
+             * FFT and phase correction along direct dimension, trace-by-trace.
+             */
+            fft_worker(
+                1, single_trace_flag, ndata, ndata_frq,
+                spectrum_real_real.data() + fid_trace_start, spectrum_real_imag.data() + fid_trace_start,
+                out_real_real.data() + intermediate_trace_start, out_real_imag.data() + intermediate_trace_start,
+                true /** digital fileter*/, false /** swap*/, grpdly
+            );
+            fft_worker(
+                1, single_trace_flag, ndata, ndata_frq,
+                spectrum_imag_real.data() + fid_trace_start, spectrum_imag_imag.data() + fid_trace_start,
+                out_imag_real.data() + intermediate_trace_start, out_imag_imag.data() + intermediate_trace_start,
+                true /** digital fileter*/, false /** swap*/, grpdly
+            );
+            phase_correction_worker(
+                1, ndata_frq,
+                out_real_real.data() + intermediate_trace_start,
+                out_real_imag.data() + intermediate_trace_start,
+                user_p0_direct /** P0 */, user_p1_direct /** P1 */
+            );
+            phase_correction_worker(
+                1, ndata_frq,
+                out_imag_real.data() + intermediate_trace_start,
+                out_imag_imag.data() + intermediate_trace_start,
+                user_p0_direct /** P0 */, user_p1_direct /** P1 */
+            );
+        }
     }
+
+    spectrum_real_real.swap(out_real_real);
+    spectrum_real_imag.swap(out_real_imag);
+    spectrum_imag_real.swap(out_imag_real);
+    spectrum_imag_imag.swap(out_imag_imag);
+
     b_nmrPipe_transposed = false;
     b_frq = true;
+    b_frq_indirect = false;
+    spect = spectrum_real_real.data();
 
     if(b_di_direct == true)
     {
@@ -2031,8 +3685,8 @@ bool fid_2d::run_direct_dimension(bool b_di_direct)
          * If b_imaginary is false, we do not need real_imag and imag_imag
         */
         b_imaginary = false;
-        intermediate_data_real_imag.clear();
-        intermediate_data_imag_imag.clear();
+        spectrum_real_imag.clear();
+        spectrum_imag_imag.clear();
     }
 
     n_outer_dim = ndata_indirect;
@@ -2043,19 +3697,57 @@ bool fid_2d::run_direct_dimension(bool b_di_direct)
      * [extraction_from, extraction_to] is the range of data to be extracted.
      *  [0,1] is the full range
     */
-    int extraction_from_pos = int(ndata_frq * extraction_from+0.5);
-    int extraction_to_pos = int(ndata_frq * extraction_to+0.5);
+    if (extraction_use_ppm)
+    {
+        const double stop_ppm = origin_frequency / observed_frequency;
+        double begin_ppm = stop_ppm + spectral_width / observed_frequency;
+        const double step_ppm = (stop_ppm - begin_ppm) / ndata_frq;
+        begin_ppm += step_ppm;
+
+        const int pos1 = int((extraction_from_ppm - begin_ppm) / step_ppm + 0.5);
+        const int pos2 = int((extraction_to_ppm - begin_ppm) / step_ppm + 0.5);
+        extraction_from_pos = std::min(pos1, pos2);
+        extraction_to_pos = std::max(pos1, pos2);
+    }
+    else
+    {
+        extraction_from_pos = int(ndata_frq * extraction_from + 0.5);
+        extraction_to_pos = int(ndata_frq * extraction_to + 0.5);
+    }
 
     if(extraction_from_pos<0) extraction_from_pos = 0;
     if(extraction_to_pos>ndata_frq) extraction_to_pos = ndata_frq;
 
+    if (((extraction_to_pos - extraction_from_pos) % 2) != 0)
+    {
+        if (extraction_to_pos < ndata_frq)
+        {
+            extraction_to_pos += 1;
+        }
+        else if (extraction_from_pos > 0)
+        {
+            // Keep extraction size even when upper boundary cannot move further.
+            extraction_from_pos -= 1;
+        }
+    }
+
+    const double stop_ppm = origin_frequency / observed_frequency;
+    double begin_ppm = stop_ppm + spectral_width / observed_frequency;
+    const double step_ppm = (stop_ppm - begin_ppm) / ndata_frq;
+    begin_ppm += step_ppm;
+
+    const double extracted_from_ppm = begin_ppm + step_ppm * extraction_from_pos;
+    const double extracted_to_ppm = begin_ppm + step_ppm * extraction_to_pos;
+
     if(extraction_from_pos>=extraction_to_pos)
     {
-        std::cout<<"Error: extraction_from_pos >= extraction_to_pos. SKIP"<<std::endl;
+        std::cout << "Error: invalid extraction range. index [" << extraction_from_pos << ", " << extraction_to_pos
+                  << "), ppm [" << extracted_from_ppm << ", " << extracted_to_ppm << "). Skip extraction." << std::endl;
     }
     else
     {
-        std::cout<<"Extraction from "<<extraction_from_pos<<" to "<<extraction_to_pos<<std::endl;
+        std::cout << "Extraction direct dimension: index [" << extraction_from_pos << ", " << extraction_to_pos
+                  << "), ppm [" << extracted_from_ppm << ", " << extracted_to_ppm << ")" << std::endl;
         int n_inner_dim_new = extraction_to_pos - extraction_from_pos;
         
         /**
@@ -2067,19 +3759,19 @@ bool fid_2d::run_direct_dimension(bool b_di_direct)
             int spectrum_start_new = k * n_inner_dim_new * n_outer_dim;
             for(int i=0;i<n_outer_dim;i++)
             {
-                int line_start = i * n_inner_dim + spectrum_start + extraction_from_pos;
+                int line_start = i * n_inner_dim + spectrum_start;
                 int line_start_new = i * n_inner_dim_new + spectrum_start_new;
                 /**
                  * Copy data from line_start to line_start_new, for a total of n_inner_dim_new
                 */
                 for(int j=0;j<n_inner_dim_new;j++)
                 {
-                    intermediate_data_real_real[line_start_new+j] = intermediate_data_real_real[line_start+extraction_from_pos+j];
-                    intermediate_data_imag_real[line_start_new+j] = intermediate_data_imag_real[line_start+extraction_from_pos+j];
+                    spectrum_real_real[line_start_new+j] = spectrum_real_real[line_start+extraction_from_pos+j];
+                    spectrum_imag_real[line_start_new+j] = spectrum_imag_real[line_start+extraction_from_pos+j];
                     if(b_imaginary == true)
                     {
-                        intermediate_data_real_imag[line_start_new+j] = intermediate_data_real_imag[line_start+extraction_from_pos+j];
-                        intermediate_data_imag_imag[line_start_new+j] = intermediate_data_imag_imag[line_start+extraction_from_pos+j];
+                        spectrum_real_imag[line_start_new+j] = spectrum_real_imag[line_start+extraction_from_pos+j];
+                        spectrum_imag_imag[line_start_new+j] = spectrum_imag_imag[line_start+extraction_from_pos+j];
                     }
                 }
             }
@@ -2087,12 +3779,12 @@ bool fid_2d::run_direct_dimension(bool b_di_direct)
         /**
          * Resize spectrum_real_real, spectrum_imag_real, spectrum_real_imag, spectrum_imag_imag
         */
-        intermediate_data_real_real.resize(nspectra * n_inner_dim_new * n_outer_dim);
-        intermediate_data_imag_real.resize(nspectra * n_inner_dim_new * n_outer_dim);
+        spectrum_real_real.resize(nspectra * n_inner_dim_new * n_outer_dim);
+        spectrum_imag_real.resize(nspectra * n_inner_dim_new * n_outer_dim);
         if(b_imaginary == true)
         {
-            intermediate_data_real_imag.resize(nspectra * n_inner_dim_new * n_outer_dim);
-            intermediate_data_imag_imag.resize(nspectra * n_inner_dim_new * n_outer_dim);
+            spectrum_real_imag.resize(nspectra * n_inner_dim_new * n_outer_dim);
+            spectrum_imag_imag.resize(nspectra * n_inner_dim_new * n_outer_dim);
         }
 
         origin_frequency = carrier_frequency - spectral_width  / n_inner_dim * (extraction_to_pos - n_center);
@@ -2106,16 +3798,27 @@ bool fid_2d::run_direct_dimension(bool b_di_direct)
 
 bool fid_2d::transpose_intermediate_data()
 {
+    if (!(b_frq == true && b_frq_indirect == false))
+    {
+        std::cerr << "Error: transpose_intermediate_data requires INTERMEDIATE stage." << std::endl;
+        return false;
+    }
+
+    std::vector<float> &active_real_real = spectrum_real_real;
+    std::vector<float> &active_imag_real = spectrum_imag_real;
+    std::vector<float> &active_real_imag = spectrum_real_imag;
+    std::vector<float> &active_imag_imag = spectrum_imag_imag;
+
     for(int k=0;k<nspectra;k++)
     {
         int intermediate_start = k * n_inner_dim * n_outer_dim;
-        transpose_2d(intermediate_data_real_real.data()+intermediate_start, n_outer_dim, n_inner_dim);
-        transpose_2d(intermediate_data_imag_real.data()+intermediate_start, n_outer_dim, n_inner_dim);
+        transpose_2d(active_real_real.data()+intermediate_start, n_outer_dim, n_inner_dim);
+        transpose_2d(active_imag_real.data()+intermediate_start, n_outer_dim, n_inner_dim);
         
         if(b_imaginary ==true)
         {
-            transpose_2d(intermediate_data_real_imag.data()+intermediate_start, n_outer_dim, n_inner_dim);
-            transpose_2d(intermediate_data_imag_imag.data()+intermediate_start, n_outer_dim, n_inner_dim);
+            transpose_2d(active_real_imag.data()+intermediate_start, n_outer_dim, n_inner_dim);
+            transpose_2d(active_imag_imag.data()+intermediate_start, n_outer_dim, n_inner_dim);
         }
     }
 
@@ -2127,6 +3830,17 @@ bool fid_2d::transpose_intermediate_data()
 
 bool fid_2d::run_indirect_dimension(bool b_di_indirect)
 {
+    if (!(b_frq == true && b_frq_indirect == false))
+    {
+        std::cerr << "Error: run_indirect_dimension requires INTERMEDIATE stage." << std::endl;
+        return false;
+    }
+
+    std::vector<float> &active_real_real = spectrum_real_real;
+    std::vector<float> &active_real_imag = spectrum_real_imag;
+    std::vector<float> &active_imag_real = spectrum_imag_real;
+    std::vector<float> &active_imag_imag = spectrum_imag_imag;
+
      /**
      * Do the same for indirect dimension
      */
@@ -2143,18 +3857,15 @@ bool fid_2d::run_indirect_dimension(bool b_di_indirect)
      /**
      * clear frq domain spectrum then allocate memory
      */
-    spectrum_real_real.clear();
-    spectrum_real_imag.clear();
-    spectrum_imag_real.clear();
-    spectrum_imag_imag.clear();
-
-    spectrum_real_real.resize(nspectra * ndata_frq * ndata_frq_indirect, 0.0f);
-    spectrum_imag_real.resize(nspectra * ndata_frq * ndata_frq_indirect, 0.0f);
+    std::vector<float> out_real_real(nspectra * ndata_frq * ndata_frq_indirect, 0.0f);
+    std::vector<float> out_imag_real(nspectra * ndata_frq * ndata_frq_indirect, 0.0f);
+    std::vector<float> out_real_imag;
+    std::vector<float> out_imag_imag;
     
     if(b_imaginary ==true)
     {
-        spectrum_real_imag.resize(nspectra * ndata_frq * ndata_frq_indirect, 0.0f);
-        spectrum_imag_imag.resize(nspectra * ndata_frq * ndata_frq_indirect, 0.0f);
+        out_real_imag.resize(nspectra * ndata_frq * ndata_frq_indirect, 0.0f);
+        out_imag_imag.resize(nspectra * ndata_frq * ndata_frq_indirect, 0.0f);
     }
 
 
@@ -2185,12 +3896,12 @@ bool fid_2d::run_indirect_dimension(bool b_di_indirect)
         }
         for(int i=0;i<ndata_frq;i++)
         {
-            apodization_indirect->run_apodization(intermediate_data_real_real.data()+intermediate_start+i*ndata_indirect,ndata_indirect,false /**not intevent data*/);
-            apodization_indirect->run_apodization(intermediate_data_imag_real.data()+intermediate_start+i*ndata_indirect,ndata_indirect,false /**not intevent data*/);
+            apodization_indirect->run_apodization(active_real_real.data()+intermediate_start+i*ndata_indirect,ndata_indirect,false /**not intevent data*/);
+            apodization_indirect->run_apodization(active_imag_real.data()+intermediate_start+i*ndata_indirect,ndata_indirect,false /**not intevent data*/);
             if(b_imaginary ==true)
             {
-                apodization_indirect->run_apodization(intermediate_data_real_imag.data()+intermediate_start+i*ndata_indirect,ndata_indirect,false /**not intevent data*/);
-                apodization_indirect->run_apodization(intermediate_data_imag_imag.data()+intermediate_start+i*ndata_indirect,ndata_indirect,false /**not intevent data*/);
+                apodization_indirect->run_apodization(active_real_imag.data()+intermediate_start+i*ndata_indirect,ndata_indirect,false /**not intevent data*/);
+                apodization_indirect->run_apodization(active_imag_imag.data()+intermediate_start+i*ndata_indirect,ndata_indirect,false /**not intevent data*/);
             }
         }
 
@@ -2221,38 +3932,66 @@ bool fid_2d::run_indirect_dimension(bool b_di_indirect)
 
             for (int i = 0; i < ndata_frq * ndata_indirect; i++)
             {
-                intermediate_data_imag_real[intermediate_start + i] = -intermediate_data_imag_real[intermediate_start + i];
+                active_imag_real[intermediate_start + i] = -active_imag_real[intermediate_start + i];
                 if(b_imaginary ==true)
                 {
-                    intermediate_data_imag_imag[intermediate_start + i] = -intermediate_data_imag_imag[intermediate_start + i];
+                    active_imag_imag[intermediate_start + i] = -active_imag_imag[intermediate_start + i];
                 }
             }
         }
         /**
          * FFT along indirect dimension. there is no NUS flag for indirect dimension
         */
-        std::vector<int> dummy_flag(ndata_frq,1);
-
-        fft_worker(ndata_frq, dummy_flag, ndata_indirect, ndata_frq_indirect,
-                    intermediate_data_real_real.data()+intermediate_start, 
-                    intermediate_data_imag_real.data()+intermediate_start,
-                    spectrum_real_real.data()+spectrum_start, spectrum_imag_real.data()+spectrum_start,
-                    false /** remove filter*/, b_swap /** swap*/, -1 /**grpdly is not applicable*/);
-        phase_correction_worker(ndata_frq, ndata_frq_indirect, spectrum_real_real.data()+spectrum_start, spectrum_imag_real.data()+spectrum_start, user_p0_indirect /** P0 */,user_p1_indirect /** P1*/);
-
-
-        if(b_imaginary ==true)
+        std::vector<int> single_trace_flag(1, 1);
+        for (int i = 0; i < ndata_frq; i++)
         {
-            fft_worker(ndata_frq, dummy_flag, ndata_indirect, ndata_frq_indirect,
-                        intermediate_data_real_imag.data()+intermediate_start, 
-                        intermediate_data_imag_imag.data()+intermediate_start,
-                        spectrum_real_imag.data()+spectrum_start, spectrum_imag_imag.data()+spectrum_start,
-                        false /** remove filter*/, b_swap /** swap*/, -1 /**grpdly is not applicable*/);
-            phase_correction_worker(ndata_frq, ndata_frq_indirect, spectrum_real_imag.data()+spectrum_start, spectrum_imag_imag.data()+spectrum_start, user_p0_indirect /** P0 */,user_p1_indirect /** P1*/);
+            const int intermediate_trace_start = intermediate_start + i * ndata_indirect;
+            const int spectrum_trace_start = spectrum_start + i * ndata_frq_indirect;
+
+            fft_worker(
+                1, single_trace_flag, ndata_indirect, ndata_frq_indirect,
+                active_real_real.data() + intermediate_trace_start,
+                active_imag_real.data() + intermediate_trace_start,
+                out_real_real.data() + spectrum_trace_start, out_imag_real.data() + spectrum_trace_start,
+                false /** remove filter*/, b_swap /** swap*/, -1 /**grpdly is not applicable*/
+            );
+            phase_correction_worker(
+                1, ndata_frq_indirect,
+                out_real_real.data() + spectrum_trace_start,
+                out_imag_real.data() + spectrum_trace_start,
+                user_p0_indirect /** P0 */, user_p1_indirect /** P1 */
+            );
+
+            if (b_imaginary == true)
+            {
+                fft_worker(
+                    1, single_trace_flag, ndata_indirect, ndata_frq_indirect,
+                    active_real_imag.data() + intermediate_trace_start,
+                    active_imag_imag.data() + intermediate_trace_start,
+                    out_real_imag.data() + spectrum_trace_start, out_imag_imag.data() + spectrum_trace_start,
+                    false /** remove filter*/, b_swap /** swap*/, -1 /**grpdly is not applicable*/
+                );
+                phase_correction_worker(
+                    1, ndata_frq_indirect,
+                    out_real_imag.data() + spectrum_trace_start,
+                    out_imag_imag.data() + spectrum_trace_start,
+                    user_p0_indirect /** P0 */, user_p1_indirect /** P1 */
+                );
+            }
         }
 
     }
+
+    spectrum_real_real.swap(out_real_real);
+    spectrum_imag_real.swap(out_imag_real);
+    if (b_imaginary == true)
+    {
+        spectrum_real_imag.swap(out_real_imag);
+        spectrum_imag_imag.swap(out_imag_imag);
+    }
+
     b_frq_indirect = true;
+    spect = spectrum_real_real.data();
 
     apodization_code_indirect = 1;
 
@@ -2297,6 +4036,12 @@ bool fid_2d::run_indirect_dimension(bool b_di_indirect)
 
 bool fid_2d::untranspose_frquency_domain_data()
 {
+    if (!(b_frq == true && b_frq_indirect == true))
+    {
+        std::cerr << "Error: untranspose_frquency_domain_data requires FREQUENCY stage." << std::endl;
+        return false;
+    }
+
     for(int k=0;k<nspectra;k++)
     {
         int spectrum_start = k * n_outer_dim * n_inner_dim; 
@@ -2318,6 +4063,7 @@ bool fid_2d::untranspose_frquency_domain_data()
     b_nmrPipe_transposed = false;
 
     std::swap(n_outer_dim,n_inner_dim);
+    spect = spectrum_real_real.data();
 
     return true;
 }
@@ -2434,7 +4180,7 @@ bool fid_2d::create_nmrpipe_dictionary(std::map<std::string, std::string> &nmrpi
     /**
      * Copied from nmrglue. no idea what they mean
      */
-    if (nmrpipe_dict_float["FDF1QUADFLAG"] == nmrpipe_dict_float["FDF2QUADFLAG"] == nmrpipe_dict_float["FDF3QUADFLAG"] && nmrpipe_dict_float["FDF4QUADFLAG"] == 1.0f)
+    if (nmrpipe_dict_float["FDF1QUADFLAG"] == nmrpipe_dict_float["FDF2QUADFLAG"] && nmrpipe_dict_float["FDF1QUADFLAG"] == nmrpipe_dict_float["FDF3QUADFLAG"] && nmrpipe_dict_float["FDF1QUADFLAG"] == nmrpipe_dict_float["FDF4QUADFLAG"] && nmrpipe_dict_float["FDF1QUADFLAG"] == 1.0f)
     {
         nmrpipe_dict_float["FDQUADFLAG"] = 1.0f;
     }
@@ -2460,10 +4206,11 @@ bool fid_2d::create_nmrpipe_dictionary(std::map<std::string, std::string> &nmrpi
 
     /**
      * These are the size before apod.
-     * nmrPipe ext will change these values, but I am 100% sure how.
+     * nmrPipe ext will change these values, but I am not 100% sure how.
      * It seems FDF2APOD = FDF2TDSIZE * percentage of ext operation
      */
-    nmrpipe_dict_float["FDF2APOD"] = ndata_original; // or ndata_original, I am not sure
+    int extraction_span = extraction_to_pos - extraction_from_pos;
+    nmrpipe_dict_float["FDF2APOD"] = extraction_span / zf; // this is the size after extraction, but before apodization. We will use this to do apodization in nmrPipe
     nmrpipe_dict_float["FDF1APOD"] = ndata_indirect;
 
     /**
@@ -2566,78 +4313,6 @@ bool fid_2d::create_nmrpipe_dictionary(std::map<std::string, std::string> &nmrpi
     return true;
 }
 
-bool fid_2d::write_nmrpipe_ft2_virtual(std::vector<float> &nmrpipe_header_data_, std::vector<float> &data)
-{
-    prepare_header_for_nmrpipe();
-    nmrpipe_header_data_ = nmrpipe_header_data;
-
-    data.clear();
-    data.resize(ndata_frq_indirect*ndata_frq*4,0.0f);
-
-    for (int j = 0; j < ndata_frq_indirect; j++)
-    {
-        /**
-         * copy spectrum_real_real from j * ndata_frq to (j + 1) * ndata_frq to data at j * ndata_frq * 4
-         * then spectrum_real_imag from j * ndata_frq to (j + 1) * ndata_frq to data at j * ndata_frq * 4 + ndata_frq
-         * then spectrum_imag_real from j * ndata_frq to (j + 1) * ndata_frq to data at j * ndata_frq * 4 + ndata_frq*2
-         * then spectrum_imag_imag from j * ndata_frq to (j + 1) * ndata_frq to data at j * ndata_frq * 4 + ndata_frq*3
-         */
-        std::copy(spectrum_real_real.begin() + j * ndata_frq, spectrum_real_real.begin() + (j + 1) * ndata_frq, data.begin() + j * ndata_frq * 4);
-        std::copy(spectrum_real_imag.begin() + j * ndata_frq, spectrum_real_imag.begin() + (j + 1) * ndata_frq, data.begin() + j * ndata_frq * 4 + ndata_frq);
-        std::copy(spectrum_imag_real.begin() + j * ndata_frq, spectrum_imag_real.begin() + (j + 1) * ndata_frq, data.begin() + j * ndata_frq * 4 + ndata_frq*2);
-        std::copy(spectrum_imag_imag.begin() + j * ndata_frq, spectrum_imag_imag.begin() + (j + 1) * ndata_frq, data.begin() + j * ndata_frq * 4 + ndata_frq*3);
-    }
-    return true;
-}
-
-
-bool fid_2d::write_nmrpipe_intermediate(std::string outfname)
-{
-    prepare_header_for_nmrpipe();
-
-    /**
-     * now write nmrpipe_header_data and spectral to the file
-     */
-    FILE *fp = fopen(outfname.c_str(), "wb");
-    if (fp == NULL)
-    {
-        std::cerr << "Error: cannot open file " << outfname << " for writing" << std::endl;
-        return false;
-    }
-    /**
-     * Write header first
-     */
-    fwrite(nmrpipe_header_data.data(), sizeof(float), 512, fp);
-
-
-    /**
-     * This is how data are organized in nmrpipe file
-     */
-    for (int j = 0; j < n_outer_dim; j++)
-    {
-        fwrite(intermediate_data_real_real.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
-        /**
-         * If we are saving real data only, we don't need to save imaginary part for either direct or indirect dimension
-         */
-        if (b_imaginary == true && b_imaginary_indirect == true)
-        {
-            fwrite(intermediate_data_real_imag.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
-            fwrite(intermediate_data_imag_real.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
-            fwrite(intermediate_data_imag_imag.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
-        }
-        else if (b_imaginary_indirect == true)
-        {
-            fwrite(intermediate_data_imag_real.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
-        }
-        else if (b_imaginary == true)
-        {
-            fwrite(intermediate_data_real_imag.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
-        }
-    }
-    fclose(fp);
-
-    return true;
-}
 
 bool fid_2d::prepare_header_for_nmrpipe()
 {
@@ -2671,18 +4346,28 @@ bool fid_2d::prepare_header_for_nmrpipe()
 }
 
 /**
- * @brief fid_1d::write_nmrpipe_ft1: write 1D spectrum to nmrpipe file
- * Before writing, define nmrpipe header, set values from udict_acqus and derived values
+ * @brief fid_2d::write_nmrpipe_ft2: write the current frequency-domain spectrum to an nmrPipe file
+ * Before writing, define the nmrPipe header from the current object state.
  * @param outfname: output file name
  * @return true on success, false on failure
  */
 bool fid_2d::write_nmrpipe_ft2(std::string outfname)
 {
+    if (!b_frq)
+    {
+        std::cerr << "Error: write_nmrpipe_ft2 requires frequency-domain direct data." << std::endl;
+        return false;
+    }
+    if (spectrum_real_real.empty())
+    {
+        std::cerr << "Error: no spectrum data available for write_nmrpipe_ft2." << std::endl;
+        return false;
+    }
 
     prepare_header_for_nmrpipe();
 
     /**
-     * now write nmrpipe_header_data and spectral to the file
+     * Write nmrPipe header and active spectrum data to the file.
      */
     FILE *fp = fopen(outfname.c_str(), "wb");
     if (fp == NULL)
@@ -2696,7 +4381,7 @@ bool fid_2d::write_nmrpipe_ft2(std::string outfname)
     fwrite(nmrpipe_header_data.data(), sizeof(float), 512, fp);
 
     /**
-     * This is how data are organized in nmrpipe file
+     * Data are written trace by trace in nmrPipe layout.
      */
     for (int j = 0; j < n_outer_dim; j++)
     {
@@ -2778,8 +4463,137 @@ bool fid_2d::write_nmrpipe_ft2(std::string outfname)
     return true;
 }
 
+uintptr_t fid_2d::write_nmrpipe_ft2_to_buffer()
+{
+    return write_nmrpipe_ft2_to_buffer_index(0);
+}
+
+uintptr_t fid_2d::write_nmrpipe_ft2_to_buffer_index(int spec_index)
+{
+    if (!b_frq)
+    {
+        std::cerr << "Error: write_nmrpipe_ft2_to_buffer requires frequency-domain direct data." << std::endl;
+        return 0;
+    }
+    if (spectrum_real_real.empty())
+    {
+        std::cerr << "Error: no spectrum data available for write_nmrpipe_ft2_to_buffer." << std::endl;
+        return 0;
+    }
+    if (n_outer_dim <= 0 || n_inner_dim <= 0)
+    {
+        std::cerr << "Error: invalid dimensions for write_nmrpipe_ft2_to_buffer." << std::endl;
+        return 0;
+    }
+    if (spec_index < 0 || spec_index >= nspectra)
+    {
+        std::cerr << "Error: spectrum index " << spec_index << " out of range (0 to " << nspectra - 1 << ")." << std::endl;
+        return 0;
+    }
+
+    size_t expected_size = static_cast<size_t>(n_outer_dim) * n_inner_dim;
+    size_t required_elements = static_cast<size_t>(nspectra) * expected_size;
+
+    if (spectrum_real_real.size() < required_elements)
+    {
+        std::cerr << "Error: spectrum_real_real data size mismatch." << std::endl;
+        return 0;
+    }
+
+    if (b_imaginary == true && b_imaginary_indirect == true)
+    {
+        if (spectrum_real_imag.size() < required_elements ||
+            spectrum_imag_real.size() < required_elements ||
+            spectrum_imag_imag.size() < required_elements)
+        {
+            std::cerr << "Error: spectrum components size mismatch." << std::endl;
+            return 0;
+        }
+    }
+    else if (b_imaginary_indirect == true)
+    {
+        if (spectrum_imag_real.size() < required_elements)
+        {
+            std::cerr << "Error: spectrum components size mismatch." << std::endl;
+            return 0;
+        }
+    }
+    else if (b_imaginary == true)
+    {
+        if (spectrum_real_imag.size() < required_elements)
+        {
+            std::cerr << "Error: spectrum components size mismatch." << std::endl;
+            return 0;
+        }
+    }
+
+    prepare_header_for_nmrpipe();
+
+    int num_components = 1;
+    if (b_imaginary == true && b_imaginary_indirect == true)
+    {
+        num_components = 4;
+    }
+    else if (b_imaginary_indirect == true || b_imaginary == true)
+    {
+        num_components = 2;
+    }
+
+    size_t total_floats = 512 + expected_size * num_components;
+    ft2_buffer.resize(total_floats);
+
+    // Copy header (512 floats)
+    std::memcpy(ft2_buffer.data(), nmrpipe_header_data.data(), 512 * sizeof(float));
+
+    size_t offset = 512;
+    size_t plane_offset = static_cast<size_t>(spec_index) * n_outer_dim * n_inner_dim;
+
+    for (int j = 0; j < n_outer_dim; j++)
+    {
+        std::memcpy(ft2_buffer.data() + offset, spectrum_real_real.data() + plane_offset + j * n_inner_dim, n_inner_dim * sizeof(float));
+        offset += n_inner_dim;
+        if (b_imaginary == true && b_imaginary_indirect == true)
+        {
+            std::memcpy(ft2_buffer.data() + offset, spectrum_real_imag.data() + plane_offset + j * n_inner_dim, n_inner_dim * sizeof(float));
+            offset += n_inner_dim;
+            std::memcpy(ft2_buffer.data() + offset, spectrum_imag_real.data() + plane_offset + j * n_inner_dim, n_inner_dim * sizeof(float));
+            offset += n_inner_dim;
+            std::memcpy(ft2_buffer.data() + offset, spectrum_imag_imag.data() + plane_offset + j * n_inner_dim, n_inner_dim * sizeof(float));
+            offset += n_inner_dim;
+        }
+        else if (b_imaginary_indirect == true)
+        {
+            std::memcpy(ft2_buffer.data() + offset, spectrum_imag_real.data() + plane_offset + j * n_inner_dim, n_inner_dim * sizeof(float));
+            offset += n_inner_dim;
+        }
+        else if (b_imaginary == true)
+        {
+            std::memcpy(ft2_buffer.data() + offset, spectrum_real_imag.data() + plane_offset + j * n_inner_dim, n_inner_dim * sizeof(float));
+            offset += n_inner_dim;
+        }
+    }
+
+    return reinterpret_cast<uintptr_t>(ft2_buffer.data());
+}
+
+int fid_2d::get_ft2_size_in_float32()
+{
+    return static_cast<int>(ft2_buffer.size());
+}
+
 bool fid_2d::write_nmrpipe_fid(std::string outfname)
 {
+    if (!(b_frq == false && b_frq_indirect == false))
+    {
+        std::cerr << "Error: write_nmrpipe_fid requires FID stage." << std::endl;
+        return false;
+    }
+    if (spectrum_real_real.empty())
+    {
+        std::cerr << "Error: no FID data available for write_nmrpipe_fid." << std::endl;
+        return false;
+    }
+
     prepare_header_for_nmrpipe();
 
     /**
@@ -2801,23 +4615,23 @@ bool fid_2d::write_nmrpipe_fid(std::string outfname)
      */
     for (int j = 0; j < n_outer_dim; j++)
     {
-        fwrite(fid_data_real_real.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
+        fwrite(spectrum_real_real.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
         /**
          * If we are saving real data only, we don't need to save imaginary part for either direct or indirect dimension
          */
         if (b_imaginary == true && b_imaginary_indirect == true)
         {
-            fwrite(fid_data_real_imag.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
-            fwrite(fid_data_imag_real.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
-            fwrite(fid_data_imag_imag.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
+            fwrite(spectrum_real_imag.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
+            fwrite(spectrum_imag_real.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
+            fwrite(spectrum_imag_imag.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
         }
         else if (b_imaginary_indirect == true)
         {
-            fwrite(fid_data_imag_real.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
+            fwrite(spectrum_imag_real.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
         }
         else if (b_imaginary == true)
         {
-            fwrite(fid_data_real_imag.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
+            fwrite(spectrum_real_imag.data() + j * n_inner_dim, sizeof(float), n_inner_dim, fp);
         }
     }
     fclose(fp);
@@ -3146,6 +4960,14 @@ bool fid_2d::read_mnova(std::string infname)
     std::cout << "  Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " ppm" << std::endl;
     std::cout << "Indirect dimension offset is " << begin2 << ", ppm per steo is " << step2 << " ppm" << std::endl;
 
+    b_frq = true;
+    b_frq_indirect = true;
+    b_imaginary = false;
+    b_imaginary_indirect = false;
+    b_nmrPipe_transposed = false;
+    n_outer_dim = ndata_frq_indirect;
+    n_inner_dim = ndata_frq;
+
     return true;
 }
 
@@ -3304,6 +5126,14 @@ bool fid_2d::read_topspin_txt(std::string infname)
     std::cout << "  Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " ppm" << std::endl;
     std::cout << "Indirect dimension offset is " << begin2 << ", ppm per steo is " << step2 << " ppm" << std::endl;
 
+    b_frq = true;
+    b_frq_indirect = true;
+    b_imaginary = false;
+    b_imaginary_indirect = false;
+    b_nmrPipe_transposed = false;
+    n_outer_dim = ndata_frq_indirect;
+    n_inner_dim = ndata_frq;
+
     return true;
 }
 
@@ -3339,11 +5169,16 @@ bool fid_2d::read_txt(std::string infname)
         }
     }
 
-    spect = new float[ndata_frq * ndata_frq_indirect];
+    spectrum_real_real.clear();
+    spectrum_real_real.resize(ndata_frq * ndata_frq_indirect, 0.0f);
+    spectrum_real_imag.clear();
+    spectrum_imag_real.clear();
+    spectrum_imag_imag.clear();
     for (unsigned int i = 0; i < ndata_frq * ndata_frq_indirect; i++)
     {
-        spect[i] = temp[i];
+        spectrum_real_real[i] = temp[i];
     }
+    spect = spectrum_real_real.data();
 
     begin1 = 0.6;
     stop1 = 0;
@@ -3355,254 +5190,17 @@ bool fid_2d::read_txt(std::string infname)
     step2 = (stop2 - begin2) / (ndata_frq_indirect);
     stop2 = stop2 - step2; // stop is the ppm of the last col.
 
-    return true;
-}
-
-bool fid_2d::read_nmr_ft2_virtual(std::vector<float> header_, const std::vector<float> &data)
-{
-    /**
-     * Copy from header_ to header
-    */
-    std::copy(header_.begin(), header_.end(), nmrpipe_header_data.data());
-
-    process_pipe_header(nmrpipe_header_data);
-
-    if (b_imaginary == true && b_imaginary_indirect == true && b_nmrPipe_transposed == 0) // both are complex
-    {
-        /**
-         * Clear first to be safe
-        */
-        spectrum_real_real.clear();
-        spectrum_real_imag.clear();
-        spectrum_imag_real.clear();
-        spectrum_imag_imag.clear();
-
-        spectrum_real_real.resize(ndata_frq * ndata_frq_indirect);
-        spectrum_real_imag.resize(ndata_frq * ndata_frq_indirect);
-        spectrum_imag_real.resize(ndata_frq * ndata_frq_indirect);
-        spectrum_imag_imag.resize(ndata_frq * ndata_frq_indirect);
-        /**
-         * Create a alias for spect to spect_real_real
-         */
-        spect = spectrum_real_real.data();
-        
-
-        for (unsigned int i = 0; i < ndata_frq_indirect; i++)
-        {
-            /**
-             * Copy from data to spectrum_real_real[i*ndata_frq], length is ndata_frq
-             * Then copy from data to spectrum_real_imag[i*ndata_frq], length is ndata_frq
-             * Then copy from data to spectrum_imag_real[i*ndata_frq], length is ndata_frq
-             * Then copy from data to spectrum_imag_imag[i*ndata_frq], length is ndata_frq
-             */
-            std::copy(data.data() + i * 4 * ndata_frq,               data.data() + i * 4 * ndata_frq + ndata_frq,   spectrum_real_real.data() + i * ndata_frq);
-            std::copy(data.data() + i * 4 * ndata_frq + ndata_frq,   data.data() + i * 4 * ndata_frq + ndata_frq*2, spectrum_real_imag.data() + i * ndata_frq);
-            std::copy(data.data() + i * 4 * ndata_frq + ndata_frq*2, data.data() + i * 4 * ndata_frq + ndata_frq*3, spectrum_imag_real.data() + i * ndata_frq);
-            std::copy(data.data() + i * 4 * ndata_frq + ndata_frq*3, data.data() + i * 4 * ndata_frq + ndata_frq*4, spectrum_imag_imag.data() + i * ndata_frq);
-        }
-
-        b_read_bruker_acqus_and_fid = false;
-        b_read_nmrpipe_fid = true;
-
-        nspectra = 1; // only one spectrum, not a pseudo 3D NMR
-
-        spect = spectrum_real_real.data(); //alias to spectrum_real_real
-
-
-        return true;
-    }
-    else
-    {
-        std::cout << "ERROR: complex/real and transpose combination is not supported." << std::endl;
-        std::cout << "b_imaginary=" << b_imaginary << " b_imaginary_indirect=" << b_imaginary_indirect << std::endl;
-        return false;
-    }
-}
-
-
-bool fid_2d::process_pipe_header(std::vector<float> &header)
-{
-    b_nmrPipe_transposed = int(header[221]) == 1; // 0 normal, 1: transpose
-
-    if (b_nmrPipe_transposed == 0 && int(header[24]) != 2)
-    {
-        std::cout << " First dimension should always be dimension 2 in non-transposed spectrum, it is " << int(header[24]) << std::endl;
-        return false;
-    }
-
-    if (b_nmrPipe_transposed == 1 && int(header[24]) != 1)
-    {
-        std::cout << " First dimension should always be dimension 1 in transposed spectrum, it is " << int(header[24]) << std::endl;
-        return false;
-    }
-
-    int dims[4];
-    double refs[4], sws[4], frqs[4];
-    double begins[4], stops[4];
-
-    /**
-     * These are from nmrPipe header
-     * 0: FDF1
-     * 1: FDF2
-     * 2: FDF3
-     * 3: FDF4
-     * Their meaning will be decided by 
-     * header[24], header[25], header[26], header[27]
-     * (FDDIMORDER1,FDDIMORDER2,FDDIMORDER3,FDDIMORDER4)
-    */
-    sws[0] = double(header[230 - 1]);
-    frqs[0] = double(header[219 - 1]);
-    refs[0] = double(header[250 - 1]);
-
-    sws[1] = double(header[101 - 1]);
-    frqs[1] = double(header[120 - 1]);
-    refs[1] = double(header[102 - 1]);
-
-    sws[2] = double(header[12 - 1]);
-    frqs[2] = double(header[11 - 1]);
-    refs[2] = double(header[13 - 1]);
-
-    sws[3] = double(header[30 - 1]);
-    frqs[3] = double(header[29 - 1]);
-    refs[3] = double(header[31 - 1]);
-
-    indirect_p0=float(header[70]); //FDUSER1 in nmrPipe
-    indirect_p1=float(header[71]); //FDUSER2 in nmrPipe. Used by this projects only 
-
-    /**
-     * 0: complex float
-     * 1: real float
-     * 
-     * FDF1QUADFLAG and FDF2QUADFLAG, respectively
-     */
-    if(int(header[56 - 1])==0)
-    {
-        b_imaginary = true;
-    }
-    else
-    {
-        b_imaginary = false;
-    }
-    if(int(header[57 - 1]) == 0)
-    {
-        b_imaginary_indirect = true;
-    }
-    else
-    {
-        b_imaginary_indirect = false;
-    }
-
-    /**
-     * FDSPECNUM at 219, means FDF1SIZE
-     * FDSIZE at 99, means FDF2SIZE (usually direct dimension)
-    */
-    ndata_frq_indirect = int(header[220 - 1]);
-    ndata_frq = int(header[100 - 1]);
-
-    /**
-     * NDAPOD, Current valid time-domain size. 
-     * FDF2APOD and FDF1APOD, respectively
-    */
-    ndata_original=int(header[96 - 1]); 
-    ndata_indirect=int(header[429 - 1]); 
-
-    
-    /**
-     * @brief add xdim_ori0 and ydim_ori0 to the next power of 2
-     */
-    ndata_original=ldw_math_spectrum_2d::next_power_of_2(ndata_original);
-    ndata_indirect=ldw_math_spectrum_2d::next_power_of_2(ndata_indirect);
-
-
-    int ndim = int(header[10 - 1]);
-    for (int i = 0; i < 4; i++)
-    {
-        ldw_math_spectrum_2d::get_ppm_from_header(refs[i], sws[i], frqs[i], stops[i], begins[i]);
-    }
-
-    // X is always the 2rd dimension. direct_ndx must ==1 
-    int direct_ndx = int(header[24]) - 1;
-
-    // Z can be 4 or 3; indirect_ndxz must ==3 or 2
-    int indirect_ndxz = int(header[26]) - 1; // C start from 0,not 1
-
-    // Y can be 3rd or 1st dimension, indirect_ndx must ==0 or 2
-    int indirect_ndx = int(header[25]) - 1; // C start from 0,not 1 (For true 2D exp, this is always 0, can be 2 or 3 for slice of high dimension experiment)
-
-    if (b_nmrPipe_transposed == 1)
-    {
-        std::swap(ndata_frq, ndata_frq_indirect);
-        std::swap(direct_ndx, indirect_ndx);
-        std::swap(ndata_original, ndata_indirect);
-        std::swap(b_imaginary, b_imaginary_indirect);
-    }
-
-    /**
-     * Get begin and stop for each dimension
-     * step will be calculated later after read in spectrum because ydim might be changed
-    */
-    begin1 = begins[direct_ndx];
-    stop1 = stops[direct_ndx];
-
-    begin2 = begins[indirect_ndx];
-    stop2 = stops[indirect_ndx];
-
-    /**
-     * We don't have zdim or step3
-    */
-    begin3 = begins[indirect_ndxz];
-    stop3 = stops[indirect_ndxz];
-
-    if (b_imaginary == true && b_imaginary_indirect == true && b_nmrPipe_transposed == 0) // both are complex
-    {
-        /**
-         * In nmrPipe, complex data is stored as real/imaginary pair
-         * ydim/=2 to be consistent with nmrPipe
-         */
-        ndata_frq_indirect = ndata_frq_indirect / 2;
-    }
-    
-
-    double sws_direct = sws[direct_ndx];
-    double sws_indirect = sws[indirect_ndx];
-    double frqs_direct = frqs[direct_ndx];
-    double frqs_indirect = frqs[indirect_ndx];
-
-    /**
-     * Calculate step and update begin (to be consistent with nmrPipe)
-     * Step is negative.
-     * Step calculation is moved after read in spectrum, because ydim might be changed
-    */
-    step1 = (stop1 - begin1) / ndata_frq;
-    begin1 += step1;
-    
-    step2 = (stop2 - begin2) / ndata_frq_indirect;
-    begin2 += step2;
-
-    spectral_width = sws_direct;
-    spectral_width_indirect = sws_indirect; // copy to member variables
-
-    observed_frequency = frqs_direct;
-    observed_frequency_indirect = frqs_indirect; // copy to member variables
-
-    
-    std::cout << "Spectrum width are " << spectral_width << " Hz and " << spectral_width_indirect << " Hz" << std::endl;
-    std::cout << "Fields are " << observed_frequency << " mHz and " << observed_frequency_indirect << " mHz" << std::endl;
-    std::cout << "Direct dimension size is " << ndata_frq << " indirect dimension is " << ndata_frq_indirect << std::endl;
-    std::cout << "  Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " and last is " << stop1 << std::endl;
-    std::cout << "Indirect dimension offset is " << begin2 << ", ppm per step is " << step2 << " and last is " << stop2 << std::endl;
-
-    if (b_imaginary == true && b_imaginary_indirect == true)
-    {
-        std::cout << "Data type is complex" << std::endl;
-    }
-    else
-    {
-        std::cout << "Data type is real" << std::endl;
-    }
+    b_frq = true;
+    b_frq_indirect = true;
+    b_imaginary = false;
+    b_imaginary_indirect = false;
+    b_nmrPipe_transposed = false;
+    n_outer_dim = ndata_frq_indirect;
+    n_inner_dim = ndata_frq;
 
     return true;
 }
+
 
 /**
  * This is a protected function, not to be called by user
@@ -3629,6 +5227,9 @@ bool fid_2d::write_pipe_from_spect(std::vector<std::vector<float>> spect, std::s
         nmrpipe_header_data[99] = float(ndata_frq);
         nmrpipe_header_data[106] = float(1);
         nmrpipe_header_data[256] = float(2);
+
+        nmrpipe_header_data[220] = 1.0; //frequency domain data along direct dimension
+        nmrpipe_header_data[222] = 1.0; //frequency domain data along indirect dimension
 
         nmrpipe_header_data[9] = 2;      // dimension is 2
         nmrpipe_header_data[57] = 0.0f;  // 2d spectrum
@@ -3735,27 +5336,49 @@ bool fid_2d::read_sparky(std::string infname)
         return false;
     }
 
-    fread(buffer, 1, 10, fp);
+    if (fread(buffer, 1, 10, fp) != 10)
+    {
+        std::cout << "Error reading sparky file header" << std::endl;
+        fclose(fp);
+        return false;
+    }
     // std::cout<<buffer<<std::endl;
 
-    fread(buffer, 1, 1, fp);
+    if (fread(buffer, 1, 1, fp) != 1)
+    {
+        std::cout << "Error reading sparky file dimension" << std::endl;
+        fclose(fp);
+        return false;
+    }
     temp = int(buffer[0]);
     if (temp != 2)
     {
         std::cout << "Error in sparky format file, dimension is not 2" << std::endl;
+        fclose(fp);
         return false;
     }
 
-    fread(buffer, 1, 1, fp);
+    if (fread(buffer, 1, 1, fp) != 1)
+    {
+        std::cout << "Error reading sparky file quad type" << std::endl;
+        fclose(fp);
+        return false;
+    }
     fseek(fp, 1, SEEK_CUR);
     temp = int(buffer[0]);
     if (temp != 1)
     {
         std::cout << "Error in sparky format file, it is not in real data" << std::endl;
+        fclose(fp);
         return false;
     }
 
-    fread(buffer, 1, 1, fp);
+    if (fread(buffer, 1, 1, fp) != 1)
+    {
+        std::cout << "Error reading sparky file version" << std::endl;
+        fclose(fp);
+        return false;
+    }
     // std::cout<<"Version is "<< int(buffer[0])<<std::endl;
     fseek(fp, 166, SEEK_CUR);
 
@@ -3764,7 +5387,13 @@ bool fid_2d::read_sparky(std::string infname)
     float center1, center2;
     int tile1, tile2;
 
-    fread(buffer, 1, 6, fp); // nuleus name
+    if (fread(buffer, 1, 6, fp) != 6)
+    {
+        std::cout << "Error reading indirect dimension nucleus" << std::endl;
+        fclose(fp);
+        return false;
+    }
+    buffer[6] = '\0';
     std::cout << "Indirect dimension nuleus " << buffer << std::endl;
     fseek(fp, 2, SEEK_CUR);
     ndata_frq_indirect = read_int(fp);
@@ -3775,7 +5404,13 @@ bool fid_2d::read_sparky(std::string infname)
     center2 = read_float(fp);
     fseek(fp, 96, SEEK_CUR);
 
-    fread(buffer, 1, 6, fp); // nuleus name
+    if (fread(buffer, 1, 6, fp) != 6)
+    {
+        std::cout << "Error reading direct dimension nucleus" << std::endl;
+        fclose(fp);
+        return false;
+    }
+    buffer[6] = '\0';
     std::cout << "Direct dimension nuleus " << buffer << std::endl;
     fseek(fp, 2, SEEK_CUR);
     ndata_frq = read_int(fp);
@@ -3840,6 +5475,14 @@ bool fid_2d::read_sparky(std::string infname)
     std::cout << "Direct dimension size is " << ndata_frq << " indirect dimension is " << ndata_frq_indirect << std::endl;
     std::cout << "  Direct dimension offset is " << begin1 << ", ppm per step is " << step1 << " ppm" << std::endl;
     std::cout << "Indirect dimension offset is " << begin2 << ", ppm per steo is " << step2 << " ppm" << std::endl;
+
+    b_frq = true;
+    b_frq_indirect = true;
+    b_imaginary = false;
+    b_imaginary_indirect = false;
+    b_nmrPipe_transposed = false;
+    n_outer_dim = ndata_frq_indirect;
+    n_inner_dim = ndata_frq;
 
     fclose(fp);
 
@@ -3913,11 +5556,19 @@ void fid_2d::estimate_noise_level_mad()
     // estimate noise level column by column for TOCSY t1 noise belt identification!!
     for (int i = 0; i < ndata_frq; i++)
     {
-        std::vector<float> scores;
-        scores.clear();
+        std::vector<float> col(ndata_frq_indirect);
         for (int j = 0; j < ndata_frq_indirect; j++)
         {
-            scores.push_back(fabs(spect[j * ndata_frq + i]));
+            col[j] = spect[j * ndata_frq + i];
+        }
+        std::vector<float> detrended_col(ndata_frq_indirect);
+        fid_2d_math::detrend_slice_1d(col.data(), detrended_col.data(), ndata_frq_indirect);
+
+        std::vector<float> scores;
+        scores.reserve(ndata_frq_indirect);
+        for (int j = 0; j < ndata_frq_indirect; j++)
+        {
+            scores.push_back(std::abs(detrended_col[j]));
         }
         sort(scores.begin(), scores.end());
         noise_level_columns.push_back(scores[ndata_frq_indirect / 3] * 1.4826);
@@ -3926,11 +5577,19 @@ void fid_2d::estimate_noise_level_mad()
     // estimate noise level row by row
     for (int j = 0; j < ndata_frq_indirect; j++)
     {
-        std::vector<float> scores;
-        scores.clear();
+        std::vector<float> row(ndata_frq);
         for (int i = 0; i < ndata_frq; i++)
         {
-            scores.push_back(fabs(spect[j * ndata_frq + i]));
+            row[i] = spect[j * ndata_frq + i];
+        }
+        std::vector<float> detrended_row(ndata_frq);
+        fid_2d_math::detrend_slice_1d(row.data(), detrended_row.data(), ndata_frq);
+
+        std::vector<float> scores;
+        scores.reserve(ndata_frq);
+        for (int i = 0; i < ndata_frq; i++)
+        {
+            scores.push_back(std::abs(detrended_row[i]));
         }
         sort(scores.begin(), scores.end());
         noise_level_rows.push_back(scores[ndata_frq / 3] * 1.4826);
@@ -3944,6 +5603,23 @@ void fid_2d::estimate_noise_level()
     int n_segment_x = ndata_frq / 32;
     int n_segment_y = ndata_frq_indirect / 32;
 
+    Eigen::MatrixXd D(1024, 5);
+    for (int r = 0; r < 32; ++r)
+    {
+        double y_r = 2.0 * r / 31.0 - 1.0;
+        for (int c = 0; c < 32; ++c)
+        {
+            double x_c = 2.0 * c / 31.0 - 1.0;
+            int idx = r * 32 + c;
+            D(idx, 0) = 1.0;
+            D(idx, 1) = x_c;
+            D(idx, 2) = y_r;
+            D(idx, 3) = x_c * x_c;
+            D(idx, 4) = y_r * y_r;
+        }
+    }
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(D, Eigen::ComputeThinU | Eigen::ComputeThinV);
+
     std::vector<float> variances;      // variance of each segment
     std::vector<float> maximal_values; // maximal value of each segment
 
@@ -3955,36 +5631,28 @@ void fid_2d::estimate_noise_level()
         for (int j = 0; j < n_segment_y; j++)
         {
             std::vector<float> t;
+            t.reserve(1024);
+            float max_of_t = 0.0f;
+            Eigen::VectorXd b(1024);
+
             for (int m = 0; m < 32; m++)
             {
                 for (int n = 0; n < 32; n++)
                 {
-                    t.push_back(spect[(j * 32 + m) * ndata_frq + i * 32 + n]);
+                    float val = spect[(j * 32 + m) * ndata_frq + i * 32 + n];
+                    t.push_back(val);
+                    b(m * 32 + n) = static_cast<double>(val);
+                    if (std::abs(val) > max_of_t)
+                    {
+                        max_of_t = std::abs(val);
+                    }
                 }
             }
 
-            /**
-             * calculate variance of this segment. Substract the mean value of this segment first
-             * also calculate the max value of this segment
-             */
-            float max_of_t = 0.0f;
-            float mean_of_t = 0.0f;
-            for (int k = 0; k < t.size(); k++)
-            {
-                mean_of_t += t[k];
-                if (fabs(t[k]) > max_of_t)
-                {
-                    max_of_t = fabs(t[k]);
-                }
-            }
-            mean_of_t /= t.size();
+            Eigen::VectorXd coeffs = svd.solve(b);
+            Eigen::VectorXd resid = b - D * coeffs;
+            float variance_of_t = static_cast<float>(resid.squaredNorm() / 1024.0);
 
-            float variance_of_t = 0.0f;
-            for (int k = 0; k < t.size(); k++)
-            {
-                variance_of_t += (t[k] - mean_of_t) * (t[k] - mean_of_t);
-            }
-            variance_of_t /= t.size();
             variances.push_back(variance_of_t);
             maximal_values.push_back(max_of_t);
         }
@@ -4023,11 +5691,19 @@ void fid_2d::estimate_noise_level()
     // estimate noise level column by column for TOCSY t1 noise belt identification!!
     for (int i = 0; i < ndata_frq; i++)
     {
-        std::vector<float> scores;
-        scores.clear();
+        std::vector<float> col(ndata_frq_indirect);
         for (int j = 0; j < ndata_frq_indirect; j++)
         {
-            scores.push_back(fabs(spect[j * ndata_frq + i]));
+            col[j] = spect[j * ndata_frq + i];
+        }
+        std::vector<float> detrended_col(ndata_frq_indirect);
+        fid_2d_math::detrend_slice_1d(col.data(), detrended_col.data(), ndata_frq_indirect);
+
+        std::vector<float> scores;
+        scores.reserve(ndata_frq_indirect);
+        for (int j = 0; j < ndata_frq_indirect; j++)
+        {
+            scores.push_back(std::abs(detrended_col[j]));
         }
         sort(scores.begin(), scores.end());
         noise_level_columns.push_back(scores[ndata_frq_indirect / 3] * 1.4826);
@@ -4036,11 +5712,19 @@ void fid_2d::estimate_noise_level()
     // estimate noise level row by row
     for (int j = 0; j < ndata_frq_indirect; j++)
     {
-        std::vector<float> scores;
-        scores.clear();
+        std::vector<float> row(ndata_frq);
         for (int i = 0; i < ndata_frq; i++)
         {
-            scores.push_back(fabs(spect[j * ndata_frq + i]));
+            row[i] = spect[j * ndata_frq + i];
+        }
+        std::vector<float> detrended_row(ndata_frq);
+        fid_2d_math::detrend_slice_1d(row.data(), detrended_row.data(), ndata_frq);
+
+        std::vector<float> scores;
+        scores.reserve(ndata_frq);
+        for (int i = 0; i < ndata_frq; i++)
+        {
+            scores.push_back(std::abs(detrended_row[i]));
         }
         sort(scores.begin(), scores.end());
         noise_level_rows.push_back(scores[ndata_frq / 3] * 1.4826);
@@ -4055,6 +5739,8 @@ void fid_2d::estimate_noise_level()
 */
 EMSCRIPTEN_BINDINGS(dp_module_fid_2d) {
 
+    register_vector<unsigned char>("VectorUChar");
+
     /**
      * Note: base class function init is exposed in spectrum_pick_1d.cpp, so it is not included here.
      * fid_base is included in spectrum_pick_1d.cpp, so it is not included here.
@@ -4062,21 +5748,31 @@ EMSCRIPTEN_BINDINGS(dp_module_fid_2d) {
 
     class_<fid_2d,base<fid_base>>("fid_2d")
         .constructor()
-        .function("read_nmr_ft2_virtual", &fid_2d::read_nmr_ft2_virtual)
         .function("set_aqseq", &fid_2d::set_aqseq)
         .function("set_negative", &fid_2d::set_negative)
         .function("set_first_only", &fid_2d::set_first_only)
         .function("set_up_apodization_from_string", &fid_2d::set_up_apodization_from_string)
         .function("run_zf", &fid_2d::run_zf)
+        .function("extract_region", &fid_2d::extract_region)
+        .function("extract_region_ppm", &fid_2d::extract_region_ppm)
+        .function("read_phase_correction_from_string", &fid_2d::read_phase_correction_from_string)
         .function("read_nus_list_from_string", &fid_2d::read_nus_list_from_string)
         .function("read_bruker_files_as_strings", &fid_2d::read_bruker_files_as_strings)
         .function("read_bruker_fid_data", &fid_2d::read_bruker_fid_data)
+        .function("read_bruker_fid_data_bytes", &fid_2d::read_bruker_fid_data_bytes)
+        .function("read_nmrpipe_file_from_buffer", &fid_2d::read_nmrpipe_file_from_buffer) //from base class fid_2d
         .function("direct_only_process", &fid_2d::direct_only_process)
         .function("indirect_only_process", &fid_2d::indirect_only_process)
         .function("full_process", &fid_2d::full_process)
         .function("other_process", &fid_2d::other_process)
+        .function("water_suppression", &fid_2d::water_suppression)
         .function("polynorminal_baseline", &fid_2d::polynorminal_baseline)
         .function("write_json_as_string", &fid_2d::write_json_as_string)
+        .function("write_pseudo3d_json_as_string", &fid_2d::write_pseudo3d_json_as_string)
+        .function("write_nmrpipe_ft2_to_buffer", &fid_2d::write_nmrpipe_ft2_to_buffer)
+        .function("write_nmrpipe_ft2_to_buffer_index", &fid_2d::write_nmrpipe_ft2_to_buffer_index)
+        .function("get_ft2_size_in_float32", &fid_2d::get_ft2_size_in_float32)
+        .function("get_nspectra", &fid_2d::get_nspectra)
         /**
          * Below are used to extract ft2 data from fid_2d object, used by web assembly code.
          */

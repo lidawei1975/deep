@@ -28,9 +28,25 @@ int main(int argc, char **argv)
     args2.push_back("2");
     args3.push_back("input spectral experiment folder name; none or null means we will use -fid_in to read fid and acqus files instead.");
 
+    args.push_back("-ndata-bruker");
+    args2.push_back("65536");
+    args3.push_back("Reduce number of data points in Bruker format (including imaginary part if complex) to this number, in case original acquisition size is larger than needed (collecting noise).");
+
+    args.push_back("-auto-reduce-fid");
+    args2.push_back("no");
+    args3.push_back("Automatically reduce fid size based on signal end detection (yes/no). Overrides -ndata-bruker if yes.");
+
     args.push_back("-fid_in");
     args2.push_back("fid acqus");
     args3.push_back("input fid file name and acqus file name, separated by space(s).");
+
+    args.push_back("-magritek_in");
+    args2.push_back("none");
+    args3.push_back("input Magritek spectral experiment folder name; none or null means we will use -magritek_fid_in to read data.1d and acqu.par files instead.");
+
+    args.push_back("-magritek_fid_in");
+    args2.push_back("none");
+    args3.push_back("input data.1d and acqu.par file names, separated by space(s).");
 
     args.push_back("-out");
     args2.push_back("test.ft1"); 
@@ -56,35 +72,71 @@ int main(int argc, char **argv)
     if (cmdline.query("-h") != "yes")
     {
         fid_1d fid;
-        std::string infname = cmdline.query("-in");
-        std::string infname_lower = infname;
-        std::transform(infname_lower.begin(), infname_lower.end(), infname_lower.begin(), ::tolower);
+        std::string magritek_in = cmdline.query("-magritek_in");
+        std::string magritek_in_lower = magritek_in;
+        std::transform(magritek_in_lower.begin(), magritek_in_lower.end(), magritek_in_lower.begin(), ::tolower);
+
+        std::string magritek_fid_in = cmdline.query("-magritek_fid_in");
+        std::string magritek_fid_in_lower = magritek_fid_in;
+        std::transform(magritek_fid_in_lower.begin(), magritek_fid_in_lower.end(), magritek_fid_in_lower.begin(), ::tolower);
+
         bool b_read_fid = false;
 
-        if(infname_lower == "null" || infname_lower == "none")
+        if (magritek_in_lower != "null" && magritek_in_lower != "none" && !magritek_in_lower.empty())
         {
-            std::string fid_infname = cmdline.query("-fid_in");
-            std::vector<std::string> fid_infname_split;
-            if(fid_1d_helper::split(fid_infname,fid_infname_split,' ') < 2)
+            b_read_fid = fid.read_magritek_folder(magritek_in);
+        }
+        else if (magritek_fid_in_lower != "null" && magritek_fid_in_lower != "none" && !magritek_fid_in_lower.empty())
+        {
+            std::vector<std::string> magritek_fid_split;
+            if(fid_1d_helper::split(magritek_fid_in, magritek_fid_split, ' ') < 2)
             {
-                std::cout << "Error: -fid_in should be followed by at least two file names, separated by space." << std::endl;
+                std::cout << "Error: -magritek_fid_in should be followed by at least two file names, separated by space." << std::endl;
                 return 1;
             }
 
             /**
-             * Last file name is acqus file name
+             * Last file name is acqu.par file name
             */
-            std::string acqus_file_name = fid_infname_split.back();    
+            std::string acqu_file_name = magritek_fid_split.back();    
 
             /**
-             * Remove the last file name from the vector. Others are fid file names 
+             * Remove the last file name from the vector. Others are data.1d file names 
             */  
-            fid_infname_split.pop_back();      
-            b_read_fid=fid.read_bruker_acqus_and_fid(acqus_file_name, fid_infname_split);
+            magritek_fid_split.pop_back();      
+            b_read_fid = fid.read_magritek_acqu_and_fid(acqu_file_name, magritek_fid_split);
         }
         else
         {
-            b_read_fid=fid.read_bruker_folder(infname);
+            std::string infname = cmdline.query("-in");
+            std::string infname_lower = infname;
+            std::transform(infname_lower.begin(), infname_lower.end(), infname_lower.begin(), ::tolower);
+
+            if(infname_lower == "null" || infname_lower == "none")
+            {
+                std::string fid_infname = cmdline.query("-fid_in");
+                std::vector<std::string> fid_infname_split;
+                if(fid_1d_helper::split(fid_infname,fid_infname_split,' ') < 2)
+                {
+                    std::cout << "Error: -fid_in should be followed by at least two file names, separated by space." << std::endl;
+                    return 1;
+                }
+
+                /**
+                 * Last file name is acqus file name
+                */
+                std::string acqus_file_name = fid_infname_split.back();    
+
+                /**
+                 * Remove the last file name from the vector. Others are fid file names 
+                */  
+                fid_infname_split.pop_back();      
+                b_read_fid=fid.read_bruker_acqus_and_fid(acqus_file_name, fid_infname_split);
+            }
+            else
+            {
+                b_read_fid=fid.read_bruker_folder(infname);
+            }
         }
 
         if(!b_read_fid)
@@ -92,6 +144,19 @@ int main(int argc, char **argv)
             std::cout << "Error: read fid file failed." << std::endl;
             return 1;
         }
+
+        int ndata_bruker_new;
+        std::string auto_reduce = cmdline.query("-auto-reduce-fid");
+        if(auto_reduce == "yes")
+        {
+             ndata_bruker_new = fid.detect_signal_end_location();
+             std::cout << "Auto-detected signal end location: " << ndata_bruker_new << std::endl;
+        }
+        else
+        {
+             ndata_bruker_new = std::stoi(cmdline.query("-ndata-bruker"));
+        }
+        fid.reduce_fid_size(ndata_bruker_new);
 
         //for debug. write fid to a file
         // fid.write_nmrpipe_fid("test.fid");

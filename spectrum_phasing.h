@@ -1,6 +1,6 @@
 #include <array>
 
-#include "spectrum_fwhh.h" //fid_1d is included in spectrum_fwhh_1d.h
+#include "fid_2d.h" 
 #include "phase_dnn.h"
 
 #ifndef SPECTRUM_PHASING_H
@@ -51,6 +51,18 @@ public:
     bool set_user_phase_correction(double p0_direct, double p1_direct);
     bool set_user_phase_correction_indirect(double p0_indirect, double p1_indirect);
     bool save_phase_correction_result(std::string fname) const;
+    std::string save_phase_correction_result_as_string() const;
+
+    /**
+     * For webassembly binding
+     */
+#ifdef WEBASSEMBLY
+    float get_final_p0_direct() const { return final_p0_direct; }
+    float get_final_p1_direct() const { return final_p1_direct; }
+    float get_final_p0_indirect() const { return final_p0_indirect; }
+    float get_final_p1_indirect() const { return final_p1_indirect; }
+#endif
 };
 
-#endif
+#endif // SPECTRUM_PHASING_H
+

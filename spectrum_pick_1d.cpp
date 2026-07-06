@@ -2,11 +2,17 @@
 #include <valarray>
 #include <fstream>
 #include <iostream>
-
 #include "json/json.h"
 #include "commandline.h"
-
 #include "spectrum_pick_1d.h"
+
+#ifdef WEBASSEMBLY
+/**
+* Bind to emscripten with exposed class methods.
+*/
+#include <emscripten/bind.h>
+using namespace emscripten;
+#endif
 
 // help function
 // we have a list of peak_amplitudes and a ratio cutoff
@@ -356,8 +362,21 @@ bool spectrum_pick_1d::get_peak_pos(std::vector<int> &t)
 bool spectrum_pick_1d::print_peaks(std::string outfname)
 {
     FILE *fp = fopen(outfname.c_str(), "w");
-    fprintf(fp, "VARS INDEX X_AXIS X_PPM XW HEIGHT CONFIDENCE\n");
-    fprintf(fp, "FORMAT %%5d %%9.3f %%9.4f %%7.3f %%+e %%4.3f\n");
+
+    std::string outstr = print_peaks_as_string();
+
+    fprintf(fp,"%s",outstr.c_str());
+
+    fclose(fp);
+    return true;
+}
+
+std::string spectrum_pick_1d::print_peaks_as_string()
+{
+    std::string outstr;
+    char buffer[1024];
+    sprintf(buffer, "VARS INDEX X_AXIS X_PPM XW HEIGHT CONFIDENCE\nFORMAT %%5d %%9.3f %%9.4f %%7.3f %%+e %%4.3f\n");
+    outstr += buffer;
 
     for (int k = 0; k < a.size(); k++)
     {
@@ -371,11 +390,10 @@ bool spectrum_pick_1d::print_peaks(std::string outfname)
          * s1 need to be converted back to original spectrum in pixel
         */
         s1 = s1*interpolation_step;
-        fprintf(fp, "%5d %9.3f %9.4f %7.3f %+e %4.3f\n", k + 1, peak_pos_pixel_original, cs, s1, a[k], confidence[k]);
+        sprintf(buffer, "%5d %9.3f %9.4f %7.3f %+e %4.3f\n", k + 1, peak_pos_pixel_original, cs, s1, a[k], confidence[k]);
+        outstr += buffer;
     }
-
-    fclose(fp);
-    return true;
+    return outstr;
 }
 
 bool spectrum_pick_1d::get_peaks(struct spectrum_1d_peaks &y)
@@ -498,3 +516,42 @@ bool spectrum_pick_1d::adjust_ppp_of_spectrum(const double ppp)
 
     return true;
 }
+
+std::string spectrum_pick_1d::say_hello(std::string message)
+{
+    std::string hello = "Hello from spectrum_pick_1d!" + message;
+    std::cout << hello << std::endl;
+    return hello;
+}
+
+#ifdef WEBASSEMBLY
+
+
+/**
+ * Exposed functions
+*/
+EMSCRIPTEN_BINDINGS(dp_1d_module_pick) {
+
+
+    class_<spectrum_fwhh_1d, base<fid_1d>>("spectrum_fwhh_1d")
+        .constructor()
+        .function("init", &spectrum_fwhh_1d::init);
+
+    class_<spectrum_pick_1d,base<spectrum_fwhh_1d>>("spectrum_pick_1d")
+        .constructor()
+        .class_property("n_verbose", &shared_data_1d::n_verbose)
+        .function("init", &spectrum_pick_1d::init)
+        .function("init_mod", &spectrum_pick_1d::init_mod)
+        .function("read_first_spectrum_from_buffer",&spectrum_pick_1d::read_first_spectrum_from_buffer)
+        .function("adjust_ppp_of_spectrum", &spectrum_pick_1d::adjust_ppp_of_spectrum)
+        .function("spectrum_pick_1d_work", &spectrum_pick_1d::spectrum_pick_1d_work)
+        .function("print_peaks_as_string", &spectrum_pick_1d::print_peaks_as_string)
+        .function("say_hello", &spectrum_pick_1d::say_hello);
+
+    
+    // Bind std::vector<float>
+    register_vector<int>("VectorInt");
+    register_vector<float>("VectorFloat");
+    register_vector<double>("VectorDouble");
+}
+#endif // WEBASSEMBLY

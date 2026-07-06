@@ -1,6 +1,7 @@
 #include <vector>
 #include <deque>
 #include <algorithm>
+#include <random>
 
 #include "ldw_math.h"
 
@@ -161,6 +162,9 @@ namespace ldw_math
 
     bool random_sampling_consensus(std::vector<double> x, std::vector<double> y, int max_round, double error_cutoff, int init_number, int n_inline_cutoff,double &a_best,double &b_best,double &r_best)
     {
+        std::random_device rd;
+        std::mt19937 g(rd());
+
         int iterations = 0;
         double bestErr = 1e10;
         std::vector<double> x_maybeInliers,y_maybeInliers,x_alsoInliers,y_alsoInliers;
@@ -184,7 +188,7 @@ namespace ldw_math
             {
                 permutation[i] = i;
             }
-            std::random_shuffle(permutation.begin(),permutation.end());
+            std::shuffle(permutation.begin(),permutation.end(),g);
 
             //select first n points from x and y using permutation
             for(int i=0;i<init_number;i++)

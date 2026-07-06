@@ -45,11 +45,11 @@ public:
     bool spectrum_pick_1d_work(bool b_negative=false);
     bool get_peak_pos(std::vector<int> &);
     bool print_peaks(std::string outfname);
+    std::string print_peaks_as_string();
     bool get_peaks(struct spectrum_1d_peaks & );
-
     bool interpolate_spectrum(const double interpolation_step); //interpolate spectrum to a new ppp
     bool adjust_ppp_of_spectrum(const double ppp); //adjust ppp of spectrum to a given value, using cubic spline interpolation
-
+    std::string say_hello(std::string);
 };
 
 #endif
