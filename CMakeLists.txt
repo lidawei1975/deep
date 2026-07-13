@@ -320,6 +320,11 @@ target_link_libraries(spectrum_deconv_3d fid_base_lib)
   target_link_libraries(test_functors libcerf)
   add_test(NAME test_functors COMMAND test_functors)
 
+  add_executable(test_functors_fitnmr test_functors_fitnmr.cpp cost_functions_fitnmr.cpp kiss_fft.c)
+  target_compile_definitions(test_functors_fitnmr PRIVATE LMMIN)
+  target_link_libraries(test_functors_fitnmr libcerf)
+  add_test(NAME test_functors_fitnmr COMMAND test_functors_fitnmr)
+
 add_test(NAME test_fid_phase COMMAND /usr/bin/env perl test_fid_phase.pl)
 
 
